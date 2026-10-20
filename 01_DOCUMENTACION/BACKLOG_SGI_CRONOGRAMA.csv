@@ -1,0 +1,23 @@
+Issue Type,Summary,Description,Epic Link,Priority,Original Estimate
+Epic,SGI-EP0 Definición y Diseño,Fase 0 - Alcance y Modelo de Datos (Semana 1),,High,25h
+Epic,SGI-EP1 Núcleo del Sistema (Seguridad),Fase 1 - Autenticación JWT y RBAC (Semana 2),,High,25h
+Epic,SGI-EP2 Maestros del Sistema,Fase 2 - Catálogos de Empleados Materiales y Máquinas (Semanas 3-4),,Medium,45h
+Epic,SGI-EP3 Gestión de Inventario,Fase 3 - Movimientos de Inventario y Retales (Semanas 5-6),,High,45h
+Epic,SGI-EP4 Consultas y Trazabilidad,Fase 4 - Consultas y Trazabilidad de Proyectos (Semana 7),,Medium,25h
+Epic,SGI-EP5 Liberación de OP,Fase 5 - Solicitudes de Material y Liberación OP (Semanas 8-9),,High,45h
+Epic,SGI-EP6 Dashboard y Calidad,Fase 6 - Indicadores OEE Dictamen de Calidad y Cierre (Semana 10),,High,25h
+Epic,SGI-EP7 Pruebas y Cierre,Fase 7 a 9 - Pruebas E2E y Despliegue (Semanas 11-14),,Medium,50h
+Story,Mapa Funcional y Alcance MVP,Consolidar documentos de requisitos y alcance de áreas,SGI-EP0 Definición y Diseño,High,10h
+Story,Arquitectura y Modelo de Datos Inicial,Diseño del Diagrama ERD en PostgreSQL y matriz RBAC,SGI-EP0 Definición y Diseño,High,15h
+Story,Autenticación y Control de Sesión,Implementar tablas de usuarios y configuración bcrypt+JWT,SGI-EP1 Núcleo del Sistema (Seguridad),High,12h
+Story,Control de Acceso por Rol (RBAC),Restricciones de navegación por rol (Admin Producción Calidad etc),SGI-EP1 Núcleo del Sistema (Seguridad),High,13h
+Story,Catálogo Maestro de Empleados,Vistas y CRUD para Empleados Cargos y Áreas,SGI-EP2 Maestros del Sistema,Medium,15h
+Story,Catálogo Maestro de Materiales,Gestión de consumibles y herramientas CCCC-NN,SGI-EP2 Maestros del Sistema,High,15h
+Story,Estructura de Almacenes,Definir almacenes principales y ubicaciones técnicas,SGI-EP2 Maestros del Sistema,Medium,15h
+Story,Registro de Movimientos de Inventario,Actualización de existencias físicas en tiempo real,SGI-EP3 Gestión de Inventario,High,20h
+Story,Gestión y Trazabilidad de Retales,Módulo de retales con ID único RET-XXXXXX,SGI-EP3 Gestión de Inventario,High,25h
+Story,Trazabilidad Integral de OP,Consulta genealógica desde el retal hasta el cliente,SGI-EP4 Consultas y Trazabilidad,Medium,25h
+Story,Validación y Liberación de OP,Motor de reglas para habilitar el inicio de producción,SGI-EP5 Liberación de OP,High,45h
+Story,Inspección de Calidad y Cierre,Bloqueo estricto del botón CERRAR OP sin dictamen aprobado,SGI-EP6 Dashboard y Calidad,High,25h
+Story,Pruebas Integrales E2E,Simulación de pedidos reales y depuración de errores,SGI-EP7 Pruebas y Cierre,Medium,25h
+Story,Despliegue y Entrega,Documentación final y paso a entorno de producción,SGI-EP7 Pruebas y Cierre,High,25h

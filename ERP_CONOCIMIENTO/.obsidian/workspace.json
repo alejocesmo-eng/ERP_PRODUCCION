@@ -1,0 +1,221 @@
+{
+  "main": {
+    "id": "05d2d67ecc5295d4",
+    "type": "split",
+    "children": [
+      {
+        "id": "a76c54819b3a8752",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "391c36d3455c8c05",
+            "type": "leaf",
+            "state": {
+              "type": "graph",
+              "state": {},
+              "icon": "lucide-git-fork",
+              "title": "Vista gráfica"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "f233a0dd2eeacc4d",
+    "type": "split",
+    "children": [
+      {
+        "id": "024385a285910271",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "557d437e5ea5e54a",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Explorador de archivos"
+            }
+          },
+          {
+            "id": "213036131f840dce",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Buscar"
+            }
+          },
+          {
+            "id": "2685105b706dd771",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-bookmark",
+              "title": "Marcadores"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "605006a0bcc8a92b",
+    "type": "split",
+    "children": [
+      {
+        "id": "c00ad46bc92a4007",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "d11d792a5a718217",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Enlaces entrantes"
+            }
+          },
+          {
+            "id": "e636def16d85e4a9",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Enlaces salientes"
+            }
+          },
+          {
+            "id": "b6062ea827c60026",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Etiquetas"
+            }
+          },
+          {
+            "id": "41479c2f655289d9",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "Todas las propiedades"
+            }
+          },
+          {
+            "id": "4d4c7bf5aefa9035",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Esquema"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Abrir selector rápido": false,
+      "graph:Abrir vista gráfica": false,
+      "canvas:Crear nuevo lienzo": false,
+      "daily-notes:Abrir la nota de hoy": false,
+      "templates:Insertar plantilla": false,
+      "command-palette:Abrir paleta de comandos": false,
+      "bases:Crear nueva base": false
+    }
+  },
+  "active": "391c36d3455c8c05",
+  "lastOpenFiles": [
+    "06-Pruebas/Matriz de trazabilidad.md",
+    "REQ-PROD-001 - Puesto de Trabajo Operario CNC.md",
+    "00-Gobierno/Context-bundles/Contexto_Puesto_CNC.md",
+    "00-Gobierno/Context-bundles/desktop.ini",
+    "00-Gobierno/Context-bundles",
+    "05-Desarrollo/schema_init_completo.sql",
+    "04-Calidad-ISO/Controles de calidad.md",
+    "03-Requisitos/REQ-CAL-001.md",
+    "05-Desarrollo/Estándares de desarrollo.md",
+    "04-Calidad-ISO/PRO-CAL-001.md",
+    "03-Requisitos/Plantilla de requisito.md",
+    "08-Decisiones/ADR-001.md",
+    "08-Decisiones/Plantilla ADR.md",
+    "09-Cambios/Plantilla.md",
+    "09-Cambios/Registro de cambios.md",
+    "00-Gobierno/Inicio.md",
+    "00-Gobierno/Mapa de procesos.md",
+    "01-Arquitectura/Arquitectura del ERP.md",
+    "02-Procesos/Plantilla de proceso.md",
+    "08-Decisiones/Registro de decisiones.md",
+    "08-Decisiones/Sin título.md",
+    "07-KPI-Mejora/Indicadores de taller.md",
+    "Registro de cambios.md",
+    "00-Gobierno/GOB-EST-001.md",
+    "06-Pruebas/TC-PROD-001.md",
+    "Sin título 1.canvas",
+    "Sin título.canvas",
+    "01-Arquitectura/desktop.ini",
+    "03-Requisitos/desktop.ini",
+    "09-Cambios/desktop.ini",
+    "00-Gobierno/desktop.ini",
+    "06-Pruebas/desktop.ini",
+    "04-Calidad-ISO/desktop.ini",
+    "05-Desarrollo/desktop.ini"
+  ]
+}

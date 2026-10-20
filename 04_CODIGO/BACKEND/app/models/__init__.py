@@ -1,0 +1,92 @@
+# app/models/__init__.py
+"""
+Exportación unificada de modelos SQLAlchemy del Sistema de Gestión Integral (SGI ERP).
+Homologación canónica para permitir importación directa desde 'app.models'.
+"""
+
+from app.db.models import (
+    Base,
+    Rol,
+    Permiso,
+    Usuario,
+    Maquina,
+    Empleado,
+    Cliente,
+    Proyecto,
+    PedidoDetalle,
+    OTDetalle,
+    Plano,
+    BOMListaMateriales,
+    OrdenProduccion,
+    NoConformidad,
+    ArticuloInventario,
+    LoteMaterial,
+    EntregaMaterialOP,
+    InstrumentoMedicion,
+    FichaMetrologia,
+    SolicitudCompra,
+    EntradaMercancia,
+    AjusteInventario,
+    MantenimientoMaquina,
+    MantenimientoPiezaDet,
+    RegistroTiemposProduccion,
+    EstadoProyectoEnum,
+    EstadoOPEnum,
+    EstadoPlanoEnum,
+    EstadoNCEnum
+)
+
+from app.db.models_produccion import (
+    OperacionOT,
+    SubLoteOperacion,
+    RegistroTiempoOperario,
+    NotificacionLider,
+    EstadoOperacionEnum,
+    TipoUnidadPlantaEnum,
+    TipoNotificacionEnum
+)
+
+from app.db.models_calidad import (
+    InspeccionCalidad
+)
+
+__all__ = [
+    "Base",
+    "Rol",
+    "Permiso",
+    "Usuario",
+    "Maquina",
+    "Empleado",
+    "Cliente",
+    "Proyecto",
+    "PedidoDetalle",
+    "OTDetalle",
+    "Plano",
+    "BOMListaMateriales",
+    "OrdenProduccion",
+    "NoConformidad",
+    "ArticuloInventario",
+    "LoteMaterial",
+    "EntregaMaterialOP",
+    "InstrumentoMedicion",
+    "FichaMetrologia",
+    "SolicitudCompra",
+    "EntradaMercancia",
+    "AjusteInventario",
+    "MantenimientoMaquina",
+    "MantenimientoPiezaDet",
+    "RegistroTiemposProduccion",
+    "EstadoProyectoEnum",
+    "EstadoOPEnum",
+    "EstadoPlanoEnum",
+    "EstadoNCEnum",
+    "OperacionOT",
+    "SubLoteOperacion",
+    "RegistroTiempoOperario",
+    "NotificacionLider",
+    "EstadoOperacionEnum",
+    "TipoUnidadPlantaEnum",
+    "TipoNotificacionEnum",
+    "InspeccionCalidad"
+]
+

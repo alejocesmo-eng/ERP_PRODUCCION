@@ -1,0 +1,31 @@
+# REGIONAL DIRECTIVES FOR ANTIGRAVITY AGENT
+
+## 1. FUENTES DE VERDAD Y AUTORIDAD
+- **Especificaciones y Reglas**: Consulta siempre la carpeta `ERP_CONOCIMIENTO/` (o `ERP-CONOCIMIENTO/`).
+- **Arquitectura y BD Canónica**: `ERP_CONOCIMIENTO/05-Desarrollo/schema_init_completo.sql` y `01-Arquitectura/Arquitectura del ERP.md`.
+- **Habilidades Locales**: Revisa las instrucciones en `.agent/skills/obsidian-markdown/SKILL.md` y `.agent/skills/defuddle/SKILL.md`.
+- **Auditoría de Brechas**: Ten presente los hallazgos de `Arquitectura_y_Mapeo_SGI_ERP_v0.1.pdf`.
+
+---
+
+## 2. ESTÁNDARES DE CÓDIGO (BACKEND FASTAPI + POSTGRESQL)
+1. **Asincronía Estricta**: Usa `async/await` con `SQLAlchemy 2.0` / `SQLModel` y `asyncpg` en todos los endpoints.
+2. **Validación de Datos**: Valida entradas y salidas con esquemas explícitos de `Pydantic v2`.
+3. **Persistencia Real**: Prohibido usar almacenamiento simulado en memoria (`dict` o `list` locales). Todas las entidades (Opciones de Producción, Inspecciones, No Conformidades) deben persistirse en PostgreSQL.
+4. **Registro de Routers**: Asegura que cada router nuevo o modificado en `app/api/v1/endpoints/` se incluya explícitamente en `app/main.py`.
+
+---
+
+## 3. REGLAS DE NEGOCIO OBLIGATORIAS (FASES 1 - 3)
+- **Tiempos Duales**:
+  - *Diseño*: Control automático al cambiar a `EN_DISENO`.
+  - *Puesto CNC*: Conmutación `Setup` $\rightarrow$ `Mecanizado`. Exige la justificación en el campo `observacion_desviacion` si el Setup excede $+50\%$ sobre el estándar (según `ADR-001.md`).
+- **Seguridad de Planos**: Sirve visores de planos PDF únicamente con tokens JWT de lectura con TTL expirable.
+- **Calidad ISO 9001:2015**: Exige registro fotográfico en Tratamientos Térmicos y bloquea el Cierre de OP si existen No Conformidades pendientes.
+
+---
+
+## 4. METODOLOGÍA DE RESPUESTA Y ENTREGAS
+- Genera código directo, limpio y completo sin explicaciones teóricas extensas.
+- Acompaña cada módulo o endpoint refactorizado con sus correspondientes pruebas en `tests/` utilizando `pytest` + `httpx`.
+- Si encuentras contradicciones entre la base de datos y la documentación, agrégalas como una observación corta al final de la entrega.
