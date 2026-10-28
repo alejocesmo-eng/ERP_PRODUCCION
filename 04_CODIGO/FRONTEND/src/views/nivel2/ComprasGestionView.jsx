@@ -10,6 +10,7 @@ export default function ComprasGestionView() {
   const [solicitudes, setSolicitudes] = useState([]);
   const [pedidos, setPedidos] = useState([]);
   const [ordenesPlanos, setOrdenesPlanos] = useState([]);
+  const [mrpRequisiciones, setMrpRequisiciones] = useState([]);
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState({ tipo: '', texto: '' });
 
@@ -19,7 +20,7 @@ export default function ComprasGestionView() {
   const [modalSolicitudAbierto, setModalSolicitudAbierto] = useState(false);
   const [solicitudSeleccionada, setSolicitudSeleccionada] = useState(null);
 
-  // FORMULARIO SOLICITUD DE COMPRA (PR)
+  // FORMULARIO DE REQUISICIÓN DE COMPRA
   const [formPR, setFormPR] = useState({
     numero_solicitud: `PR-${Math.floor(1000 + Math.random() * 9000)}`,
     solicitante_nombre: 'Ing. Carlos Ruiz',
@@ -45,10 +46,11 @@ export default function ComprasGestionView() {
   const cargarDatos = async () => {
     try {
       setLoading(true);
-      const [resSol, resProj, resPlanos] = await Promise.allSettled([
+      const [resSol, resProj, resPlanos, resMRP] = await Promise.allSettled([
         API.get('/solicitudes-compra/'),
         API.get('/proyectos/'),
-        API.get('/planos/')
+        API.get('/planos/'),
+        API.get('/solicitudes-compra/mrp/requisiciones')
       ]);
 
       if (resSol.status === 'fulfilled') {
@@ -59,6 +61,9 @@ export default function ComprasGestionView() {
       }
       if (resPlanos.status === 'fulfilled') {
         setOrdenesPlanos(Array.isArray(resPlanos.value.data) ? resPlanos.value.data : []);
+      }
+      if (resMRP.status === 'fulfilled') {
+        setMrpRequisiciones(Array.isArray(resMRP.value.data) ? resMRP.value.data : []);
       }
     } catch (error) {
       console.warn("Error cargando datos de compras:", error);
@@ -142,14 +147,14 @@ export default function ComprasGestionView() {
   };
 
   // =========================================================================
-  // BLOQUE 4: RADICACIÓN Y ASIGNACIÓN AL BOM DE DISEÑO (ENVÍO SANITIZADO)
+  // BLOQUE 4: REGISTRO Y ASIGNACIÓN DE MATERIALES A DISEÑO
   // =========================================================================
   const handleSubmitPR = async (e) => {
     e.preventDefault();
     setMensaje({ tipo: '', texto: '' });
 
     if (formPR.departamento_area === 'Diseño e Ingeniería' && (!formPR.numero_pedido || !formPR.codigo_op || !formPR.codigo_plano)) {
-      setMensaje({ tipo: 'error', texto: 'Para requerimientos de Diseño e Ingeniería se exige vincular N° Pedido, OP y Código de Plano.' });
+      setMensaje({ tipo: 'error', texto: 'Para requerimientos de Diseño e Ingeniería se exige vincular el pedido, la orden de producción y el código de plano.' });
       return;
     }
 
@@ -186,7 +191,7 @@ export default function ComprasGestionView() {
       setMensaje({ 
         tipo: 'exito', 
         texto: formPR.codigo_op 
-          ? `✅ Solicitud ${formPR.numero_solicitud} radicada y asignada al BOM de OP-${formPR.codigo_op} en Diseño.`
+          ? `✅ Requisición ${formPR.numero_solicitud} registrada y asignada a los materiales de la orden ${formPR.codigo_op} en Diseño.`
           : `✅ Solicitud Interna ${formPR.numero_solicitud} radicada exitosamente.`
       });
 
@@ -227,7 +232,32 @@ export default function ComprasGestionView() {
       setModalSolicitudAbierto(false);
       cargarDatos();
     } catch (error) {
-      setMensaje({ tipo: 'error', texto: 'No se pudo actualizar la solicitud.' });
+      setMensaje({
+        tipo: 'error',
+        texto: error?.response?.data?.detail || 'No se pudo actualizar la solicitud.'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEjecutarMRP = async () => {
+    setMensaje({ tipo: '', texto: '' });
+    try {
+      setLoading(true);
+      const resultado = await API.post('/solicitudes-compra/mrp/ejecutar');
+      const requisiciones = Array.isArray(resultado.data?.requisiciones) ? resultado.data.requisiciones : [];
+      setMrpRequisiciones(requisiciones);
+      setMensaje({
+        tipo: 'exito',
+        texto: `Planificación de necesidades completada: ${requisiciones.filter(item => item.requerimiento_neto > 0).length} requisiciones de compra generadas.`
+      });
+      await cargarDatos();
+    } catch (error) {
+      setMensaje({
+        tipo: 'error',
+        texto: error?.response?.data?.detail || 'No se pudo completar la planificación de necesidades de materiales.'
+      });
     } finally {
       setLoading(false);
     }
@@ -257,7 +287,7 @@ export default function ComprasGestionView() {
         <div>
           <h1 className="text-2xl font-bold text-slate-800">🛒 Módulo Compras — Proveedores (PM-04)</h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Gestión de Insumos del BOM para OPs y Solicitudes Internas de Planta [ISO 9001:2026 / SAP B1]
+            Gestión de insumos y requisiciones para órdenes de producción y solicitudes internas de planta
           </p>
         </div>
       </header>
@@ -272,7 +302,7 @@ export default function ComprasGestionView() {
               : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-100'
           }`}
         >
-          📋 1. Solicitudes de Compra (PR / BOM)
+          📋 1. Requisiciones de compra
         </button>
 
         <button
@@ -323,7 +353,7 @@ export default function ComprasGestionView() {
             {/* FORMULARIO DE SOLICITUD DE COMPRA */}
             <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm lg:col-span-1">
               <h2 className="text-lg font-bold text-slate-700 mb-3 border-b pb-2 flex items-center justify-between">
-                <span>Solicitud de Compra (PR)</span>
+                <span>Requisición de compra</span>
                 <span className="font-mono text-xs bg-blue-50 text-blue-800 px-2 py-0.5 rounded border border-blue-200">
                   {formPR.numero_solicitud}
                 </span>
@@ -386,16 +416,16 @@ export default function ComprasGestionView() {
                 {/* CAMPOS CON DESPLEGABLE MAPEADO DE OT Y PLANO */}
                 <div className="grid grid-cols-2 gap-2 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
                   <div>
-                    <label className="block font-bold text-blue-900 mb-1">N° Orden (OP)</label>
+                    <label className="block font-bold text-blue-900 mb-1">Código de orden de producción</label>
                     <select
                       value={formPR.codigo_op}
                       onChange={(e) => handleSeleccionarOP(e.target.value)}
                       className="w-full p-2 border border-blue-400 rounded font-mono font-bold text-blue-900 bg-white cursor-pointer"
                     >
-                      <option value="">-- Sin OP --</option>
+                      <option value="">-- Sin orden asignada --</option>
                       {ordenesDisponibles.map((op, idx) => (
                         <option key={op.id_plano || idx} value={op.codigo_op}>
-                          ⚙ OP-{op.codigo_op} ({op.unidad_planta || 'Mecanizados'})
+                          ⚙ Orden {op.codigo_op} ({op.unidad_planta || 'Mecanizados'})
                         </option>
                       ))}
                     </select>
@@ -504,7 +534,7 @@ export default function ComprasGestionView() {
                   disabled={loading}
                   className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded text-xs transition shadow-sm cursor-pointer"
                 >
-                  {loading ? 'Guardando...' : '💾 Radicar Solicitud y Asignar BOM'}
+                  {loading ? 'Guardando...' : '💾 Registrar requisición y asignar materiales'}
                 </button>
               </form>
             </div>
@@ -513,15 +543,23 @@ export default function ComprasGestionView() {
             <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm lg:col-span-2 space-y-4">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b pb-3">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-700">Historial de Solicitudes y Estado de BOM</h2>
-                  <p className="text-xs text-slate-400">Control por Pedido, OP, Plano o Requerimiento Interno</p>
+                  <h2 className="text-lg font-bold text-slate-700">Historial de requisiciones y estado de abastecimiento</h2>
+                  <p className="text-xs text-slate-400">Control por pedido, orden de producción, plano o requerimiento interno</p>
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={handleEjecutarMRP}
+                    disabled={loading}
+                    className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[11px] font-extrabold shadow-sm disabled:opacity-50"
+                  >
+                    {loading ? 'Calculando...' : '⚙ Planificar necesidades de materiales'}
+                  </button>
                   <div className="relative w-full sm:w-72">
                     <input
                       type="text"
-                      placeholder="🔍 Buscar por N° PR, Pedido, OP, Plano o Material..."
+                      placeholder="🔍 Buscar por número de requisición, pedido, orden, plano o material..."
                       value={busqueda}
                       onChange={(e) => setBusqueda(e.target.value)}
                       className="w-full pl-3 pr-8 py-2 border border-blue-300 rounded-lg text-xs bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none font-medium"
@@ -550,16 +588,55 @@ export default function ComprasGestionView() {
                 </div>
               </div>
 
+              {mrpRequisiciones.length > 0 && (
+                <div className="overflow-x-auto rounded-lg border border-blue-200">
+                  <div className="bg-blue-50 px-3 py-2 text-[11px] font-extrabold uppercase text-blue-900">
+                    Resultado de la última planificación de necesidades
+                  </div>
+                  <table className="w-full text-left text-[10px] text-slate-600">
+                    <thead className="bg-slate-100 text-slate-700 font-bold uppercase">
+                      <tr>
+                        <th className="p-2">Material / especificación</th>
+                        <th className="p-2 text-right">Demanda</th>
+                        <th className="p-2 text-right">Stock libre</th>
+                        <th className="p-2 text-right">Retales</th>
+                        <th className="p-2 text-right">En tránsito</th>
+                        <th className="p-2 text-right">Neto a comprar</th>
+                        <th className="p-2">Orden de producción / Plano</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {mrpRequisiciones.map(item => (
+                        <tr key={item.id_requisicion}>
+                          <td className="p-2 font-bold text-slate-800">{item.codigo_material} — {item.especificacion}</td>
+                          <td className="p-2 text-right">{item.demanda_bruta} {item.unidad_medida}</td>
+                          <td className="p-2 text-right">{item.stock_libre}</td>
+                          <td className="p-2 text-right">{item.retales_disponibles}</td>
+                          <td className="p-2 text-right">{item.compras_en_transito}</td>
+                          <td className={`p-2 text-right font-extrabold ${item.requerimiento_neto > 0 ? 'text-amber-800' : 'text-emerald-800'}`}>
+                            {item.requerimiento_neto}
+                            {item.numero_solicitud ? ` · ${item.numero_solicitud}` : ' · CUBIERTO'}
+                          </td>
+                          <td className="p-2">
+                            {(item.trazabilidad || []).map(trace => `${trace.codigo_op}/${trace.codigo_plano}`).join(', ')}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs text-slate-600 border-collapse">
                   <thead>
                     <tr className="bg-slate-100 text-slate-700 font-bold uppercase border-b border-slate-200">
                       <th className="p-3">N° Solicitud</th>
                       <th className="p-3">N° Pedido</th>
-                      <th className="p-3">N° Orden (OP)</th>
+                      <th className="p-3">Código de orden</th>
                       <th className="p-3">Código Plano</th>
                       <th className="p-3">Insumos Requeridos</th>
-                      <th className="p-3 text-center">Estado BOM</th>
+                      <th className="p-3 text-center">Estado de abastecimiento</th>
                       <th className="p-3 text-center">Acciones</th>
                     </tr>
                   </thead>
@@ -577,13 +654,13 @@ export default function ComprasGestionView() {
                             {s.numero_solicitud}
                           </td>
                           <td className="p-3 font-mono font-bold text-purple-700">
-                            📋 {s.numero_pedido || 'S/P'}
+                            📋 {s.numero_pedido || 'Sin pedido'}
                           </td>
                           <td className="p-3 font-mono font-bold text-blue-900">
-                            ⚙ OP-{s.codigo_op || 'GENERAL'}
+                            ⚙ {s.codigo_op || 'Orden general'}
                           </td>
                           <td className="p-3 font-mono font-bold text-slate-800">
-                            📄 {s.codigo_plano || 'N/A'}
+                            📄 {s.codigo_plano || 'No disponible'}
                           </td>
                           <td className="p-3 font-semibold text-slate-700">
                             {s.descripcion_resumen}
@@ -591,12 +668,14 @@ export default function ComprasGestionView() {
                           <td className="p-3 text-center whitespace-nowrap">
                             <span className={`px-2 py-1 rounded text-[10px] font-bold border ${
                               s.estado_bom === 'ENTREGADO' ? 'bg-emerald-100 text-emerald-800 border-emerald-300' :
+                              s.estado_bom === 'EN_ALMACEN' ? 'bg-purple-100 text-purple-900 border-purple-300' :
                               s.estado_bom === 'EN_COMPRA' ? 'bg-blue-100 text-blue-800 border-blue-300' :
                               'bg-amber-100 text-amber-800 border-amber-300'
                             }`}>
                               {s.estado_bom === 'ENTREGADO' && '🟢 ENTREGADO'}
+                              {s.estado_bom === 'EN_ALMACEN' && '🟣 EN ALMACÉN'}
                               {s.estado_bom === 'EN_COMPRA' && '🔵 EN COMPRA'}
-                              {(!s.estado_bom || s.estado_bom === 'SOLICITADO') && '🟡 SOLICITADO (PR)'}
+                              {(!s.estado_bom || s.estado_bom === 'SOLICITADO') && '🟡 SOLICITADO'}
                             </span>
                           </td>
                           <td className="p-3 text-center space-x-1 whitespace-nowrap">
@@ -635,12 +714,12 @@ export default function ComprasGestionView() {
 
             <div className="bg-slate-50 p-3 rounded-lg border text-xs space-y-1">
               <p><strong>Solicitante:</strong> {solicitudSeleccionada.solicitante_nombre} ({solicitudSeleccionada.departamento_area})</p>
-              <p><strong>Pedido / OP / Plano:</strong> Pedido {solicitudSeleccionada.numero_pedido || 'S/P'} / OP-{solicitudSeleccionada.codigo_op || 'GENERAL'} / Plano {solicitudSeleccionada.codigo_plano || 'N/A'}</p>
-              <p><strong>Resumen de Insumos BOM:</strong> {solicitudSeleccionada.descripcion_resumen}</p>
-              <p><strong>Estado Casilla BOM:</strong> <span className="font-bold text-emerald-700">{solicitudSeleccionada.estado_bom || 'SOLICITADO'}</span></p>
+              <p><strong>Pedido / Orden / Plano:</strong> Pedido {solicitudSeleccionada.numero_pedido || 'Sin pedido'} / Orden {solicitudSeleccionada.codigo_op || 'Sin asignar'} / Plano {solicitudSeleccionada.codigo_plano || 'No disponible'}</p>
+              <p><strong>Resumen de insumos:</strong> {solicitudSeleccionada.descripcion_resumen}</p>
+              <p><strong>Estado de abastecimiento:</strong> <span className="font-bold text-emerald-700">{solicitudSeleccionada.estado_bom || 'SOLICITADO'}</span></p>
             </div>
 
-            <div className="flex justify-end gap-2 border-t pt-3">
+            <div className="flex flex-wrap justify-end gap-2 border-t pt-3">
               <button
                 type="button"
                 onClick={() => handleCambiarEstadoSolicitud(solicitudSeleccionada.id_solicitud, 'RECHAZADA', 'SIN_SOLICITAR')}
@@ -661,6 +740,20 @@ export default function ComprasGestionView() {
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded text-xs cursor-pointer"
               >
                 ✓ Aprobar Solicitud
+              </button>
+              <button
+                type="button"
+                onClick={() => handleCambiarEstadoSolicitud(solicitudSeleccionada.id_solicitud, 'RECIBIDA', 'EN_ALMACEN')}
+                className="px-4 py-2 bg-purple-700 hover:bg-purple-800 text-white font-bold rounded text-xs cursor-pointer"
+              >
+                📦 Registrar en almacén
+              </button>
+              <button
+                type="button"
+                onClick={() => handleCambiarEstadoSolicitud(solicitudSeleccionada.id_solicitud, 'ENTREGADA', 'ENTREGADO')}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded text-xs cursor-pointer"
+              >
+                ✓ Entregar a producción
               </button>
             </div>
           </div>

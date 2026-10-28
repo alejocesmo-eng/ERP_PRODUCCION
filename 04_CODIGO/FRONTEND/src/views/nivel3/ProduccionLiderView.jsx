@@ -2,6 +2,13 @@
 import React, { useState, useEffect } from 'react';
 import API from '../../services/api';
 import VisorPlanoModal from '../../components/VisorPlanoModal';
+import ExpedienteOpModal from '../../components/modals/ExpedienteOpModal';
+
+const ETIQUETAS_ACCION_PIEZA = {
+  FABRICAR_NUEVA: 'Fabricar nueva',
+  RECTIFICAR_RECUPERAR: 'Rectificar o recuperar',
+  COMPRA_DIRECTA_BOM: 'Compra directa de materiales',
+};
 
 export default function ProduccionLiderView() {
   // BLOQUE 1: ESTADOS PRINCIPALES Y NAVEGACIÓN
@@ -70,9 +77,9 @@ export default function ProduccionLiderView() {
     { paso: 2, id: 'LAVADO_DESARME', nombre: '2. Lavado & Desarme', area: 'Producción', accion: '🧽 2. Validar Desarme' },
     { paso: 3, id: 'DIAGNOSTICO_DISENO', nombre: '3. Levantamiento & Diagnóstico', area: 'Diseño', accion: '📐 3. Completar Levantamiento' },
     { paso: 4, id: 'COTIZACION_APROBACION', nombre: '4. Cotización & Aprobación', area: 'Ventas', accion: '💰 4. Aprobar Cotización' },
-    { paso: 5, id: 'PLANOS_BOM', nombre: '5. Planos & BOM (Apertura OP)', area: 'Diseño', accion: '⚙️ 5. Estructurar OP & Planos' },
-    { paso: 6, id: 'COMPRAS_INSUMOS', nombre: '6. Compras Insumos (BOM)', area: 'Compras', accion: '🛒 6. En Abastecimiento BOM' },
-    { paso: 7, id: 'EN_FABRICACION', nombre: '7. Fabricación / Recuperación', area: 'Producción', accion: '🏭 7. Liberar a Planta MES' },
+    { paso: 5, id: 'PLANOS_BOM', nombre: '5. Planos y lista de materiales (apertura de órdenes)', area: 'Diseño', accion: '⚙️ 5. Estructurar órdenes y planos' },
+    { paso: 6, id: 'COMPRAS_INSUMOS', nombre: '6. Compra de insumos', area: 'Compras', accion: '🛒 6. Abastecimiento de materiales' },
+    { paso: 7, id: 'EN_FABRICACION', nombre: '7. Fabricación / Recuperación', area: 'Producción', accion: '🏭 7. Liberar a producción' },
     { paso: 8, id: 'KIT_COMPLETO', nombre: '8. Ensamble & Pruebas', area: 'Producción', accion: '🏁 8. Aprobar Ensamble & Cierre' }
   ];
 
@@ -122,11 +129,32 @@ export default function ProduccionLiderView() {
         API.get('/solicitudes-compra/')
       ]);
 
-      setSolicitudesCompra(resSolicitudes.status === 'fulfilled' && Array.isArray(resSolicitudes.value.data) ? resSolicitudes.value.data : []);
+      const solicitudesData = resSolicitudes.status === 'fulfilled' && Array.isArray(resSolicitudes.value.data)
+        ? resSolicitudes.value.data
+        : [];
+      setSolicitudesCompra(solicitudesData);
 
       const ordenesValidas = (resPlanos.status === 'fulfilled' && Array.isArray(resPlanos.value.data) ? resPlanos.value.data : [])
         .filter(p => (p.estado_diseno === 'LIBERADA' || p.estado_diseno === 'EN_FABRICACION') && (p.unidad_planta === areaActiva || !p.unidad_planta))
-        .map((p, idx) => ({
+        .map((p, idx) => {
+          const bomItems = Array.isArray(p.bom_items) ? p.bom_items : [];
+          const estadosBom = bomItems.map(item => item.estado_abastecimiento);
+          const estadoGeneralBom = estadosBom.length === 0
+            ? 'SIN_SOLICITAR'
+            : estadosBom.every(estado => estado === 'ENTREGADO')
+              ? 'ENTREGADO'
+              : estadosBom.every(estado => ['EN_ALMACEN', 'ENTREGADO'].includes(estado))
+                ? 'EN_ALMACEN'
+                : estadosBom.find(estado => estado && estado !== 'SIN_SOLICITAR') || 'SIN_SOLICITAR';
+          const cantidadRequerida = bomItems.reduce(
+            (total, item) => total + Number(item.cantidad_requerida || 0),
+            0
+          );
+          const cantidadRecibida = bomItems
+            .filter(item => ['EN_ALMACEN', 'ENTREGADO'].includes(item.estado_abastecimiento))
+            .reduce((total, item) => total + Number(item.cantidad_requerida || 0), 0);
+
+          return ({
           item_num: idx + 1,
           id_plano: p.id_plano,
           id_proyecto: p.id_proyecto,
@@ -144,6 +172,7 @@ export default function ProduccionLiderView() {
           causa_espera: p.causa_espera || '✓ Sin demoras',
           archivo_url: p.archivo_url || '',
           estado_op: p.estado_op || p.estado_item || 'EN_PROCESO',
+          bom_items: bomItems,
 
           piezas: (p.piezas && p.piezas.length > 0) ? p.piezas : [
             {
@@ -154,6 +183,7 @@ export default function ProduccionLiderView() {
               cantidad: p.cantidad || 12,
               material_requerido: p.material_requerido || 'Bronce SAE 65 Ø6"',
               archivo_url: p.archivo_url || '',
+              estado_abastecimiento: estadoGeneralBom,
               estado_proceso: 'EN_MECANIZADO'
             }
           ],
@@ -167,18 +197,16 @@ export default function ProduccionLiderView() {
           },
 
           trazabilidad_bom: {
-            estado_general: 'PARCIAL',
-            cantidad_requerida: p.cantidad || 12,
-            cantidad_recibida: 8,
-            cantidad_pendiente: 4,
-            solicitud_pr: 'PR-6802',
-            proveedor: 'Aceros e Insumos Industriales S.A.',
-            entregas_parciales: [
-              { fecha: '2026-10-10', remision: 'REM-4410', cantidad: 4, material: 'Bronce SAE 65 Ø6" (Lote A)', estado: 'Habilitado en Planta' },
-              { fecha: '2026-10-12', remision: 'REM-4482', cantidad: 4, material: 'Bronce SAE 65 Ø6" (Lote B)', estado: 'Habilitado en Planta' }
-            ]
+            estado_general: estadoGeneralBom,
+            cantidad_requerida: cantidadRequerida,
+            cantidad_recibida: cantidadRecibida,
+            cantidad_pendiente: Math.max(cantidadRequerida - cantidadRecibida, 0),
+            solicitud_pr: solicitudesData.find(s => s.codigo_op === p.codigo_op && s.codigo_plano === p.codigo_plano)?.numero_solicitud || null,
+            proveedor: null,
+            entregas_parciales: []
           }
-        }));
+        });
+      });
 
       setOrdenesLiberadas(ordenesValidas);
 
@@ -216,59 +244,13 @@ export default function ProduccionLiderView() {
 
       try {
         const resSublotes = await API.get(`/operaciones/sublotes?area=${areaActiva}`);
-        if (resSublotes.data && Array.isArray(resSublotes.data) && resSublotes.data.length > 0) {
-          setSublotesActivos(resSublotes.data);
-        } else {
-          setSublotesActivos([
-            {
-              id_sublote: 'sub-101',
-              codigo_op: '4007000',
-              codigo_plano: 'PLN-2026-115-B',
-              detalle_pieza: 'Corona en Bronce SAE 65 Z=48',
-              sublote_tag: 'SUB-01 (4 UND)',
-              cantidad_asignada: 4,
-              nombre_proceso: 'Torneado Base CNC',
-              secuencia_paso: 10,
-              operario_nombre: 'Carlos Ruiz',
-              maquina_codigo: 'TORN-CNC-01',
-              estado_sublote: 'EN_PRODUCCION',
-              segundos_setup: 86400,
-              segundos_produccion: 129600
-            },
-            {
-              id_sublote: 'sub-102',
-              codigo_op: '4001234',
-              codigo_plano: 'PLN-11001-A',
-              detalle_pieza: 'Pieza Mecanizada Especial',
-              sublote_tag: 'SUB-02 (6 UND)',
-              cantidad_asignada: 6,
-              nombre_proceso: 'Fresado / Taladrado',
-              secuencia_paso: 20,
-              operario_nombre: 'Carlos Ruiz',
-              maquina_codigo: 'TORN-CNC-01',
-              estado_sublote: 'EN_COLA',
-              segundos_setup: 0,
-              segundos_produccion: 0
-            },
-            {
-              id_sublote: 'sub-103',
-              codigo_op: '4007256',
-              codigo_plano: 'PLN-001-A',
-              detalle_pieza: 'Buje de Bronce Ajuste H7',
-              sublote_tag: 'SUB-01 (2 UND)',
-              cantidad_asignada: 2,
-              nombre_proceso: 'Rectificado Cilíndrico',
-              secuencia_paso: 10,
-              operario_nombre: 'Juan Pérez',
-              maquina_codigo: 'FRES-CNC-02',
-              estado_sublote: 'EN_COLA',
-              segundos_setup: 0,
-              segundos_produccion: 0
-            }
-          ]);
-        }
+        if (!Array.isArray(resSublotes.data)) throw new Error('La respuesta de la cola no tiene un formato válido.');
+        setSublotesActivos(resSublotes.data);
       } catch (errSub) {
-        console.warn("Usando datos locales para sub-lotes.");
+        setMensaje({
+          tipo: 'error',
+          texto: errSub.response?.data?.detail || errSub.message || 'No se pudo cargar la cola de producción.',
+        });
         setSublotesActivos([]);
       }
 
@@ -295,9 +277,9 @@ export default function ProduccionLiderView() {
     setMensaje({ tipo: '', texto: '' });
     try {
       setLoading(true);
-      await API.patch(`/planos/${ord.id_plano}`, { 
-        estado_diseno: 'INSPECCION_CALIDAD',
-        estado_op: 'TERMINADA'
+      await API.patch(`/ordenes/${ord.id_proyecto}`, {
+        estado: 'EN_INSPECCION',
+        observaciones: 'Producción terminada; enviada a inspección de calidad.'
       });
 
       setMensaje({
@@ -307,16 +289,9 @@ export default function ProduccionLiderView() {
 
       await cargarDatosProduccion();
     } catch (err) {
-      setOrdenesLiberadas(prev => prev.map(o => {
-        if (o.id_plano === ord.id_plano) {
-          return { ...o, estado_op: 'TERMINADA' };
-        }
-        return o;
-      }));
-
       setMensaje({
-        tipo: 'exito',
-        texto: `✅ OP-${ord.codigo_op} marcada como TERMINADA. Enviada a Inspección de Calidad de Producto.`
+        tipo: 'error',
+        texto: err?.response?.data?.detail || `No se pudo actualizar la OP-${ord.codigo_op}.`
       });
     } finally {
       setLoading(false);
@@ -358,7 +333,7 @@ export default function ProduccionLiderView() {
       const faltanMateriales = solAsociadas.some(s => !['EN_ALMACEN', 'ENTREGADO'].includes(s.estado_bom));
 
       if (solAsociadas.length === 0 || faltanMateriales) {
-        alert("❌ Bloqueo ISO 9001 (Regla RN-OP-004): No se puede avanzar a Fabricación / Recuperación (Paso 7) porque los materiales del BOM no han llegado al 100% a Almacén.");
+        alert("❌ Bloqueo de calidad: no se puede avanzar a Fabricación / Recuperación (Paso 7) porque los materiales no han llegado al 100% a Almacén.");
         return;
       }
     }
@@ -436,11 +411,12 @@ export default function ProduccionLiderView() {
     }));
   };
 
-  const formatearTiempoDias = (totalSegundos) => {
-    if (!totalSegundos || totalSegundos <= 0) return '0.0 Días';
-    const dias = (totalSegundos / 86400).toFixed(1);
-    const hrs = Math.floor((totalSegundos % 86400) / 3600);
-    return `${dias} Días (${hrs}h)`;
+  // FUNCIÓN DE CONVERSIÓN DE TIEMPO A MINUTOS
+  const formatearTiempoMinutos = (totalSegundos) => {
+    if (!totalSegundos || totalSegundos <= 0) return '0 min';
+    const minutos = Math.floor(totalSegundos / 60);
+    const hrs = Math.floor(minutos / 60);
+    return hrs > 0 ? `${minutos} min (${hrs}h)` : `${minutos} min`;
   };
 
   const ordenesFiltradas = (Array.isArray(ordenesLiberadas) ? ordenesLiberadas : []).filter(ord => {
@@ -519,57 +495,56 @@ export default function ProduccionLiderView() {
         tipo: 'exito',
         texto: `✅ Sub-Lote de ${formAsignacion.cantidad_sublote} UND enviado a ${formAsignacion.operario_nombre} [${formAsignacion.maquina_codigo}].`
       });
-      cargarDatosProduccion();
+      await cargarDatosProduccion();
+      setModalAsignarAbierto(false);
     } catch (error) {
-      const nuevoSubloteLocal = {
-        id_sublote: `sub-${Date.now()}`,
-        codigo_op: ordenSeleccionada.codigo_op,
-        codigo_plano: ordenSeleccionada.codigo_plano,
-        detalle_pieza: ordenSeleccionada.detalle_pieza,
-        sublote_tag: `SUB-${(Array.isArray(sublotesActivos) ? sublotesActivos.length : 0) + 1} (${formAsignacion.cantidad_sublote} UND)`,
-        cantidad_asignada: formAsignacion.cantidad_sublote,
-        nombre_proceso: formAsignacion.nombre_proceso,
-        secuencia_paso: formAsignacion.secuencia_paso,
-        operario_nombre: formAsignacion.operario_nombre,
-        maquina_codigo: formAsignacion.maquina_codigo,
-        estado_sublote: 'EN_COLA',
-        segundos_setup: 0,
-        segundos_produccion: 0
-      };
-      setSublotesActivos(prev => [nuevoSubloteLocal, ...(Array.isArray(prev) ? prev : [])]);
       setMensaje({
-        tipo: 'exito',
-        texto: `✅ Sub-Lote de ${formAsignacion.cantidad_sublote} UND programado localmente.`
+        tipo: 'error',
+        texto: error.response?.data?.detail || error.message || 'No se pudo asignar el sublote a la cola de producción.',
       });
     }
-
-    setModalAsignarAbierto(false);
   };
 
   // REORDENAMIENTO Y CAMBIO DE PRIORIDAD DE SUB-LOTES EN COLA
-  const handleMoverPrioridadSublote = async (operarioNombre, idxSublote, direccion) => {
+  const handleMoverPrioridadSublote = async (operarioNombre, maquinaCodigo, idxSublote, direccion) => {
     const listaActual = Array.isArray(sublotesActivos) ? sublotesActivos : [];
-    const sublotesOperario = listaActual.filter(s => s.operario_nombre === operarioNombre);
+    const sublotesOperarioEstacion = listaActual.filter(
+      (s) => s.operario_nombre === operarioNombre && s.maquina_codigo === maquinaCodigo
+    );
+    const estadosEnCola = ['PENDIENTE', 'PENDIENTE_ASIGNACION', 'EN_COLA'];
+    const sublotesEnCola = sublotesOperarioEstacion
+      .filter((s) => estadosEnCola.includes(s.estado_sublote))
+      .sort((a, b) => Number(a.prioridad_cola || 0) - Number(b.prioridad_cola || 0));
     const targetIdx = direccion === 'SUBIR' ? idxSublote - 1 : idxSublote + 1;
 
-    if (targetIdx < 0 || targetIdx >= sublotesOperario.length) return;
+    if (targetIdx < 0 || targetIdx >= sublotesEnCola.length) return;
 
-    const copiaOperario = [...sublotesOperario];
-    const temp = copiaOperario[idxSublote];
-    copiaOperario[idxSublote] = copiaOperario[targetIdx];
-    copiaOperario[targetIdx] = temp;
-
-    const sublotesOtros = listaActual.filter(s => s.operario_nombre !== operarioNombre);
-    setSublotesActivos([...sublotesOtros, ...copiaOperario]);
+    const copiaCola = [...sublotesEnCola];
+    const temp = copiaCola[idxSublote];
+    copiaCola[idxSublote] = copiaCola[targetIdx];
+    copiaCola[targetIdx] = temp;
 
     try {
       await API.post('/operaciones/sublotes/reordenar', {
         operario_nombre: operarioNombre,
-        orden_ids: copiaOperario.map(s => s.id_sublote)
+        maquina_codigo: maquinaCodigo,
+        orden_ids: copiaCola.map((s) => s.id_sublote)
       });
-      setMensaje({ tipo: 'exito', texto: `📌 Prioridad de cola reordenada para ${operarioNombre}.` });
+      const colaActualizada = new Map(copiaCola.map((s, prioridad) => [
+        s.id_sublote,
+        { ...s, prioridad_cola: prioridad + 1 }
+      ]));
+      setSublotesActivos(listaActual.map((s) => colaActualizada.get(s.id_sublote) || s));
+      setMensaje({ tipo: 'exito', texto: `📌 Prioridad actualizada para ${operarioNombre} en ${maquinaCodigo}.` });
     } catch (err) {
-      console.warn("Reordenado de cola en memoria local.");
+      try {
+        const params = new URLSearchParams({ area: areaActiva });
+        const respuesta = await API.get(`/operaciones/sublotes?${params.toString()}`);
+        setSublotesActivos(Array.isArray(respuesta.data) ? respuesta.data : []);
+      } catch (errorCarga) {
+        setMensaje({ tipo: 'error', texto: errorCarga.response?.data?.detail || 'No se pudo actualizar la cola desde el servidor.' });
+      }
+      setMensaje({ tipo: 'error', texto: err.response?.data?.detail || 'No se pudo guardar el orden de prioridad.' });
     }
   };
 
@@ -579,7 +554,7 @@ export default function ProduccionLiderView() {
         type="button"
         onClick={() => handleAbrirDetalleEstado(orden)}
         className="px-1.5 py-0.5 bg-slate-100 hover:bg-blue-100 border border-slate-300 hover:border-blue-400 rounded transition cursor-pointer text-[10px] font-extrabold flex items-center justify-center gap-1 shadow-sm w-full"
-        title="Ver trazabilidad por dispositivos y días en cada etapa"
+        title="Ver trazabilidad por dispositivos y tiempo en cada etapa"
       >
         <span className="text-blue-900">Ver Estado</span>
         <span className="bg-blue-600 text-white px-1 py-0.1 rounded-full text-[8px]">👁</span>
@@ -589,20 +564,30 @@ export default function ProduccionLiderView() {
 
   const renderBadgeBOM = (orden) => {
     const bomInfo = orden.trazabilidad_bom || {};
-    const esParcial = bomInfo.cantidad_recibida < bomInfo.cantidad_requerida;
+    const estado = bomInfo.estado_general || 'SIN_SOLICITAR';
+    const etiquetas = {
+      ENTREGADO: '🟢 ENTREGADO',
+      EN_ALMACEN: '🟣 EN ALMACÉN',
+      EN_COMPRA: '🔵 EN COMPRA',
+      SOLICITADO: '🟡 SOLICITADO',
+      SIN_SOLICITAR: '⚪ SIN SOLICITAR'
+    };
+    const estadoLiberable = ['EN_ALMACEN', 'ENTREGADO'].includes(estado);
 
     return (
       <button
         type="button"
         onClick={() => handleAbrirDetalleBOM(orden)}
         className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border shadow-sm block w-full transition cursor-pointer ${
-          esParcial
-            ? 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200'
-            : 'bg-emerald-100 text-emerald-900 border-emerald-300 hover:bg-emerald-200'
+          estado === 'ENTREGADO'
+            ? 'bg-emerald-100 text-emerald-900 border-emerald-300 hover:bg-emerald-200'
+            : estadoLiberable
+              ? 'bg-purple-100 text-purple-900 border-purple-300 hover:bg-purple-200'
+              : 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200'
         }`}
-        title="Ver entregas parciales del proveedor e insumos habilitados"
+        title="Ver estado de abastecimiento de las líneas de materiales"
       >
-        {esParcial ? `🟡 PARCIAL (${bomInfo.cantidad_recibida}/${bomInfo.cantidad_requerida})` : '🟢 ENTREGADO'}
+        {etiquetas[estado] || estado}
       </button>
     );
   };
@@ -614,9 +599,9 @@ export default function ProduccionLiderView() {
       case 'EN_ALMACEN':
         return <span className="px-2 py-1 rounded text-[10px] font-extrabold bg-purple-100 text-purple-900 border border-purple-300">🟣 EN ALMACÉN</span>;
       case 'EN_COMPRA':
-        return <span className="px-2 py-1 rounded text-[10px] font-extrabold bg-blue-100 text-blue-900 border border-blue-300">🔵 EN COMPRA (PO)</span>;
+        return <span className="px-2 py-1 rounded text-[10px] font-extrabold bg-blue-100 text-blue-900 border border-blue-300">🔵 EN COMPRA</span>;
       case 'SOLICITADO':
-        return <span className="px-2 py-1 rounded text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300">🟡 SOLICITADO (PR)</span>;
+        return <span className="px-2 py-1 rounded text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300">🟡 SOLICITADO</span>;
       default:
         return <span className="px-2 py-1 rounded text-[10px] font-extrabold bg-slate-100 text-slate-600 border border-slate-300">⚪ SIN SOLICITAR</span>;
     }
@@ -625,6 +610,13 @@ export default function ProduccionLiderView() {
   // Contadores seguros aislados de errores de tipo
   const listaNotif = Array.isArray(notificaciones) ? notificaciones : [];
   const listaSublotes = Array.isArray(sublotesActivos) ? sublotesActivos : [];
+  const gruposOperarioEstacion = Array.from(new Map(
+    listaSublotes.map((sublote) => {
+      const operarioNombre = sublote.operario_nombre || 'Sin operario asignado';
+      const maquinaCodigo = sublote.maquina_codigo || 'Sin estación asignada';
+      return [`${operarioNombre}::${maquinaCodigo}`, { operarioNombre, maquinaCodigo }];
+    })
+  ).values());
   const listaKits = Array.isArray(listaKitsOverhaul) ? listaKitsOverhaul : [];
 
   return (
@@ -633,7 +625,7 @@ export default function ProduccionLiderView() {
       <header className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-            <span>🏭</span> Control de Planta y Gestión MES (PM-03)
+            <span>🏭</span> Control de planta y ejecución de producción
           </h1>
           <p className="text-xs text-slate-500 mt-1">
             Monitoreo Multiestado — Unidad Activa: <strong className="text-blue-700">{areaActiva}</strong> [ISO 9001:2026]
@@ -700,7 +692,7 @@ export default function ProduccionLiderView() {
                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
-            ⏱️ 2. Monitoreo MES en Vivo ({listaSublotes.length})
+            ⏱️ 2. Seguimiento de producción en vivo ({listaSublotes.length})
           </button>
 
           <button
@@ -756,19 +748,19 @@ export default function ProduccionLiderView() {
 
           <div className="overflow-y-auto max-h-[620px] border border-slate-200 rounded-lg">
             <table className="w-full text-left border-collapse table-fixed">
-              <thead className="sticky top-0 bg-slate-100 text-slate-700 font-bold uppercase border-b text-[9px] z-10 shadow-sm">
+              <thead className="sticky top-0 bg-slate-100 text-slate-700 font-bold uppercase border-b text-[11px] z-10 shadow-sm">
                 <tr>
-                  <th className="p-2 text-center w-[3%]">#</th>
+                  <th className="p-2 text-center w-[2%]">#</th>
                   <th className="p-2 w-[10%]">OP *</th>
                   <th className="p-2 w-[11%]">CÓDIGO PLANO *</th>
                   <th className="p-2 text-center w-[4%]">REV.</th>
                   <th className="p-2 w-[19%]">DETALLE PIEZA *</th>
                   <th className="p-2 text-center w-[5%]">CANT.</th>
                   <th className="p-2 w-[10%]">DISEÑADOR *</th>
-                  <th className="p-2 w-[15%]">MATERIAL / BOM *</th>
+                  <th className="p-2 w-[15%]">MATERIAL / LISTA DE MATERIALES *</th>
                   <th className="p-2 text-center w-[7%]">📅 FECHA</th>
                   <th className="p-2 text-center w-[8%]">ESTADO PROCESO</th>
-                  <th className="p-2 text-center w-[8%]">MATERIA PRIMA (BOM) 🔒</th>
+                  <th className="p-2 text-center w-[8%]">MATERIALES REQUERIDOS 🔒</th>
                   <th className="p-2 text-center w-[4%]">PDF</th>
                   <th className="p-2 text-center w-[12%]">ACCIONES LÍDER</th>
                 </tr>
@@ -894,10 +886,10 @@ export default function ProduccionLiderView() {
           <div className="flex justify-between items-center border-b pb-2">
             <div>
               <h2 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
-                <span>⏱️</span> Monitoreo MES: Estaciones y Tiempos Acumulados (En Días)
+                <span>⏱️</span> Seguimiento de estaciones y tiempos acumulados (minutos)
               </h2>
               <p className="text-[11px] text-slate-500">
-                Costeo continuo en Días/Horas para Setup vs Producción
+                Costeo continuo en Minutos para Setup vs Producción
               </p>
             </div>
 
@@ -913,9 +905,9 @@ export default function ProduccionLiderView() {
                   <th className="p-2.5">OP / Sub-Lote</th>
                   <th className="p-2.5">Proceso / Estación</th>
                   <th className="p-2.5">Operario Asignado</th>
-                  <th className="p-2.5 text-center bg-purple-50 text-purple-900 border-x">🔧 Días en Setup (Montaje)</th>
-                  <th className="p-2.5 text-center bg-emerald-50 text-emerald-900">⚙️ Días en Producción (Mecanizado)</th>
-                  <th className="p-2.5 text-center">Estado MES</th>
+                  <th className="p-2.5 text-center bg-purple-50 text-purple-900 border-x">🔧 Minutos en Setup (Montaje)</th>
+                  <th className="p-2.5 text-center bg-emerald-50 text-emerald-900">⚙️ Minutos en Producción (Mecanizado)</th>
+                  <th className="p-2.5 text-center">Estado de producción</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 text-slate-800">
@@ -944,13 +936,13 @@ export default function ProduccionLiderView() {
 
                       <td className="p-2.5 text-center bg-purple-50/50 border-x whitespace-nowrap">
                         <span className="font-mono font-extrabold text-purple-900 text-xs">
-                          🔧 {formatearTiempoDias(sub.segundos_setup || 86400)}
+                          🔧 {formatearTiempoMinutos(sub.segundos_setup || 86400)}
                         </span>
                       </td>
 
                       <td className="p-2.5 text-center bg-emerald-50/50 whitespace-nowrap">
                         <span className="font-mono font-extrabold text-emerald-900 text-xs">
-                          ⚙️ {formatearTiempoDias(sub.segundos_produccion || 0)}
+                          ⚙️ {formatearTiempoMinutos(sub.segundos_produccion || 0)}
                         </span>
                       </td>
 
@@ -1101,7 +1093,7 @@ export default function ProduccionLiderView() {
                                           <th className="p-2 text-center">Cant.</th>
                                           <th className="p-2">Material</th>
                                           <th className="p-2 text-center">Estado Aprobación</th>
-                                          <th className="p-2 text-center">Solicitud de Compra / BOM 🛒</th>
+                                          <th className="p-2 text-center">Solicitud de compra / Lista de materiales 🛒</th>
                                         </tr>
                                       </thead>
                                       <tbody className="divide-y divide-slate-200 text-slate-600">
@@ -1118,7 +1110,9 @@ export default function ProduccionLiderView() {
                                               <td className="p-2 text-center font-mono text-slate-400">{idx + 1}</td>
                                               <td className="p-2 font-mono font-bold text-purple-700">{pz.codigo || pz.codigo_pieza || 'PLN-001'}</td>
                                               <td className="p-2 font-bold text-slate-800">{pz.descripcion || pz.detalle_pieza}</td>
-                                              <td className="p-2 font-semibold text-slate-700">{pz.accion || pz.estado || 'FABRICAR_NUEVA'}</td>
+                                              <td className="p-2 font-semibold text-slate-700">
+                                                {ETIQUETAS_ACCION_PIEZA[pz.accion] || ETIQUETAS_ACCION_PIEZA[pz.estado] || pz.accion || pz.estado || 'Fabricar nueva'}
+                                              </td>
                                               <td className="p-2 text-center font-bold text-blue-900">{pz.cantidad || 1}</td>
                                               <td className="p-2 text-slate-500">{pz.material || 'AISI 1045'}</td>
                                               <td className="p-2 text-center">
@@ -1158,17 +1152,17 @@ export default function ProduccionLiderView() {
         </div>
       )}
 
-      {/* MODAL MATRIZ DE CARGA Y PRIORIZACIÓN DE OPERARIOS Y TABLETS MES */}
+      {/* MATRIZ DE CARGA Y PRIORIZACIÓN DE OPERARIOS Y TABLETAS */}
       {modalMatrizCargaAbierto && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4 font-sans">
           <div className="bg-white rounded-xl shadow-2xl max-w-5xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto border-t-4 border-blue-600 text-xs">
             <div className="flex justify-between items-start border-b pb-3">
               <div>
                 <span className="px-2.5 py-1 bg-blue-100 text-blue-800 text-[10px] font-extrabold rounded uppercase tracking-wider">
-                  📱 Matriz de Carga & Priorización de Cola en Tablets MES [ISO 9001:2026]
+                  📱 Matriz de carga por operario y estación de producción
                 </span>
                 <h3 className="text-xl font-bold text-slate-800 mt-2">
-                  Gestión de Operarios y Secuencia de Fabricación — Unidad: <span className="text-blue-700">{areaActiva}</span>
+                  Gestión de operarios y secuencia de fabricación — área: <span className="text-blue-700">{areaActiva}</span>
                 </h3>
               </div>
               <button 
@@ -1181,21 +1175,32 @@ export default function ProduccionLiderView() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {(CATALAGO_RECURSOS[areaActiva]?.operarios || []).map((operario) => {
-                const sublotesOperario = listaSublotes.filter(s => s.operario_nombre === operario);
-                const enEjecucion = sublotesOperario.find(s => s.estado_sublote === 'EN_PRODUCCION');
-                const enCola = sublotesOperario.filter(s => s.estado_sublote !== 'EN_PRODUCCION');
+              {gruposOperarioEstacion.length === 0 && (
+                <p className="col-span-full rounded-lg border border-slate-200 bg-slate-50 p-6 text-center text-slate-500">
+                  No hay órdenes asignadas a operarios y estaciones de esta área.
+                </p>
+              )}
+              {gruposOperarioEstacion.map(({ operarioNombre, maquinaCodigo }) => {
+                const sublotesOperario = listaSublotes.filter(
+                  (s) => s.operario_nombre === operarioNombre && s.maquina_codigo === maquinaCodigo
+                );
+                const estadosActivos = ['EN_SETUP', 'EN_PRODUCCION', 'PAUSADA'];
+                const estadosEnCola = ['PENDIENTE', 'PENDIENTE_ASIGNACION', 'EN_COLA'];
+                const enEjecucion = sublotesOperario.find((s) => estadosActivos.includes(s.estado_sublote));
+                const enCola = sublotesOperario
+                  .filter((s) => estadosEnCola.includes(s.estado_sublote))
+                  .sort((a, b) => Number(a.prioridad_cola || 0) - Number(b.prioridad_cola || 0));
 
                 return (
-                  <div key={operario} className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-3 flex flex-col justify-between shadow-sm">
+                  <div key={`${operarioNombre}::${maquinaCodigo}`} className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-3 flex flex-col justify-between shadow-sm">
                     <div className="space-y-2">
                       <div className="flex justify-between items-center border-b pb-2">
                         <div>
-                          <strong className="text-sm font-bold text-slate-800 block">👤 {operario}</strong>
-                          <span className="text-[10px] font-mono text-slate-500">Estación: {CATALAGO_RECURSOS[areaActiva]?.maquinas?.[0] || 'G-01'}</span>
+                          <strong className="text-sm font-bold text-slate-800 block">👤 {operarioNombre}</strong>
+                          <span className="text-[10px] font-mono text-slate-500">Estación: {maquinaCodigo}</span>
                         </div>
                         <span className="px-2 py-0.5 bg-blue-100 text-blue-900 font-extrabold rounded text-[10px]">
-                          {sublotesOperario.length} Órdenes
+                          {sublotesOperario.length} órdenes
                         </span>
                       </div>
 
@@ -1205,13 +1210,15 @@ export default function ProduccionLiderView() {
                         {enEjecucion ? (
                           <div className="p-2.5 bg-emerald-50 rounded-lg border border-emerald-300 space-y-1">
                             <div className="flex justify-between items-center font-bold">
-                              <span className="font-mono text-blue-900">OP-{enEjecucion.codigo_op}</span>
-                              <span className="text-[9px] bg-emerald-600 text-white px-1.5 py-0.5 rounded font-extrabold">EN MÁQUINA</span>
+                              <span className="font-mono text-blue-900">Orden {enEjecucion.codigo_op}</span>
+                              <span className="text-[9px] bg-emerald-600 text-white px-1.5 py-0.5 rounded font-extrabold">
+                                {enEjecucion.estado_sublote === 'PAUSADA' ? 'EN PAUSA' : enEjecucion.estado_sublote === 'EN_SETUP' ? 'EN PREPARACIÓN' : 'EN PRODUCCIÓN'}
+                              </span>
                             </div>
                             <p className="font-bold text-slate-800 text-[11px]">{enEjecucion.detalle_pieza}</p>
                             <div className="text-[10px] text-slate-600 flex justify-between pt-1 border-t border-emerald-200">
-                              <span>Cant: <strong>{enEjecucion.cantidad_asignada} UND</strong></span>
-                              <span className="font-mono font-bold text-purple-900">⏱️ {formatearTiempoDias(enEjecucion.segundos_produccion || 0)}</span>
+                              <span>Cantidad: <strong>{enEjecucion.cantidad_asignada} unidades</strong></span>
+                              <span className="font-mono font-bold text-purple-900">⏱️ {formatearTiempoMinutos(enEjecucion.segundos_produccion || 0)}</span>
                             </div>
                           </div>
                         ) : (
@@ -1223,7 +1230,7 @@ export default function ProduccionLiderView() {
 
                       {/* Cola de Trabajo Priorizada */}
                       <div className="space-y-1.5 pt-1">
-                        <span className="text-[10px] font-bold text-slate-500 uppercase block">📋 Cola de Espera Priorizada ({enCola.length}):</span>
+                        <span className="text-[10px] font-bold text-slate-500 uppercase block">                        📋 Cola de espera priorizada ({enCola.length}):</span>
                         {enCola.length === 0 ? (
                           <p className="p-2 text-center text-slate-400 italic text-[10px] bg-white rounded border border-slate-200">
                             No hay órdenes pendientes en cola.
@@ -1233,30 +1240,30 @@ export default function ProduccionLiderView() {
                             {enCola.map((sub, idx) => (
                               <div key={sub.id_sublote} className="p-2 bg-white rounded-lg border border-slate-200 flex justify-between items-center shadow-xs">
                                 <div>
-                                  <span className="font-mono font-bold text-purple-800 text-[11px]">#{idx + 1} OP-{sub.codigo_op}</span>
+                                  <span className="font-mono font-bold text-purple-800 text-[11px]">#{idx + 1} Orden {sub.codigo_op}</span>
                                   <p className="font-semibold text-slate-800 text-[10px] truncate max-w-[140px]">{sub.detalle_pieza || sub.nombre_proceso}</p>
-                                  <span className="text-[9px] text-slate-500">Cant: {sub.cantidad_asignada} UND</span>
+                                  <span className="text-[9px] text-slate-500">Cantidad: {sub.cantidad_asignada} unidades</span>
                                 </div>
                                 <div className="flex flex-col gap-1">
                                   <button
                                     type="button"
                                     disabled={idx === 0}
-                                    onClick={() => handleMoverPrioridadSublote(operario, idx, 'SUBIR')}
+                                    onClick={() => handleMoverPrioridadSublote(operarioNombre, maquinaCodigo, idx, 'SUBIR')}
                                     className={`px-1.5 py-0.5 text-[9px] font-extrabold rounded border ${
                                       idx === 0 ? 'bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed' : 'bg-blue-50 text-blue-800 border-blue-300 hover:bg-blue-100 cursor-pointer'
                                     }`}
-                                    title="Subir prioridad en la Tablet"
+                                    title="Subir prioridad en la tableta"
                                   >
                                     ▲ Subir
                                   </button>
                                   <button
                                     type="button"
                                     disabled={idx === enCola.length - 1}
-                                    onClick={() => handleMoverPrioridadSublote(operario, idx, 'BAJAR')}
+                                    onClick={() => handleMoverPrioridadSublote(operarioNombre, maquinaCodigo, idx, 'BAJAR')}
                                     className={`px-1.5 py-0.5 text-[9px] font-extrabold rounded border ${
                                       idx === enCola.length - 1 ? 'bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed' : 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200 cursor-pointer'
                                     }`}
-                                    title="Bajar prioridad en la Tablet"
+                                    title="Bajar prioridad en la tableta"
                                   >
                                     ▼ Bajar
                                   </button>
@@ -1278,130 +1285,19 @@ export default function ProduccionLiderView() {
                 onClick={() => setModalMatrizCargaAbierto(false)}
                 className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded text-xs transition cursor-pointer"
               >
-                Cerrar Matriz
+                Cerrar matriz
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* MODAL EXPEDIENTE COMPLETO DE LA ORDEN DE PRODUCCIÓN */}
-      {modalExpedienteOpAbierto && ordenSeleccionada && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4 font-sans">
-          <div className="bg-white rounded-xl shadow-2xl max-w-5xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto border-t-4 border-blue-600 text-xs">
-            <div className="flex justify-between items-start border-b pb-3">
-              <div>
-                <span className="px-2.5 py-1 bg-blue-100 text-blue-800 text-[10px] font-extrabold rounded uppercase tracking-wider">
-                  📋 Expediente de Orden de Producción (OP) [SGI ISO 9001:2026]
-                </span>
-                <h3 className="text-xl font-bold text-slate-800 mt-2">
-                  Orden de Producción N°: <span className="text-blue-700 font-mono font-extrabold">OP-{ordenSeleccionada.codigo_op}</span>
-                </h3>
-              </div>
-              <button 
-                type="button"
-                onClick={() => setModalExpedienteOpAbierto(false)} 
-                className="text-slate-400 hover:text-slate-600 font-bold text-xl cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200 text-slate-800 text-xs">
-              <div>
-                <span className="text-[10px] font-bold text-slate-500 uppercase block">Pedido Comercial Relacionado</span>
-                <strong className="text-purple-800 font-mono text-xs">📋 {ordenSeleccionada.numero_pedido || 'PED-2026-088'}</strong>
-              </div>
-              <div>
-                <span className="text-[10px] font-bold text-slate-500 uppercase block">Cliente / Razón Social</span>
-                <strong className="text-slate-800 text-xs">🏢 {ordenSeleccionada.cliente_nombre || 'Ecopetrol S.A.'}</strong>
-              </div>
-              <div>
-                <span className="text-[10px] font-bold text-slate-500 uppercase block">Planta de Fabricación</span>
-                <strong className="text-slate-800 text-xs">🏭 {ordenSeleccionada.unidad_planta || areaActiva}</strong>
-              </div>
-              <div>
-                <span className="text-[10px] font-bold text-slate-500 uppercase block">Diseñador Asignado</span>
-                <strong className="text-slate-700">👤 {ordenSeleccionada.disenador || 'Ing. Carlos Ruiz'}</strong>
-              </div>
-              <div>
-                <span className="text-[10px] font-bold text-slate-500 uppercase block">Fecha Compromiso Producción</span>
-                <strong className="text-purple-900 font-bold">📅 {ordenSeleccionada.fecha_parcial || '2026-10-31'}</strong>
-              </div>
-              <div>
-                <span className="text-[10px] font-bold text-slate-500 uppercase block">Estado General OP</span>
-                <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-300 font-extrabold rounded text-[10px] inline-block mt-0.5">
-                  🟢 LIBERADA A PLANTA
-                </span>
-              </div>
-            </div>
-
-            <div className="space-y-2 border p-4 rounded-xl bg-white shadow-sm">
-              <h4 className="font-bold text-slate-800 text-xs flex items-center justify-between border-b pb-2">
-                <span className="flex items-center gap-1.5">📦 Piezas e Ítems que Conforman la Orden de Producción ({ordenSeleccionada.piezas?.length || 1})</span>
-                <span className="text-[10px] text-blue-800 font-mono font-bold">Consulta Conectada a PostgreSQL</span>
-              </h4>
-
-              <div className="overflow-x-auto border border-slate-200 rounded-lg">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead className="bg-slate-100 font-bold text-slate-700 uppercase border-b text-[10px]">
-                    <tr>
-                      <th className="p-2.5 text-center w-10">#</th>
-                      <th className="p-2.5">Código Plano</th>
-                      <th className="p-2.5 text-center">Rev.</th>
-                      <th className="p-2.5">Descripción de la Pieza</th>
-                      <th className="p-2.5 text-center">Cant. Solicitada</th>
-                      <th className="p-2.5">Materia Prima / Especificación BOM</th>
-                      <th className="p-2.5 text-center">Plano PDF</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 text-slate-700">
-                    {(ordenSeleccionada.piezas || []).map((pz, idx) => (
-                      <tr key={idx} className="hover:bg-slate-50 transition">
-                        <td className="p-2.5 text-center font-mono text-slate-400">{idx + 1}</td>
-                        <td className="p-2.5 font-mono font-bold text-blue-900">{pz.codigo_plano || ordenSeleccionada.codigo_plano}</td>
-                        <td className="p-2.5 text-center font-bold text-slate-600">{pz.revision || ordenSeleccionada.revision || 'REV-01'}</td>
-                        <td className="p-2.5 font-bold text-slate-800">{pz.detalle_pieza || ordenSeleccionada.detalle_pieza}</td>
-                        <td className="p-2.5 text-center font-extrabold text-blue-900">
-                          <span className="bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
-                            {pz.cantidad || ordenSeleccionada.cantidad_total} UND
-                          </span>
-                        </td>
-                        <td className="p-2.5 font-medium text-slate-700">{pz.material_requerido || ordenSeleccionada.descripcion_material}</td>
-                        <td className="p-2.5 text-center">
-                          {(pz.archivo_url || ordenSeleccionada.archivo_url) && (pz.archivo_url || ordenSeleccionada.archivo_url) !== '#' ? (
-                            <button
-                              type="button"
-                              onClick={() => handleAbrirVisorPlano(pz.archivo_url || ordenSeleccionada.archivo_url, ordenSeleccionada.codigo_op, pz.codigo_plano || ordenSeleccionada.codigo_plano)}
-                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded text-[10px] transition shadow-sm cursor-pointer flex items-center gap-1 mx-auto"
-                            >
-                              👁️ Ver Plano PDF
-                            </button>
-                          ) : (
-                            <span className="text-[10px] text-amber-700 font-semibold italic bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                              ⏳ Sin Adjunto
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="flex justify-end border-t pt-3">
-              <button
-                type="button"
-                onClick={() => setModalExpedienteOpAbierto(false)}
-                className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded text-xs transition cursor-pointer"
-              >
-                Cerrar Expediente
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ExpedienteOpModal
+        abierto={modalExpedienteOpAbierto && Boolean(ordenSeleccionada)}
+        onClose={() => setModalExpedienteOpAbierto(false)}
+        codigoOp={ordenSeleccionada?.codigo_op}
+        usuario={usuarioActual}
+      />
 
       {/* MODAL 1: DETALLE DE ESTADOS (VER ESTADO) */}
       {modalEstadoAbierto && ordenSeleccionada && (
@@ -1410,7 +1306,7 @@ export default function ProduccionLiderView() {
             <div className="flex justify-between items-start border-b pb-2">
               <div>
                 <span className="px-2 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-extrabold rounded uppercase">
-                  Trazabilidad MES por Días [ISO 9001:2026]
+                  Trazabilidad de producción por minutos
                 </span>
                 <h3 className="text-base font-bold text-slate-800 mt-1">
                   Mapeo OP-{ordenSeleccionada.codigo_op} — {ordenSeleccionada.detalle_pieza}
@@ -1447,7 +1343,7 @@ export default function ProduccionLiderView() {
                             ⚙️ EN PROCESO
                           </span>
                           <span className="text-[10px] font-mono font-bold text-purple-900">
-                            ⏱️ {formatearTiempoDias(sub.segundos_produccion || 0)}
+                            ⏱️ {formatearTiempoMinutos(sub.segundos_produccion || 0)}
                           </span>
                         </div>
                       </div>
@@ -1457,14 +1353,14 @@ export default function ProduccionLiderView() {
             </div>
 
             <div className="space-y-1.5">
-              <h4 className="font-bold text-slate-700 text-xs">📊 Consolidador por Etapas de Fabricación (Permanencia en Días)</h4>
+              <h4 className="font-bold text-slate-700 text-xs">📊 Consolidador por Etapas de Fabricación (Permanencia en Minutos)</h4>
               
               <div className="grid grid-cols-1 gap-1.5">
                 <div className="p-2 bg-emerald-50/60 rounded border border-emerald-200 flex justify-between items-center">
                   <span className="font-bold text-emerald-900 text-xs">🟢 1. PROGRAMADO (En Cola)</span>
                   <div className="text-right">
                     <span className="font-extrabold text-emerald-900 block">{ordenSeleccionada.desglose_estados?.PROGRAMADO?.cantidad || 0} UND</span>
-                    <span className="text-[10px] font-bold text-slate-500">⏱️ {ordenSeleccionada.desglose_estados?.PROGRAMADO?.tiempo_dias || '0 Días'}</span>
+                    <span className="text-[10px] font-bold text-slate-500">⏱️ {ordenSeleccionada.desglose_estados?.PROGRAMADO?.tiempo_dias || '0 min'}</span>
                   </div>
                 </div>
 
@@ -1472,7 +1368,7 @@ export default function ProduccionLiderView() {
                   <span className="font-bold text-blue-900 text-xs">⚙️ 2. EN PRODUCCIÓN (Mecanizado)</span>
                   <div className="text-right">
                     <span className="font-extrabold text-blue-900 block">{ordenSeleccionada.desglose_estados?.EN_PRODUCCION?.cantidad || 0} UND</span>
-                    <span className="text-[10px] font-bold text-slate-500">⏱️ {ordenSeleccionada.desglose_estados?.EN_PRODUCCION?.tiempo_dias || '0 Días'}</span>
+                    <span className="text-[10px] font-bold text-slate-500">⏱️ {ordenSeleccionada.desglose_estados?.EN_PRODUCCION?.tiempo_dias || '0 min'}</span>
                   </div>
                 </div>
 
@@ -1480,7 +1376,7 @@ export default function ProduccionLiderView() {
                   <span className="font-bold text-amber-900 text-xs">🔥 3. TRATAMIENTO TÉRMICO (Proveedor)</span>
                   <div className="text-right">
                     <span className="font-extrabold text-amber-900 block">{ordenSeleccionada.desglose_estados?.TRATAMIENTO_TERMICO?.cantidad || 0} UND</span>
-                    <span className="text-[10px] font-bold text-slate-500">⏱️ {ordenSeleccionada.desglose_estados?.TRATAMIENTO_TERMICO?.tiempo_dias || '0 Días'}</span>
+                    <span className="text-[10px] font-bold text-slate-500">⏱️ {ordenSeleccionada.desglose_estados?.TRATAMIENTO_TERMICO?.tiempo_dias || '0 min'}</span>
                   </div>
                 </div>
 
@@ -1488,7 +1384,7 @@ export default function ProduccionLiderView() {
                   <span className="font-bold text-purple-900 text-xs">🔍 4. INSPECCIÓN CALIDAD (Metrología)</span>
                   <div className="text-right">
                     <span className="font-extrabold text-purple-900 block">{ordenSeleccionada.desglose_estados?.INSPECCION_CALIDAD?.cantidad || 0} UND</span>
-                    <span className="text-[10px] font-bold text-slate-500">⏱️ {ordenSeleccionada.desglose_estados?.INSPECCION_CALIDAD?.tiempo_dias || '0 Días'}</span>
+                    <span className="text-[10px] font-bold text-slate-500">⏱️ {ordenSeleccionada.desglose_estados?.INSPECCION_CALIDAD?.tiempo_dias || '0 min'}</span>
                   </div>
                 </div>
 
@@ -1522,10 +1418,10 @@ export default function ProduccionLiderView() {
             <div className="flex justify-between items-start border-b pb-2">
               <div>
                 <span className="px-2 py-0.5 bg-amber-100 text-amber-900 text-[10px] font-extrabold rounded uppercase">
-                  Gestión de Insumos y Entregas Parciales BOM
+                  Gestión de insumos y entregas parciales
                 </span>
                 <h3 className="text-base font-bold text-slate-800 mt-1">
-                  Materia Prima OP-{ordenSeleccionada.codigo_op || 'OP-100'} — PR: {ordenSeleccionada.trazabilidad_bom?.solicitud_pr || 'PR-6802'}
+                  Materiales de la orden {ordenSeleccionada.codigo_op || 'sin código'} — Requisición: {ordenSeleccionada.trazabilidad_bom?.solicitud_pr || 'sin número'}
                 </h3>
                 <p className="text-[11px] text-slate-500 font-medium">{ordenSeleccionada.descripcion_material || ordenSeleccionada.material_requerido}</p>
               </div>
@@ -1547,10 +1443,30 @@ export default function ProduccionLiderView() {
               </div>
             </div>
 
+            <div className="overflow-hidden rounded-lg border border-slate-200">
+              <div className="bg-slate-100 px-3 py-2 text-[10px] font-extrabold uppercase text-slate-600">
+                Estado real de abastecimiento de materiales
+              </div>
+              {ordenSeleccionada.bom_items?.length > 0 ? (
+                <div className="divide-y divide-slate-200">
+                  {ordenSeleccionada.bom_items.map((item, index) => (
+                    <div key={`${item.codigo_material}-${index}`} className="flex items-center justify-between gap-3 px-3 py-2">
+                      <span className="text-[11px] font-bold text-slate-700">
+                        {item.codigo_material} — {item.descripcion}
+                      </span>
+                      {renderBadgeBomPieza(item.estado_abastecimiento)}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="p-3 text-[11px] font-bold text-amber-900">La orden no tiene líneas de materiales registradas.</p>
+              )}
+            </div>
+
             <div className="space-y-1.5">
               <h4 className="font-bold text-slate-700 text-xs flex justify-between">
                 <span>📦 Historial de Entregas del Proveedor</span>
-                <span className="text-slate-400 font-normal">{ordenSeleccionada.trazabilidad_bom?.proveedor || 'Proveedor General'}</span>
+                <span className="text-slate-400 font-normal">{ordenSeleccionada.trazabilidad_bom?.proveedor || 'Sin proveedor registrado'}</span>
               </h4>
 
               <div className="overflow-y-auto max-h-48 border border-slate-200 rounded-lg">
@@ -1589,7 +1505,7 @@ export default function ProduccionLiderView() {
                 onClick={() => setModalBOMAbierto(false)}
                 className="px-4 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded text-xs cursor-pointer"
               >
-                Cerrar Detalle BOM
+                Cerrar detalle de materiales
               </button>
             </div>
           </div>
@@ -1603,10 +1519,10 @@ export default function ProduccionLiderView() {
             <div className="flex justify-between items-start border-b pb-2">
               <div>
                 <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-extrabold rounded uppercase">
-                  Programación MES [PM-03]
+                  Programación de producción
                 </span>
                 <h3 className="text-base font-bold text-slate-800 mt-1">
-                  Asignar Operación: OP-{ordenSeleccionada.codigo_op}
+                  Asignar proceso a la orden {ordenSeleccionada.codigo_op}
                 </h3>
                 <p className="text-[11px] text-slate-500 font-medium">{ordenSeleccionada.detalle_pieza}</p>
               </div>

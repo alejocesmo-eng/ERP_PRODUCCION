@@ -42,9 +42,17 @@ Este documento establece las directrices de gobernanza técnica, arquitectura de
   - `403 Forbidden`: Expiración o invalidez de tokens de acceso temporal a planos.
   - `422 Unprocessable Entity`: Error de validación de datos (ej. enviar informe de Tratamiento Térmico sin foto).
 
+
+
+---
+## Enlaces de Gobierno
+- [[Inicio]]
+- [[Mapa de procesos]]
 ---
 
 ## 4. Índice General de la Bóveda (`00-Gobierno/Inicio.md`)
+
+
 
 ```mermaid
 graph TD
@@ -54,3 +62,5 @@ graph TD
     A --> E[[04-Calidad-ISO/PRO-CAL-001 - Metrologia y NC]]
     A --> F[[06-Pruebas/TC-PROD-001 - Pruebas CNC]]
     A --> G[[08-Decisiones/ADR-001 - Tiempos y Setup]]
+    
+       

@@ -12,7 +12,7 @@ export default function ProduccionView() {
   const [modalEjecucionAbierto, setModalEjecucionAbierto] = useState(false);
   const [opSeleccionada, setOpSeleccionada] = useState(null);
 
-  // Modal 2: Expediente Completo del Pedido Agrupador (SAP B1)
+  // Modal 2: Expediente completo del pedido agrupador
   const [modalPedidoAbierto, setModalPedidoAbierto] = useState(false);
   const [pedidoSeleccionado, setPedidoSeleccionado] = useState(null);
 
@@ -137,7 +137,7 @@ export default function ProduccionView() {
             <span>🏭</span> Producción y Planta (PM-03)
           </h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Control de Órdenes de Producción (OP), Verificación de Planos Técnicos y Trazabilidad de Piezas [ISO 9001:2026 / SAP B1]
+            Control de órdenes de producción, verificación de planos técnicos y trazabilidad de piezas
           </p>
         </div>
         <button 
@@ -384,7 +384,7 @@ export default function ProduccionView() {
             <div className="flex justify-between items-start border-b pb-3">
               <div>
                 <span className="px-2 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-bold rounded uppercase">
-                  Control de Ejecución e Inspección de OP [ISO 9001:2026 / SAP B1]
+                  Control de ejecución e inspección de órdenes de producción
                 </span>
                 <h3 className="text-xl font-bold text-slate-800 mt-1">
                   Orden de Producción: <span className="text-blue-700 font-mono">OP-{opSeleccionada.codigo_op}</span>
@@ -534,7 +534,7 @@ export default function ProduccionView() {
             <div className="flex justify-between items-start border-b pb-3">
               <div>
                 <span className="px-2 py-0.5 bg-purple-100 text-purple-800 text-[10px] font-bold rounded uppercase">
-                  Expediente Agrupador Comercial [SAP B1]
+                  Expediente agrupador comercial
                 </span>
                 <h3 className="text-xl font-bold text-slate-800 mt-1">
                   Pedido Comercial N°: <span className="text-purple-700 font-mono">{pedidoSeleccionado.numero_pedido}</span>

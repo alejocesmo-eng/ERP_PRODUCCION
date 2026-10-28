@@ -1,7 +1,7 @@
 # app/db/models_calidad.py
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Boolean, Text, DateTime, JSON
+from sqlalchemy import Column, String, Integer, Boolean, Text, DateTime, JSON, Numeric
 from sqlalchemy.dialects.postgresql import UUID
 from app.db.database import Base
 
@@ -23,6 +23,10 @@ class InspeccionCalidad(Base):
     descripcion_tratamiento = Column(Text, nullable=True)
     piezas_enviadas_tratamiento = Column(Integer, default=0)
     proveedor_tratamiento_email = Column(String(150), nullable=True)
+    proveedor_tratamiento = Column(String(150), nullable=True)
+    costo_tratamiento = Column(Numeric(14, 2), nullable=False, default=0)
+    mediciones_dimensionales = Column(JSON, nullable=False, default=list)
+    informe_tratamiento_html = Column(Text, nullable=True)
     
     # Fotos (almacena array JSON de cadenas Base64 o URLs)
     registros_fotograficos = Column(JSON, default=list)

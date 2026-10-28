@@ -76,6 +76,7 @@ class SubLoteOperacion(Base):
     operario_id = Column(String(100), nullable=True)
     operario_nombre = Column(String(150), nullable=True)
     maquina_codigo = Column(String(50), nullable=True)
+    prioridad_cola = Column(Integer, nullable=False, default=0)
     
     estado_sublote = Column(Enum(EstadoOperacionEnum), default=EstadoOperacionEnum.EN_COLA)
     
@@ -106,6 +107,9 @@ class RegistroTiempoOperario(Base):
     
     tiempo_setup_segundos = Column(Integer, default=0)
     tiempo_produccion_segundos = Column(Integer, default=0)
+    fase_activa = Column(String(20), nullable=True)
+    justificacion_exceso = Column(Text, nullable=True)
+    motivo_pausa = Column(String(150), nullable=True)
     
     # Piezas efectivamente reportadas en este turno/operación
     piezas_conformes_ok = Column(Integer, default=0, nullable=False)
@@ -127,6 +131,7 @@ class TipoNotificacionEnum(str, enum.Enum):
     ENTREGA_PARCIAL = "ENTREGA_PARCIAL"            # Operario entregó piezas parciales
     ALERTA_PARO_MAQUINA = "ALERTA_PARO_MAQUINA"    # Falla técnica / Causa de espera
     PIEZAS_DEFECTUOSAS = "PIEZAS_DEFECTUOSAS"      # Alerta por alto porcentaje de Scrap
+    CALIDAD_APROBADA_DESPACHO = "CALIDAD_APROBADA_DESPACHO"
 
 class NotificacionLider(Base):
     """

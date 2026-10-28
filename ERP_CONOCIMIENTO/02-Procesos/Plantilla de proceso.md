@@ -49,7 +49,10 @@ sistema_destino: ERP FastAPI + PostgreSQL
 - **Maquinaria**: Tornos CNC, Centros de Mecanizado CNC, máquinas convencionales de apoyo.
 - **Instrumentos Metrológicos**: Micrómetros (interiores/exteriores), Calibradores pie de rey, Patrones de calibración/bloques patrón.
 - **Herramental**: Insertos, plaquitas, portaherramientas, brocas, fresas (gestión de stock migrado).
-
+---
+## Enlaces de Control
+- [[Inicio]]
+- [[Arquitectura del ERP]]
 ## 4. Diagrama del Proceso
 
 ```mermaid

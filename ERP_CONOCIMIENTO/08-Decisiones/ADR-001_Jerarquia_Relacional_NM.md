@@ -92,3 +92,8 @@ Existen dos cuellos de botella principales:
 
 3. **Preguntas a responder para terminar de completarlo**:
    - ¿Qué archivo de la bóveda de Obsidian te gustaría que trabajemos a continuación? (Sugerencias: **Plantilla de Calidad e Inspección Metrológica / No Conformidades** o la **Plantilla de Pruebas**).
+---
+## Enlaces de Arquitectura
+- [[Modelo_ERD_PostgreSQL]]
+- [[Mapeo_Modulos_SGI_vs_SAP]]
+- [[Mapa de procesos]]

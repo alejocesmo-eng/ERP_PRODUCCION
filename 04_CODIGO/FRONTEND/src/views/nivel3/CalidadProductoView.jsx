@@ -1,6 +1,30 @@
 // src/views/CalidadProductoView.jsx
 import React, { useState, useEffect } from 'react';
 import VisorPlanoModal from '../../components/VisorPlanoModal';
+import API from '../../services/api';
+
+const MEDICION_INICIAL = {
+  caracteristica: '',
+  nominal: '',
+  tolerancia_min: '',
+  tolerancia_max: '',
+  valor_medido: ''
+};
+const ESTADOS_ORDEN = {
+  TERMINADA: 'Terminada',
+  INSPECCION_CALIDAD: 'En inspección de calidad',
+  EN_REVISION_CALIDAD: 'En revisión de calidad',
+  PENDIENTE_MATERIAL: 'Pendiente de materiales',
+  LIBERADA_PRODUCCION: 'Liberada a producción',
+  EN_PRODUCCION: 'En producción',
+  EN_PROCESO_CNC: 'En mecanizado',
+  EN_SETUP: 'En preparación de máquina',
+  EN_INSPECCION: 'En inspección de calidad',
+  LISTA_PARA_LIBERAR: 'Lista para liberación',
+  LIBERADA: 'Liberada',
+  CERRADA: 'Cerrada',
+  CANCELADA: 'Cancelada'
+};
 
 export default function CalidadProductoView() {
   const [ordenes, setOrdenes] = useState([]);
@@ -19,10 +43,15 @@ export default function CalidadProductoView() {
   const [descripcionTratamiento, setDescripcionTratamiento] = useState('');
   const [piezasTratamiento, setPiezasTratamiento] = useState(0);
   const [emailProveedor, setEmailProveedor] = useState('');
+  const [nombreProveedor, setNombreProveedor] = useState('');
+  const [costoTratamiento, setCostoTratamiento] = useState('0');
   const [observaciones, setObservaciones] = useState('');
   const [fotos, setFotos] = useState([]);
+  const [mediciones, setMediciones] = useState([{ ...MEDICION_INICIAL }]);
   const [mensajeExito, setMensajeExito] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [informePDF, setInformePDF] = useState('');
+  const [visorAbierto, setVisorAbierto] = useState(false);
 
   // Cargar órdenes terminadas desde el backend
   useEffect(() => {
@@ -34,17 +63,13 @@ export default function CalidadProductoView() {
     setCargandoAbiertas(true);
     setErrorAbiertas('');
     try {
-      const response = await fetch('/api/v1/calidad/ordenes-abiertas');
-      if (!response.ok) {
-        throw new Error('Error al cargar las órdenes de producción.');
-      }
-      const data = await response.json();
+      const { data } = await API.get('/calidad/ordenes-abiertas');
       if (!Array.isArray(data)) {
         throw new Error('La respuesta de órdenes de producción no es válida.');
       }
       setOrdenesAbiertas(data.filter((op) => !['CERRADA', 'CANCELADA'].includes(op.estado_produccion)));
     } catch (err) {
-      setErrorAbiertas(err.message || 'Error de conexión con el servidor backend.');
+      setErrorAbiertas(err.response?.data?.detail || err.message || 'Error de conexión con el servidor.');
     } finally {
       setCargandoAbiertas(false);
     }
@@ -53,15 +78,10 @@ export default function CalidadProductoView() {
   const cargarOrdenesTerminadas = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/v1/calidad/ordenes-terminadas');
-      if (response.ok) {
-        const data = await response.json();
-        setOrdenes(data);
-      } else {
-        setErrorMsg('Error al cargar órdenes de producción terminadas.');
-      }
+      const { data } = await API.get('/calidad/ordenes-terminadas');
+      setOrdenes(Array.isArray(data) ? data : []);
     } catch (err) {
-      setErrorMsg('Error de conexión con el servidor backend.');
+      setErrorMsg(err.response?.data?.detail || 'Error de conexión con el servidor.');
     } finally {
       setLoading(false);
     }
@@ -69,14 +89,22 @@ export default function CalidadProductoView() {
 
   // Manejo de imágenes (Conversión a Base64)
   const handleFotoUpload = (e) => {
-    const files = Array.from(e.target.files);
-    files.forEach((file) => {
+    const files = Array.from(e.target.files || []);
+    const invalid = files.find((file) =>
+      !['image/jpeg', 'image/png'].includes(file.type) || file.size > 5 * 1024 * 1024
+    );
+    if (invalid) {
+      setErrorMsg('Adjunte únicamente imágenes JPG o PNG de máximo 5 MB cada una.');
+      e.target.value = '';
+      return;
+    }
+    Promise.all(files.map((file) => new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setFotos((prev) => [...prev, reader.result]);
-      };
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error(`No se pudo leer el archivo ${file.name}.`));
       reader.readAsDataURL(file);
-    });
+    }))).then((imagenes) => setFotos((prev) => [...prev, ...imagenes]))
+      .catch((error) => setErrorMsg(error.message));
   };
 
   const handleEliminarFoto = (index) => {
@@ -89,8 +117,12 @@ export default function CalidadProductoView() {
     setDescripcionTratamiento('');
     setPiezasTratamiento(op.cantidad_terminada || 0);
     setEmailProveedor('');
+    setNombreProveedor('');
+    setCostoTratamiento('0');
     setObservaciones('');
     setFotos([]);
+    setMediciones([{ ...MEDICION_INICIAL }]);
+    setInformePDF('');
     setMensajeExito('');
     setErrorMsg('');
   };
@@ -105,6 +137,21 @@ export default function CalidadProductoView() {
       setErrorMsg('Es obligatorio capturar/subir al menos un registro fotográfico de las piezas salientes.');
       return;
     }
+    const medicionesValidas = mediciones.filter((item) =>
+      item.caracteristica.trim()
+      && item.nominal !== ''
+      && item.tolerancia_min !== ''
+      && item.tolerancia_max !== ''
+      && item.valor_medido !== ''
+    );
+    if (medicionesValidas.length === 0) {
+      setErrorMsg('Registre al menos una medición dimensional completa.');
+      return;
+    }
+    if (medicionesValidas.some((item) => Number(item.tolerancia_min) > Number(item.tolerancia_max))) {
+      setErrorMsg('Revise los límites de tolerancia: el mínimo no puede superar el máximo.');
+      return;
+    }
 
     const payload = {
       codigo_op: ordenSeleccionada.codigo_op,
@@ -115,35 +162,36 @@ export default function CalidadProductoView() {
       descripcion_tratamiento: resultado === 'APROBADO_TRATAMIENTO' ? descripcionTratamiento : null,
       piezas_enviadas_tratamiento: resultado === 'APROBADO_TRATAMIENTO' ? parseInt(piezasTratamiento) : 0,
       proveedor_tratamiento_email: resultado === 'APROBADO_TRATAMIENTO' ? emailProveedor : null,
+      proveedor_tratamiento: resultado === 'APROBADO_TRATAMIENTO' ? nombreProveedor : null,
+      costo_tratamiento: resultado === 'APROBADO_TRATAMIENTO' ? Number(costoTratamiento || 0) : 0,
+      mediciones_dimensionales: medicionesValidas.map((item) => ({
+        ...item,
+        nominal: Number(item.nominal),
+        tolerancia_min: Number(item.tolerancia_min),
+        tolerancia_max: Number(item.tolerancia_max),
+        valor_medido: Number(item.valor_medido)
+      })),
       registros_fotograficos: fotos,
       observaciones_inspector: observaciones
     };
 
     try {
-      const response = await fetch('/api/v1/calidad/inspeccionar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (response.ok) {
-        setMensajeExito('Inspección de calidad registrada correctamente.');
-        setOrdenSeleccionada(null);
-        cargarOrdenesTerminadas();
-      } else {
-        const errorData = await response.json();
-        setErrorMsg(errorData.detail || 'Error al procesar la inspección.');
-      }
+      const { data } = await API.post('/calidad/inspeccionar', payload);
+      setMensajeExito(data.informe_tratamiento_pdf_base64
+        ? 'Inspección guardada. Informe técnico generado y correo al proveedor simulado.'
+        : 'Inspección de calidad registrada correctamente.');
+      setInformePDF(data.informe_tratamiento_pdf_base64 || '');
+      setOrdenSeleccionada(null);
+      await cargarOrdenesTerminadas();
     } catch (err) {
-      setErrorMsg('Error de red al conectar con el backend.');
+      setErrorMsg(err.response?.data?.detail || 'Error de red al conectar con el servidor.');
     }
   };
 
   const ordenesFiltradas = ordenes.filter(
     (item) =>
-      item.codigo_op.toLowerCase().includes(busqueda.toLowerCase()) ||
-      item.codigo_plano.toLowerCase().includes(busqueda.toLowerCase()) ||
-      item.producto.toLowerCase().includes(busqueda.toLowerCase())
+      [item.codigo_op, item.codigo_plano, item.producto]
+        .some((valor) => String(valor || '').toLowerCase().includes(busqueda.toLowerCase()))
   );
 
   const ordenesAbiertasFiltradas = ordenesAbiertas.filter((op) => {
@@ -164,7 +212,7 @@ export default function CalidadProductoView() {
       <header className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-            <span>🗜️</span> Calidad de Producto & Metrología (PM-05)
+            <span>🗜️</span> Calidad de Producto y Metrología
           </h1>
           <p className="text-xs text-slate-500 mt-1">
             Consulta de órdenes abiertas y recepción de órdenes terminadas para inspección.
@@ -206,7 +254,7 @@ export default function CalidadProductoView() {
           {errorAbiertas && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-800">{errorAbiertas}</div>}
           <input
             type="text"
-            placeholder="Buscar por OP, pedido, cliente, plano o producto..."
+            placeholder="Buscar por código de orden, pedido, cliente, plano o producto..."
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
             className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
@@ -218,7 +266,7 @@ export default function CalidadProductoView() {
               <table className="w-full border-collapse text-left text-xs">
                 <thead className="bg-slate-100 text-[11px] font-extrabold uppercase text-slate-600">
                   <tr>
-                    <th className="border-b border-slate-200 px-3 py-2.5">Código OP</th>
+                    <th className="border-b border-slate-200 px-3 py-2.5">Código de orden</th>
                     <th className="border-b border-slate-200 px-3 py-2.5">Pedido / Cliente</th>
                     <th className="border-b border-slate-200 px-3 py-2.5">Plano</th>
                     <th className="border-b border-slate-200 px-3 py-2.5">Producto</th>
@@ -234,8 +282,8 @@ export default function CalidadProductoView() {
                       <td className="px-3 py-2.5"><span className="font-bold text-slate-700">{op.numero_pedido || '-'}</span><br /><span className="text-slate-500">{op.cliente_nombre || '-'}</span></td>
                       <td className="px-3 py-2.5 font-semibold text-blue-800">{op.codigo_plano || '-'}</td>
                       <td className="px-3 py-2.5">{op.detalle_producto || '-'}</td>
-                      <td className="px-3 py-2.5">{op.cantidad ?? 0} UND</td>
-                      <td className="px-3 py-2.5"><span className="font-bold text-slate-700">{op.estado_produccion || '-'}</span><br /><span className="text-slate-500">{op.porcentaje_avance ?? 0}%</span></td>
+                      <td className="px-3 py-2.5">{op.cantidad ?? 0} unidades</td>
+                      <td className="px-3 py-2.5"><span className="font-bold text-slate-700">{ESTADOS_ORDEN[op.estado_produccion] || op.estado_produccion || '-'}</span><br /><span className="text-slate-500">{op.porcentaje_avance ?? 0}% de avance</span></td>
                       <td className="px-3 py-2.5">
                         <button
                           type="button"
@@ -265,7 +313,20 @@ export default function CalidadProductoView() {
               <h3 className="text-sm font-extrabold text-slate-800">Inspección y Calidad de Producto Saliente</h3>
               <p className="mt-1 text-xs text-slate-500">Recepción de Órdenes Terminadas para Aprobación, Despacho o Tratamiento Térmico.</p>
             </div>
-            {mensajeExito && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800">{mensajeExito}</div>}
+            {mensajeExito && (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800">
+                {mensajeExito}
+                {informePDF && (
+                  <a
+                    className="ml-3 underline"
+                    href={`data:application/pdf;base64,${informePDF}`}
+                    download="informe-tratamiento-termico.pdf"
+                  >
+                    Descargar informe técnico PDF
+                  </a>
+                )}
+              </div>
+            )}
             {errorMsg && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-800">{errorMsg}</div>}
 
             {!ordenSeleccionada ? (
@@ -285,7 +346,7 @@ export default function CalidadProductoView() {
                     <table className="w-full border-collapse text-left text-xs">
                       <thead className="bg-slate-100 text-[11px] font-extrabold uppercase text-slate-600">
                         <tr>
-                          <th className="border-b border-slate-200 px-3 py-2.5">Código OP</th>
+                          <th className="border-b border-slate-200 px-3 py-2.5">Código de orden</th>
                           <th className="border-b border-slate-200 px-3 py-2.5">Plano / Pieza</th>
                           <th className="border-b border-slate-200 px-3 py-2.5">Descripción</th>
                           <th className="border-b border-slate-200 px-3 py-2.5">Cant. Terminada</th>
@@ -299,7 +360,7 @@ export default function CalidadProductoView() {
                               <td className="px-3 py-2.5 font-extrabold text-slate-800">{op.codigo_op}</td>
                               <td className="px-3 py-2.5 font-semibold text-blue-800">{op.codigo_plano}</td>
                               <td className="px-3 py-2.5">{op.producto}</td>
-                              <td className="px-3 py-2.5">{op.cantidad_terminada} UND</td>
+                              <td className="px-3 py-2.5">{op.cantidad_terminada} unidades</td>
                               <td className="px-3 py-2.5">
                                 <button
                                   type="button"
@@ -337,9 +398,9 @@ export default function CalidadProductoView() {
                 <div className="rounded-lg border border-slate-200 bg-slate-100 p-3 text-xs">
                   <strong className="font-bold text-slate-700">Plano Técnico PDF: </strong>
                   {ordenSeleccionada.url_plano_pdf ? (
-                    <a href={ordenSeleccionada.url_plano_pdf} target="_blank" rel="noopener noreferrer" className="font-bold text-blue-700 underline hover:text-blue-800">
-                      Abrir Plano {ordenSeleccionada.codigo_plano} (PDF)
-                    </a>
+                    <button type="button" onClick={() => setVisorAbierto(true)} className="font-bold text-blue-700 underline hover:text-blue-800">
+                      Ver plano {ordenSeleccionada.codigo_plano}
+                    </button>
                   ) : (
                     <span>No disponible</span>
                   )}
@@ -355,7 +416,7 @@ export default function CalidadProductoView() {
                     >
                       <option value="APROBADO_DESPACHO">Aprobar para Despacho al Cliente (Notifica a Jefe de Producción)</option>
                       <option value="APROBADO_TRATAMIENTO">Aprobar para Tratamiento Térmico (Envía correo a Proveedor)</option>
-                      <option value="RECHAZADO">Rechazar (Generar RNC)</option>
+                      <option value="RECHAZADO">Rechazar (registrar reporte de no conformidad)</option>
                     </select>
                   </div>
 
@@ -376,6 +437,16 @@ export default function CalidadProductoView() {
                       </div>
 
                       <div>
+                        <label className="mb-1.5 block text-xs font-bold">Proveedor de servicio:</label>
+                        <input
+                          value={nombreProveedor}
+                          onChange={(e) => setNombreProveedor(e.target.value)}
+                          required
+                          className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs text-slate-700"
+                        />
+                      </div>
+
+                      <div>
                         <label className="mb-1.5 block text-xs font-bold">Piezas Enviadas:</label>
                         <input
                           type="number"
@@ -384,6 +455,19 @@ export default function CalidadProductoView() {
                           required
                           min="1"
                           className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs text-slate-700 shadow-sm outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1.5 block text-xs font-bold">Costo estimado del servicio (COP):</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={costoTratamiento}
+                          onChange={(e) => setCostoTratamiento(e.target.value)}
+                          required
+                          className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs text-slate-700"
                         />
                       </div>
 
@@ -401,10 +485,63 @@ export default function CalidadProductoView() {
                     </div>
                   )}
 
+                  <section className="mb-4 rounded-xl border border-slate-200 bg-white p-4">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h4 className="text-xs font-extrabold text-slate-800">Registro de mediciones dimensionales</h4>
+                        <p className="text-[10px] text-slate-500">Capture valor nominal, tolerancias y valor medido de cada característica.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setMediciones((actuales) => [...actuales, { ...MEDICION_INICIAL }])}
+                        className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1.5 text-[10px] font-bold text-emerald-800"
+                      >
+                        + Añadir medición
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {mediciones.map((medicion, indice) => (
+                        <div key={`medicion-${indice}`} className="grid gap-2 rounded-lg bg-slate-50 p-2 sm:grid-cols-5">
+                          {[
+                            ['caracteristica', 'Característica / cota', 'text'],
+                            ['nominal', 'Nominal', 'number'],
+                            ['tolerancia_min', 'Límite mínimo', 'number'],
+                            ['tolerancia_max', 'Límite máximo', 'number'],
+                            ['valor_medido', 'Valor medido', 'number']
+                          ].map(([campo, etiqueta, tipo]) => (
+                            <label key={campo} className="space-y-1 text-[10px] font-bold text-slate-600">
+                              <span>{etiqueta}</span>
+                              <input
+                                required
+                                type={tipo}
+                                step={tipo === 'number' ? 'any' : undefined}
+                                value={medicion[campo]}
+                                onChange={(evento) => setMediciones((actuales) => actuales.map((actual, posicion) =>
+                                  posicion === indice ? { ...actual, [campo]: evento.target.value } : actual
+                                ))}
+                                className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs font-normal"
+                              />
+                            </label>
+                          ))}
+                          {mediciones.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => setMediciones((actuales) => actuales.filter((_, posicion) => posicion !== indice))}
+                              className="justify-self-end text-[10px] font-bold text-red-700 sm:col-span-5"
+                            >
+                              Quitar medición
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+
                   {/* Registro Fotográfico de Salida */}
                   <div className="mb-4">
                     <label className="mb-1.5 block text-xs font-bold text-slate-700">Registro Fotográfico de Salida (Obligatorio):</label>
-                    <input type="file" accept="image/*" multiple onChange={handleFotoUpload} className="block w-full cursor-pointer rounded-lg border border-slate-300 bg-white text-xs text-slate-600 file:mr-3 file:rounded-l-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-[11px] file:font-bold file:text-slate-700 hover:file:bg-slate-200" />
+                    <input required={fotos.length === 0} aria-label="Fotografías obligatorias del producto saliente" type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png" multiple onChange={handleFotoUpload} className="block w-full cursor-pointer rounded-lg border border-slate-300 bg-white text-xs text-slate-600 file:mr-3 file:rounded-l-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-[11px] file:font-bold file:text-slate-700 hover:file:bg-slate-200" />
+                    <p className="mt-1 text-[10px] text-slate-500">Se requiere al menos una imagen JPG o PNG; máximo 5 MB por archivo.</p>
                     
                     <div className="mt-3 flex flex-wrap gap-3">
                       {fotos.map((img, idx) => (
@@ -449,7 +586,7 @@ export default function CalidadProductoView() {
         <div role="dialog" aria-modal="true" aria-labelledby="detalle-orden-titulo" className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
           <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-xl border-t-4 border-blue-600 bg-white p-5 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-              <h3 id="detalle-orden-titulo" className="text-sm font-extrabold text-slate-800">Detalle de OP {ordenAbiertaSeleccionada.codigo_op}</h3>
+              <h3 id="detalle-orden-titulo" className="text-sm font-extrabold text-slate-800">Detalle de la orden {ordenAbiertaSeleccionada.codigo_op}</h3>
               <button type="button" onClick={() => setOrdenAbiertaSeleccionada(null)} aria-label="Cerrar detalles" className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-200">✕</button>
             </div>
             <div className="my-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -457,7 +594,7 @@ export default function CalidadProductoView() {
               <p><strong className="text-slate-500">Cliente:</strong> {ordenAbiertaSeleccionada.cliente_nombre || '-'}</p>
               <p><strong className="text-slate-500">Ubicación:</strong> {ordenAbiertaSeleccionada.ubicacion_cliente || '-'}</p>
               <p><strong className="text-slate-500">Producto:</strong> {ordenAbiertaSeleccionada.detalle_producto || '-'}</p>
-              <p><strong className="text-slate-500">Cantidad:</strong> {ordenAbiertaSeleccionada.cantidad ?? 0} UND</p>
+              <p><strong className="text-slate-500">Cantidad:</strong> {ordenAbiertaSeleccionada.cantidad ?? 0} unidades</p>
               <p><strong className="text-slate-500">Estado:</strong> {ordenAbiertaSeleccionada.estado_produccion || '-'}</p>
               <p><strong className="text-slate-500">Avance:</strong> {ordenAbiertaSeleccionada.porcentaje_avance ?? 0}%</p>
               <p><strong className="text-slate-500">Fecha compromiso:</strong> {ordenAbiertaSeleccionada.fecha_compromiso || '-'}</p>
@@ -516,6 +653,13 @@ export default function CalidadProductoView() {
         archivoUrl={planoSeleccionado?.archivo_url}
         codigoOp={planoSeleccionado?.codigo_op}
         codigoPlano={planoSeleccionado?.codigo_plano}
+      />
+      <VisorPlanoModal
+        abierto={visorAbierto}
+        onClose={() => setVisorAbierto(false)}
+        archivoUrl={ordenSeleccionada?.url_plano_pdf}
+        codigoOp={ordenSeleccionada?.codigo_op}
+        codigoPlano={ordenSeleccionada?.codigo_plano}
       />
     </div>
   );

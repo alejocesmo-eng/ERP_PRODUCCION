@@ -1,0 +1,47 @@
+version: "3.8"
+
+services:
+  # 1. Base de datos PostgreSQL
+  db:
+    image: postgres:15-alpine
+    container_name: sgi_postgres_db
+    restart: always
+    environment:
+      POSTGRES_DB: sgi_db
+      POSTGRES_USER: sgi_admin
+      POSTGRES_PASSWORD: TuPasswordSeguraLocal123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # 2. Backend (FastAPI + Python)
+  backend:
+    build:
+      context: .
+      dockerfile: 04_CODIGO/BACKEND/Dockerfile
+    container_name: sgi_backend_api
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://sgi_admin:TuPasswordSeguraLocal123@db:5432/sgi_db
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./04_CODIGO/BACKEND/static:/app/static
+    depends_on:
+      - db
+
+  # 3. Frontend Web (React + Nginx)
+  frontend:
+    build:
+      context: .
+      dockerfile: 04_CODIGO/FRONTEND/Dockerfile
+    container_name: sgi_frontend_web
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:

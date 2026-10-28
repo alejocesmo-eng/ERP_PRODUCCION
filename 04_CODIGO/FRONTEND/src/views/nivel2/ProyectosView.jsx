@@ -2,10 +2,38 @@
 import React, { useState, useEffect } from 'react';
 import API from '../../services/api';
 import { useProyectos } from '../../context/ProyectosContext';
+import ModalNuevaCotizacion from '../../components/modals/ModalNuevaCotizacion';
+import HistorialTimelineModal from '../../components/modals/HistorialTimelineModal';
 
 const capitalize = (str) => {
   if (typeof str !== 'string' || !str) return '';
   return str.charAt(0).toUpperCase() + str.slice(1);
+};
+
+const ETIQUETAS_TIPO_MATERIAL = {
+  ROH: 'Materia Prima Directa',
+  HALB: 'Producto Semielaborado',
+  FERT: 'Producto Terminado',
+  VERB: 'Consumible de Planta',
+  ERSA: 'Repuesto de Mantenimiento',
+};
+
+const ETIQUETAS_ACCION_PIEZA = {
+  FABRICAR_NUEVA: 'Fabricar nueva',
+  RECTIFICAR_RECUPERAR: 'Rectificar o recuperar',
+  COMPRA_DIRECTA_BOM: 'Compra directa de materiales',
+};
+
+const CATEGORIAS_PRESUPUESTO = [
+  { valor: 'MATERIA_PRIMA', etiqueta: 'Materia prima directa' },
+  { valor: 'HORAS_MES', etiqueta: 'Horas MES' },
+  { valor: 'SERVICIO_EXTERNO', etiqueta: 'Servicio externo' },
+];
+
+const PLACEHOLDERS_REFERENCIA_PRESUPUESTO = {
+  MATERIA_PRIMA: 'Código de material / SKU',
+  HORAS_MES: 'Código de centro|SETUP o MECANIZADO',
+  SERVICIO_EXTERNO: 'Proveedor|Descripción del servicio',
 };
 
 export default function ProyectosView() {
@@ -19,6 +47,7 @@ export default function ProyectosView() {
   const [cargandoPiezasMap, setCargandoPiezasMap] = useState({});
 
   const [proyectos, setProyectos] = useState([]);
+  const [cotizaciones, setCotizaciones] = useState([]);
   const [solicitudesCompra, setSolicitudesCompra] = useState([]);
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState({ tipo: '', texto: '' });
@@ -29,11 +58,31 @@ export default function ProyectosView() {
   const [modalDetalleAbierto, setModalDetalleAbierto] = useState(false);
   const [proyectoSeleccionado, setProyectoSeleccionado] = useState(null);
   const [esEdicion, setEsEdicion] = useState(false);
+  const [expedienteCargando, setExpedienteCargando] = useState(false);
+  const [expedienteError, setExpedienteError] = useState('');
 
   const [modalNuevoPedidoAbierto, setModalNuevoPedidoAbierto] = useState(false);
+  const [modalNuevoCotizacionAbierto, setModalNuevoCotizacionAbierto] = useState(false);
   const [modalBomAbierto, setModalBomAbierto] = useState(false);
   const [bomSeleccionado, setBomSeleccionado] = useState(null);
-  
+
+  // ESTADO PARA VISOR, DESCARGA E IMPRESIÓN DE COTIZACIÓN
+  const [modalVisorCotizacionAbierto, setModalVisorCotizacionAbierto] = useState(false);
+  const [cotizacionDetalle, setCotizacionDetalle] = useState(null);
+  const [mostrarModalEmail, setMostrarModalEmail] = useState(false);
+  const [emailDestino, setEmailDestino] = useState('');
+  const [asuntoEmail, setAsuntoEmail] = useState('');
+  const [mensajeEmail, setMensajeEmail] = useState('');
+  const [enviandoEmail, setEnviandoEmail] = useState(false);
+
+  // ESTADO PARA EL MODAL DE HISTORIAL Y TRAZABILIDAD
+  const [modalHistorial, setModalHistorial] = useState({
+    abierto: false,
+    tipoEntidad: 'PEDIDO',
+    identificador: '',
+    tituloDoc: ''
+  });
+
   const [nuevoPedido, setNuevoPedido] = useState({
     numero_pedido: '',
     cliente_nombre: '',
@@ -79,9 +128,9 @@ export default function ProyectosView() {
     { paso: 2, id: 'LAVADO_DESARME', nombre: '2. Lavado & Desarme', area: 'Producción', accion: '🧽 2. Validar Desarme' },
     { paso: 3, id: 'DIAGNOSTICO_DISENO', nombre: '3. Levantamiento & Diagnóstico', area: 'Diseño', accion: '📐 3. Completar Levantamiento' },
     { paso: 4, id: 'COTIZACION_APROBACION', nombre: '4. Cotización & Aprobación', area: 'Ventas', accion: '💰 4. Aprobar Cotización' },
-    { paso: 5, id: 'PLANOS_BOM', nombre: '5. Planos & BOM (Apertura OP)', area: 'Diseño', accion: '⚙️ 5. Estructurar OP & Planos' },
-    { paso: 6, id: 'COMPRAS_INSUMOS', nombre: '6. Compras Insumos (BOM)', area: 'Compras', accion: '🛒 6. En Abastecimiento BOM' },
-    { paso: 7, id: 'EN_FABRICACION', nombre: '7. Fabricación / Recuperación', area: 'Producción', accion: '🏭 7. Liberar a Planta MES' },
+    { paso: 5, id: 'PLANOS_BOM', nombre: '5. Planos y lista de materiales (apertura de órdenes)', area: 'Diseño', accion: '⚙️ 5. Estructurar órdenes y planos' },
+    { paso: 6, id: 'COMPRAS_INSUMOS', nombre: '6. Compra de insumos', area: 'Compras', accion: '🛒 6. Abastecimiento de materiales' },
+    { paso: 7, id: 'EN_FABRICACION', nombre: '7. Fabricación / Recuperación', area: 'Producción', accion: '🏭 7. Liberar a producción' },
     { paso: 8, id: 'KIT_COMPLETO', nombre: '8. Ensamble & Pruebas', area: 'Producción', accion: '🏁 8. Aprobar Ensamble & Cierre' }
   ];
 
@@ -107,14 +156,26 @@ export default function ProyectosView() {
   const cargarProyectos = async () => {
     try {
       setLoading(true);
-      const [resProyectos, resSolicitudes] = await Promise.allSettled([
+      const [resProyectos, resSolicitudes, resCotizaciones] = await Promise.allSettled([
         API.get('/proyectos/'),
-        API.get('/solicitudes-compra/')
+        API.get('/solicitudes-compra/'),
+        API.get('/ventas/cotizaciones/')
       ]);
       const proys = resProyectos.status === 'fulfilled' && Array.isArray(resProyectos.value.data) ? resProyectos.value.data : [];
       const solics = resSolicitudes.status === 'fulfilled' && Array.isArray(resSolicitudes.value.data) ? resSolicitudes.value.data : [];
+
+      let cots = [];
+      if (resCotizaciones.status === 'fulfilled') {
+        if (Array.isArray(resCotizaciones.value.data)) {
+          cots = resCotizaciones.value.data;
+        } else if (resCotizaciones.value.data && Array.isArray(resCotizaciones.value.data.items)) {
+          cots = resCotizaciones.value.data.items;
+        }
+      }
+
       setProyectos(proys);
       setSolicitudesCompra(solics);
+      setCotizaciones(cots);
       await cargarMantenimientos(proys);
     } catch (error) {
       console.error("Error al cargar proyectos:", error);
@@ -150,6 +211,62 @@ export default function ProyectosView() {
     } catch (error) {
       console.warn("No se pudieron cargar mantenimientos desde el servidor:", error);
       setListaMantenimientos([]);
+    }
+  };
+
+  const handleAbrirVisorCotizacion = async (cot) => {
+    try {
+      setLoading(true);
+      const res = await API.get(`/ventas/cotizaciones/${cot.id_cotizacion}`);
+      setCotizacionDetalle(res.data);
+      setEmailDestino(res.data.cliente?.email || '');
+      setAsuntoEmail(`Cotización Comercial ${res.data.numero_cotizacion} - HD Precision & Technology`);
+      setMensajeEmail(`Estimado/a cliente,\n\nAdjuntamos la cotización comercial formal ${res.data.numero_cotizacion} para su revisión y aprobación.\n\nQuedamos atentos a cualquier inquietud técnica o comercial.`);
+    } catch (e) {
+      setCotizacionDetalle({
+        id_cotizacion: cot.id_cotizacion,
+        numero_cotizacion: cot.numero_cotizacion,
+        fecha_emision: cot.fecha_emision,
+        valor_total: cot.valor_total,
+        estado: cot.estado,
+        cliente: {
+          razon_social: cot.id_socio || 'Cliente Comercial',
+          email: '',
+          direccion: 'Planta Principal',
+          condiciones_pago: '30 Días'
+        },
+        posiciones: []
+      });
+      setEmailDestino('');
+      setAsuntoEmail(`Cotización ${cot.numero_cotizacion}`);
+      setMensajeEmail('Adjuntamos cotización formal.');
+    } finally {
+      setLoading(false);
+      setMostrarModalEmail(false);
+      setModalVisorCotizacionAbierto(true);
+    }
+  };
+
+  const handleEnviarCotizacionPorCorreo = async (e) => {
+    e.preventDefault();
+    if (!emailDestino.trim()) {
+      alert("Por favor ingrese el correo electrónico de destino.");
+      return;
+    }
+    setEnviandoEmail(true);
+    try {
+      await API.post(`/ventas/cotizaciones/${cotizacionDetalle.id_cotizacion}/enviar-cliente`, {
+        destinatario: emailDestino,
+        asunto: asuntoEmail,
+        mensaje: mensajeEmail
+      });
+      setMensaje({ tipo: 'exito', texto: `✅ Cotización enviada exitosamente a ${emailDestino}.` });
+      setMostrarModalEmail(false);
+      await cargarProyectos();
+    } catch (err) {
+      setMensaje({ tipo: 'error', texto: 'No fue posible registrar el envío por correo electrónico.' });
+    } finally {
+      setEnviandoEmail(false);
     }
   };
 
@@ -269,12 +386,21 @@ export default function ProyectosView() {
       case 'EN_ALMACEN':
         return <span className="px-2 py-1 rounded text-[10px] font-extrabold bg-purple-100 text-purple-900 border border-purple-300">🟣 EN ALMACÉN</span>;
       case 'EN_COMPRA':
-        return <span className="px-2 py-1 rounded text-[10px] font-extrabold bg-blue-100 text-blue-900 border border-blue-300">🔵 EN COMPRA (PO)</span>;
+        return <span className="px-2 py-1 rounded text-[10px] font-extrabold bg-blue-100 text-blue-900 border border-blue-300">🔵 EN COMPRA</span>;
       case 'SOLICITADO':
-        return <span className="px-2 py-1 rounded text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300">🟡 SOLICITADO (PR)</span>;
+        return <span className="px-2 py-1 rounded text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300">🟡 SOLICITADO</span>;
       default:
         return <span className="px-2 py-1 rounded text-[10px] font-extrabold bg-slate-100 text-slate-600 border border-slate-300">⚪ SIN SOLICITAR</span>;
     }
+  };
+
+  const handleAbrirHistorial = (pedido) => {
+    setModalHistorial({
+      abierto: true,
+      tipoEntidad: 'PEDIDO',
+      identificador: pedido.numero_pedido || pedido.codigo_proyecto,
+      tituloDoc: `${pedido.numero_pedido || 'PED'} - ${pedido.cliente_nombre || 'Cliente'}`
+    });
   };
 
   const handleAgregarFilaDetalle = () => {
@@ -299,13 +425,13 @@ export default function ProyectosView() {
   };
 
   const handleCambioDetalle = (id, campo, valor) => {
-    const valorProcesado = (typeof valor === 'string' && campo !== 'codigo_producto' && campo !== 'contacto_email') 
-      ? capitalize(valor) 
+    const valorProcesado = (typeof valor === 'string' && campo !== 'codigo_producto' && campo !== 'contacto_email')
+      ? capitalize(valor)
       : valor;
 
     setNuevoPedido(prev => ({
       ...prev,
-      detalles: prev.detalles.map(item => 
+      detalles: prev.detalles.map(item =>
         item.id === id ? { ...item, [campo]: valorProcesado } : item
       )
     }));
@@ -344,16 +470,59 @@ export default function ProyectosView() {
     });
   };
 
+  const handleAgregarPresupuestoComponente = () => {
+    setProyectoSeleccionado(prev => ({
+      ...prev,
+      presupuestos_componentes: [
+        ...(prev.presupuestos_componentes || []),
+        {
+          categoria: 'MATERIA_PRIMA',
+          referencia: '',
+          monto_presupuestado: ''
+        }
+      ]
+    }));
+  };
+
+  const handleCambioPresupuestoComponente = (indice, campo, valor) => {
+    setProyectoSeleccionado(prev => {
+      const presupuestos = [...(prev.presupuestos_componentes || [])];
+      presupuestos[indice] = { ...presupuestos[indice], [campo]: valor };
+      return { ...prev, presupuestos_componentes: presupuestos };
+    });
+  };
+
+  const handleEliminarPresupuestoComponente = (indiceEliminar) => {
+    setProyectoSeleccionado(prev => ({
+      ...prev,
+      presupuestos_componentes: (prev.presupuestos_componentes || [])
+        .filter((_, indice) => indice !== indiceEliminar)
+    }));
+  };
+
   const handleCrearNuevoPedido = async (e) => {
     e.preventDefault();
     setMensaje({ tipo: '', texto: '' });
 
     const payloadSanitizado = {
-      ...nuevoPedido,
-      detalles: nuevoPedido.detalles.map(d => ({
-        ...d,
+      numero_pedido: (nuevoPedido.numero_pedido || '').trim(),
+      cliente_nombre: (nuevoPedido.cliente_nombre || '').trim(),
+      contacto_nombre: nuevoPedido.contacto_nombre ? nuevoPedido.contacto_nombre.trim() : null,
+      contacto_telefono: nuevoPedido.contacto_telefono ? nuevoPedido.contacto_telefono.trim() : null,
+      contacto_email: nuevoPedido.contacto_email ? nuevoPedido.contacto_email.trim() : null,
+      ubicacion_cliente: nuevoPedido.ubicacion_cliente ? nuevoPedido.ubicacion_cliente.trim() : null,
+      fecha_compromiso: nuevoPedido.fecha_compromiso ? nuevoPedido.fecha_compromiso : null,
+      requisitos_cliente: nuevoPedido.requisitos_cliente ? nuevoPedido.requisitos_cliente.trim() : null,
+      detalles: (nuevoPedido.detalles || []).map(d => ({
+        codigo_producto: d.codigo_producto ? d.codigo_producto.trim() : `PROD-${Date.now().toString().slice(-4)}`,
+        descripcion: (d.descripcion || '').trim(),
+        tipo: d.tipo || 'pieza',
         cantidad_solicitada: parseInt(d.cantidad_solicitada, 10) || 1,
-        fecha_compromiso: d.fecha_compromiso || nuevoPedido.fecha_compromiso || null
+        unidad: d.unidad ? d.unidad.trim().toUpperCase() : 'UND',
+        prioridad: d.prioridad || 'MEDIA',
+        fecha_compromiso: d.fecha_compromiso ? d.fecha_compromiso : (nuevoPedido.fecha_compromiso || null),
+        requisitos_especificos: d.requisitos_especificos ? d.requisitos_especificos.trim() : null,
+        observaciones: d.observaciones ? d.observaciones.trim() : null
       }))
     };
 
@@ -368,9 +537,16 @@ export default function ProyectosView() {
       }
       await cargarProyectos();
     } catch (error) {
-      const msgError = typeof error.response?.data?.detail === 'string' 
-        ? error.response.data.detail 
-        : 'Error al enviar la solicitud al servidor.';
+      let msgError = 'Error al enviar la solicitud al servidor.';
+      if (error.response?.data?.detail) {
+        if (Array.isArray(error.response.data.detail)) {
+          msgError = error.response.data.detail
+            .map(err => `${err.loc ? err.loc.join('->') : ''}: ${err.msg}`)
+            .join(' | ');
+        } else if (typeof error.response.data.detail === 'string') {
+          msgError = error.response.data.detail;
+        }
+      }
       setMensaje({ tipo: 'error', texto: `❌ ${msgError}` });
     } finally {
       setLoading(false);
@@ -381,27 +557,54 @@ export default function ProyectosView() {
     e.preventDefault();
     if (!proyectoSeleccionado) return;
 
-    const payloadSanitizado = {
-      numero_pedido: proyectoSeleccionado.numero_pedido,
-      cliente_nombre: proyectoSeleccionado.cliente_nombre,
-      contacto_nombre: proyectoSeleccionado.contacto_nombre || null,
-      contacto_telefono: proyectoSeleccionado.contacto_telefono || null,
-      contacto_email: proyectoSeleccionado.contacto_email || null,
-      ubicacion_cliente: proyectoSeleccionado.ubicacion_cliente || null,
-      requisitos_cliente: proyectoSeleccionado.requisitos_cliente || null,
-      fecha_compromiso: proyectoSeleccionado.fecha_compromiso || null,
-      detalles: (proyectoSeleccionado.detalles || []).map(d => ({
-        detalle_id: d.detalle_id || d.id_detalle || null,
-        codigo_producto: d.codigo_producto || null,
-        descripcion: d.descripcion,
+    // Normalización de fecha compromiso de cabecera (evitar "" que causa 422 en FastAPI)
+    const fechaGlobalLimpia = (proyectoSeleccionado.fecha_compromiso && proyectoSeleccionado.fecha_compromiso.trim() !== '')
+      ? proyectoSeleccionado.fecha_compromiso
+      : null;
+
+    // Sanitización y normalización del desglose de piezas
+    const listaDetallesMapeada = (proyectoSeleccionado.detalles || []).map((d, idx) => {
+      const fechaDetalle = (d.fecha_compromiso && d.fecha_compromiso.trim() !== '')
+        ? d.fecha_compromiso
+        : fechaGlobalLimpia;
+
+      return {
+        detalle_id: (typeof d.detalle_id === 'number' || typeof d.id_detalle === 'number') 
+          ? (d.detalle_id || d.id_detalle) 
+          : null,
+        posicion: d.posicion || `POS-${(idx + 1) * 10}`,
+        codigo_producto: d.codigo_producto ? d.codigo_producto.trim() : null,
+        descripcion: (d.descripcion || 'Pieza de Fabricación').trim(),
         tipo: d.tipo || 'pieza',
         cantidad_solicitada: parseInt(d.cantidad_solicitada, 10) || 1,
-        unidad: d.unidad || 'UND',
+        unidad: (d.unidad || 'UND').trim().toUpperCase(),
         prioridad: d.prioridad || 'MEDIA',
-        fecha_compromiso: d.fecha_compromiso || proyectoSeleccionado.fecha_compromiso || null,
-        requisitos_especificos: d.requisitos_especificos || null,
-        observaciones: d.observaciones || null
-      }))
+        fecha_compromiso: fechaDetalle,
+        requisitos_especificos: d.requisitos_especificos ? d.requisitos_especificos.trim() : null,
+        observaciones: d.observaciones ? d.observaciones.trim() : null
+      };
+    });
+
+    const presupuestosMapeados = (proyectoSeleccionado.presupuestos_componentes || [])
+      .filter(item => item.referencia && item.referencia.trim() !== '')
+      .map(item => ({
+        categoria: item.categoria,
+        referencia: item.referencia.trim(),
+        monto_presupuestado: Number(item.monto_presupuestado) || 0
+      }));
+
+    const payloadSanitizado = {
+      numero_pedido: (proyectoSeleccionado.numero_pedido || '').trim(),
+      cliente_nombre: (proyectoSeleccionado.cliente_nombre || '').trim(),
+      contacto_nombre: proyectoSeleccionado.contacto_nombre ? proyectoSeleccionado.contacto_nombre.trim() : null,
+      contacto_telefono: proyectoSeleccionado.contacto_telefono ? proyectoSeleccionado.contacto_telefono.trim() : null,
+      contacto_email: proyectoSeleccionado.contacto_email ? proyectoSeleccionado.contacto_email.trim() : null,
+      ubicacion_cliente: proyectoSeleccionado.ubicacion_cliente ? proyectoSeleccionado.ubicacion_cliente.trim() : null,
+      requisitos_cliente: proyectoSeleccionado.requisitos_cliente ? proyectoSeleccionado.requisitos_cliente.trim() : null,
+      fecha_compromiso: fechaGlobalLimpia,
+      detalles: listaDetallesMapeada,
+      pedido_detalles: listaDetallesMapeada,
+      presupuestos_componentes: presupuestosMapeados
     };
 
     try {
@@ -413,9 +616,16 @@ export default function ProyectosView() {
       setProyectos(prev => prev.map(p => p.id_proyecto === proyectoSeleccionado.id_proyecto ? res.data : p));
       await cargarProyectos();
     } catch (error) {
-      const msgError = typeof error.response?.data?.detail === 'string'
-        ? error.response.data.detail
-        : 'Error al actualizar el pedido comercial.';
+      let msgError = 'Error al actualizar el pedido comercial.';
+      if (error.response?.data?.detail) {
+        if (Array.isArray(error.response.data.detail)) {
+          msgError = error.response.data.detail
+            .map(err => `${err.loc ? err.loc.join('->') : ''}: ${err.msg}`)
+            .join(' | ');
+        } else if (typeof error.response.data.detail === 'string') {
+          msgError = error.response.data.detail;
+        }
+      }
       setMensaje({ tipo: 'error', texto: `❌ ${msgError}` });
     } finally {
       setLoading(false);
@@ -439,6 +649,24 @@ export default function ProyectosView() {
     }
   };
 
+  const handleConvertirCotizacionAPedido = async (idCotizacion) => {
+    setMensaje({ tipo: '', texto: '' });
+    try {
+      setLoading(true);
+      await API.patch(`/ventas/cotizaciones/${idCotizacion}/aprobar-y-generar-pedido`);
+      setMensaje({ tipo: 'exito', texto: `✅ Cotización aprobada. Pedido Comercial generado exitosamente.` });
+      setPestañaModulo('pedidos');
+      await cargarProyectos();
+    } catch (error) {
+      const msgError = typeof error.response?.data?.detail === 'string'
+        ? error.response.data.detail
+        : 'Error al convertir la cotización en pedido.';
+      setMensaje({ tipo: 'error', texto: `❌ ${msgError}` });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const resetFormularioNuevo = () => {
     setNuevoPedido({
       numero_pedido: '',
@@ -455,15 +683,45 @@ export default function ProyectosView() {
     });
   };
 
-  const abrirModalExpediente = (p) => {
+  const abrirModalExpediente = async (p) => {
+    const esConfirmado = !!p.confirmado;
+    setEsEdicion(!esConfirmado);
+    setExpedienteError('');
+
+    const detallesIniciales = p.detalles && p.detalles.length > 0
+      ? p.detalles
+      : esConfirmado
+        ? []
+        : [
+            { id: 1, codigo_producto: 'A-01', descripcion: p.detalle_producto || 'Pieza Mecanizada', tipo: 'pieza', cantidad_solicitada: p.cantidad || 1, unidad: 'UND', prioridad: 'MEDIA', fecha_compromiso: p.fecha_compromiso || '', requisitos_especificos: '' }
+          ];
+
     setProyectoSeleccionado({
       ...p,
-      detalles: p.detalles && p.detalles.length > 0 ? p.detalles : [
-        { id: 1, codigo_producto: 'PROD-01', descripcion: p.detalle_producto || 'Pieza Mecanizada', tipo: 'pieza', cantidad_solicitada: p.cantidad || 1, unidad: 'UND', prioridad: 'MEDIA', fecha_compromiso: p.fecha_compromiso || '', requisitos_especificos: '' }
-      ]
+      presupuestos_componentes: p.presupuestos_componentes || [],
+      detalles: detallesIniciales
     });
-    setEsEdicion(!p.confirmado);
     setModalDetalleAbierto(true);
+
+    if (esConfirmado) {
+      setExpedienteCargando(true);
+      try {
+        const respuesta = await API.get(`/proyectos/${p.id_proyecto}/expediente`);
+        setProyectoSeleccionado({
+          ...respuesta.data,
+          presupuestos_componentes: respuesta.data.presupuestos_componentes || [],
+          detalles: respuesta.data.pedido_detalles || respuesta.data.detalles || []
+        });
+      } catch (error) {
+        setExpedienteError(
+          typeof error.response?.data?.detail === 'string'
+            ? error.response.data.detail
+            : 'No fue posible cargar el expediente comercial del pedido.'
+        );
+      } finally {
+        setExpedienteCargando(false);
+      }
+    }
   };
 
   const handleGuardarNuevoMantenimiento = async (e) => {
@@ -481,7 +739,6 @@ export default function ProyectosView() {
       });
       
       setModalNuevoMantenimientoAbierto(false);
-
       setListaMantenimientos(prev => [res.data, ...prev]);
 
       setFormMantenimiento({
@@ -544,7 +801,7 @@ export default function ProyectosView() {
     try {
       await API.post(`/mantenimientos/${mantenimientoSeleccionado.id_mantenimiento}/explotar-mes`);
     } catch (err) {
-      console.warn("Explotado a MES localmente.");
+      console.warn("Las piezas se conservaron en la cola local de producción.");
     }
 
     const listaActualizada = listaMantenimientos.map(m => {
@@ -561,7 +818,7 @@ export default function ProyectosView() {
 
     setListaMantenimientos(listaActualizada);
     setModalLevantamientoAbierto(false);
-    setMensaje({ tipo: 'exito', texto: `🚀 ${autorizadas.length} piezas autorizadas enviadas a la cola de producción MES.` });
+    setMensaje({ tipo: 'exito', texto: `🚀 ${autorizadas.length} piezas autorizadas enviadas a la cola de producción.` });
   };
 
   const abrirLevantamientoModal = async (mant) => {
@@ -647,12 +904,21 @@ export default function ProyectosView() {
         <div className="flex gap-2 bg-slate-100 p-1 rounded-xl border border-slate-200 self-stretch md:self-auto">
           <button
             type="button"
+            onClick={() => setPestañaModulo('cotizaciones')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+              pestañaModulo === 'cotizaciones' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            📝 Cotizaciones y Ofertas
+          </button>
+          <button
+            type="button"
             onClick={() => setPestañaModulo('pedidos')}
             className={`px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
               pestañaModulo === 'pedidos' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            📋 Pedidos Comerciales (PM-01)
+            📋 Pedidos Comerciales
           </button>
           <button
             type="button"
@@ -677,18 +943,137 @@ export default function ProyectosView() {
         </div>
       )}
 
+      {pestañaModulo === 'cotizaciones' && (
+        <div className="space-y-6">
+          <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+            <span className="text-xs font-bold text-slate-600">Gestión de Cotizaciones y Ofertas Comerciales</span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setModalNuevoCotizacionAbierto(true)}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow-sm transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <span>➕</span> Nueva Cotización
+              </button>
+              <button
+                onClick={cargarProyectos}
+                className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg border border-slate-300 transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <span>🔄</span> Recargar
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 border-b pb-3">
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-bold text-slate-700">Listado de Cotizaciones Emitidas</h2>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto">
+                <input
+                  type="text"
+                  placeholder="🔍 Buscar por N° Cotización o Cliente..."
+                  value={busqueda}
+                  onChange={(e) => setBusqueda(e.target.value)}
+                  className="w-full sm:w-72 p-2 border border-slate-300 rounded-lg text-xs bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-600 border-collapse">
+                <thead>
+                  <tr className="bg-slate-100 text-slate-700 font-bold uppercase border-b border-slate-200">
+                    <th className="p-3">N° Cotización</th>
+                    <th className="p-3">Socio de Negocio</th>
+                    <th className="p-3">Fecha Emisión</th>
+                    <th className="p-3">Valor Total</th>
+                    <th className="p-3">Estado</th>
+                    <th className="p-3 text-right">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {cotizaciones.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" className="p-6 text-center text-slate-400 font-medium">
+                        {loading ? 'Cargando cotizaciones...' : 'No hay cotizaciones registradas.'}
+                      </td>
+                    </tr>
+                  ) : (
+                    cotizaciones
+                      .filter(c =>
+                        (c.numero_cotizacion || '').toLowerCase().includes(busqueda.toLowerCase()) ||
+                        (c.id_socio || '').toLowerCase().includes(busqueda.toLowerCase())
+                      )
+                      .map((c) => (
+                        <tr key={c.id_cotizacion} className="hover:bg-slate-50 transition">
+                          <td className="p-3 font-bold font-mono text-blue-700 text-sm">
+                            📝 {c.numero_cotizacion}
+                          </td>
+                          <td className="p-3 font-bold text-slate-800">
+                            {c.id_socio}
+                          </td>
+                          <td className="p-3 whitespace-nowrap">
+                            {c.fecha_emision || 'S/F'}
+                          </td>
+                          <td className="p-3 font-bold text-emerald-700">
+                            $ {Number(c.valor_total).toLocaleString('es-CO')}
+                          </td>
+                          <td className="p-3 whitespace-nowrap">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                              c.estado === 'APROBADA'
+                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                : c.estado === 'EMITIDA'
+                                ? 'bg-blue-100 text-blue-800 border-blue-300'
+                                : 'bg-amber-100 text-amber-800 border-amber-300'
+                            }`}>
+                              {c.estado}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right whitespace-nowrap">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleAbrirVisorCotizacion(c)}
+                                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded text-[11px] border border-slate-300 transition shadow-xs flex items-center gap-1 cursor-pointer"
+                                title="Ver documento membretado, imprimir/PDF y enviar"
+                              >
+                                👁️ Ver / PDF / ✉️
+                              </button>
+
+                              {c.estado !== 'APROBADA' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleConvertirCotizacionAPedido(c.id_cotizacion)}
+                                  className="px-3 py-1 font-semibold rounded text-[11px] bg-blue-600 text-white hover:bg-blue-700 transition shadow-sm cursor-pointer"
+                                >
+                                  🚀 Convertir a Pedido
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {pestañaModulo === 'pedidos' && (
         <div className="space-y-6">
           <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
             <span className="text-xs font-bold text-slate-600">Radicación y Registro de Órdenes de Fabricación Directa</span>
             <div className="flex gap-2">
-              <button 
+              <button
                 onClick={() => setModalNuevoPedidoAbierto(true)}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow-sm transition flex items-center gap-1.5 cursor-pointer"
               >
                 <span>➕</span> Nuevo Pedido Comercial
               </button>
-              <button 
+              <button
                 onClick={cargarProyectos}
                 className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg border border-slate-300 transition flex items-center gap-1.5 cursor-pointer"
               >
@@ -751,7 +1136,7 @@ export default function ProyectosView() {
                   </span>
                 )}
               </div>
-              
+
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto">
                 <select
                   value={filtroEstado}
@@ -799,14 +1184,11 @@ export default function ProyectosView() {
                         <td className="p-3 font-bold font-mono text-purple-700 text-sm">
                           📋 {p.numero_pedido || 'PED-S/N'}
                         </td>
-
                         <td className="p-3 font-bold text-slate-800">
                           {p.cliente_nombre}
                           {p.contacto_nombre && <div className="text-[10px] text-slate-400 font-medium">👤 {p.contacto_nombre}</div>}
                         </td>
-
                         <td className="p-3 font-medium text-slate-800">{p.detalle_producto || 'Pieza Mecanizada'}</td>
-
                         <td className="p-3 text-center whitespace-nowrap">
                           <div className="font-bold">
                             <span className="text-blue-900">{p.total_solicitado ?? p.cantidad ?? 0}</span>
@@ -818,11 +1200,9 @@ export default function ProyectosView() {
                           </div>
                           <div className="text-[10px] text-slate-500 mt-0.5">{p.cobertura_pct || 0}% cubierto por OTs</div>
                         </td>
-
                         <td className="p-3 font-bold text-slate-800 whitespace-nowrap bg-amber-50/40 px-2 rounded border border-amber-200/50">
                           📅 {p.fecha_compromiso || 'Sin fecha de entrega'}
                         </td>
-
                         <td className="p-3 whitespace-nowrap">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${ESTILO_ESTADO_PEDIDO[p.estado_pedido] || ESTILO_ESTADO_PEDIDO.RECIBIDO}`}>
                             {ETIQUETA_ESTADO_PEDIDO(p.estado_pedido)}
@@ -834,8 +1214,7 @@ export default function ProyectosView() {
                             <div className="text-[10px] text-amber-700 font-semibold mt-0.5">Sin confirmar</div>
                           )}
                         </td>
-
-                        <td className="p-3 text-center whitespace-nowrap space-x-2">
+                        <td className="p-3 text-center whitespace-nowrap space-x-1.5">
                           <button
                             type="button"
                             onClick={() => abrirModalExpediente(p)}
@@ -846,6 +1225,15 @@ export default function ProyectosView() {
                             }`}
                           >
                             {p.confirmado ? '👁️ Ver Expediente' : '✏️ Abrir y Editar'}
+                          </button>
+                          
+                          <button
+                            type="button"
+                            onClick={() => handleAbrirHistorial(p)}
+                            title="Consultar Historial y Suspender/Reactivar"
+                            className="px-2 py-1 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 font-bold rounded text-[11px] transition shadow-xs cursor-pointer"
+                          >
+                            📜 Historial
                           </button>
 
                           {!p.confirmado && (
@@ -1010,7 +1398,7 @@ export default function ProyectosView() {
                                             <th className="p-2 text-center">Cant.</th>
                                             <th className="p-2">Material</th>
                                             <th className="p-2 text-center">Estado Aprobación</th>
-                                            <th className="p-2 text-center">Solicitud de Compra / BOM 🛒</th>
+                                            <th className="p-2 text-center">Solicitud de compra / Lista de materiales 🛒</th>
                                           </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-200 text-slate-600">
@@ -1026,7 +1414,9 @@ export default function ProyectosView() {
                                                 <td className="p-2 text-center font-mono text-slate-400">{idx + 1}</td>
                                                 <td className="p-2 font-mono font-bold text-purple-700">{pz.codigo || pz.codigo_producto || 'PLN-001'}</td>
                                                 <td className="p-2 font-bold text-slate-800">{pz.descripcion || pz.detalle_pieza}</td>
-                                                <td className="p-2 font-semibold text-slate-700">{pz.accion || pz.tipo || 'FABRICAR_NUEVA'}</td>
+                                                <td className="p-2 font-semibold text-slate-700">
+                                                  {ETIQUETAS_ACCION_PIEZA[pz.accion] || ETIQUETAS_ACCION_PIEZA[pz.tipo] || pz.accion || pz.tipo || 'Fabricar nueva'}
+                                                </td>
                                                 <td className="p-2 text-center font-bold text-blue-900">{pz.cantidad || pz.cantidad_solicitada || 1}</td>
                                                 <td className="p-2 text-slate-500">{pz.material || 'AISI 1045'}</td>
                                                 <td className="p-2 text-center">
@@ -1067,230 +1457,7 @@ export default function ProyectosView() {
         </div>
       )}
 
-      {modalNuevoMantenimientoAbierto && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-4 text-xs">
-            <div className="flex justify-between items-center border-b pb-3">
-              <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                <span>🛠️</span> Registrar Ingreso de Máquina a Mantenimiento
-              </h3>
-              <button onClick={() => setModalNuevoMantenimientoAbierto(false)} className="text-slate-400 hover:text-slate-600 font-bold text-lg cursor-pointer">✕</button>
-            </div>
-
-            <form onSubmit={handleGuardarNuevoMantenimiento} className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-700 font-bold mb-1">Código Mantenimiento *</label>
-                  <input
-                    type="text"
-                    required
-                    value={formMantenimiento.codigo_mantenimiento}
-                    onChange={(e) => setFormMantenimiento({ ...formMantenimiento, codigo_mantenimiento: e.target.value })}
-                    className="w-full p-2 border border-slate-300 rounded font-mono font-bold text-purple-800"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-700 font-bold mb-1">Cliente / Razón Social *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ej. Extruder S.A."
-                    value={formMantenimiento.cliente_nombre}
-                    onChange={(e) => setFormMantenimiento({ ...formMantenimiento, cliente_nombre: capitalize(e.target.value) })}
-                    className="w-full p-2 border border-slate-300 rounded text-slate-800"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-700 font-bold mb-1">Nombre de la Máquina *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ej. Prensa Hidráulica 200T"
-                    value={formMantenimiento.nombre_maquina}
-                    onChange={(e) => setFormMantenimiento({ ...formMantenimiento, nombre_maquina: capitalize(e.target.value) })}
-                    className="w-full p-2 border border-slate-300 rounded text-slate-800"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-700 font-bold mb-1">OP Venta Asignada *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ej. OP-100"
-                    value={formMantenimiento.codigo_op}
-                    onChange={(e) => setFormMantenimiento({ ...formMantenimiento, codigo_op: e.target.value })}
-                    className="w-full p-2 border border-slate-300 rounded text-slate-800 font-mono"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-700 font-bold mb-1">Observaciones de Recepción / Falla</label>
-                <textarea
-                  rows="2"
-                  placeholder="Describa el estado con el que llega la máquina..."
-                  value={formMantenimiento.observaciones_ingreso}
-                  onChange={(e) => setFormMantenimiento({ ...formMantenimiento, observaciones_ingreso: capitalize(e.target.value) })}
-                  className="w-full p-2 border border-slate-300 rounded text-slate-800"
-                ></textarea>
-              </div>
-
-              <div className="flex justify-end gap-2 border-t pt-3">
-                <button
-                  type="button"
-                  onClick={() => setModalNuevoMantenimientoAbierto(false)}
-                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold rounded cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded shadow-sm cursor-pointer"
-                >
-                  {loading ? 'Guardando...' : '✓ Abrir OP de Diagnóstico'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {modalLevantamientoAbierto && mantenimientoSeleccionado && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-6xl w-full p-6 space-y-4 text-xs max-h-[92vh] flex flex-col">
-            <div className="flex justify-between items-center border-b pb-3">
-              <div>
-                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                  <span>📐</span> Levantamiento de Piezas: {mantenimientoSeleccionado.nombre_maquina || mantenimientoSeleccionado.cliente_nombre}
-                </h3>
-                <p className="text-[11px] text-slate-500">Cliente: <strong className="text-blue-800">{mantenimientoSeleccionado.cliente_nombre || mantenimientoSeleccionado.cliente}</strong> | {mantenimientoSeleccionado.codigo_op || 'OP-100'}</p>
-              </div>
-              <button onClick={() => setModalLevantamientoAbierto(false)} className="text-slate-400 hover:text-slate-600 font-bold text-lg cursor-pointer">✕</button>
-            </div>
-
-            <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-2">
-              <span className="text-[10px] font-bold text-amber-700 uppercase block">➕ Carga Rápida de Pieza / Ítem</span>
-              <div className="grid grid-cols-12 gap-2">
-                <input
-                  type="text"
-                  placeholder="Código Plano (PLN-...)"
-                  value={nuevaPiezaTemp.codigo}
-                  onChange={(e) => setNuevaPiezaTemp({ ...nuevaPiezaTemp, codigo: e.target.value })}
-                  className="col-span-2 p-2 border border-slate-300 rounded text-slate-800 font-mono"
-                />
-                <input
-                  type="text"
-                  placeholder="Descripción de la Pieza"
-                  value={nuevaPiezaTemp.descripcion}
-                  onChange={(e) => setNuevaPiezaTemp({ ...nuevaPiezaTemp, descripcion: capitalize(e.target.value) })}
-                  className="col-span-4 p-2 border border-slate-300 rounded text-slate-800"
-                />
-                <select
-                  value={nuevaPiezaTemp.accion}
-                  onChange={(e) => setNuevaPiezaTemp({ ...nuevaPiezaTemp, accion: e.target.value })}
-                  className="col-span-3 p-2 border border-slate-300 rounded text-slate-800 font-bold bg-white cursor-pointer"
-                >
-                  <option value="FABRICAR_NUEVA">🔨 Fabricar Nueva</option>
-                  <option value="RECTIFICAR_RECUPERAR">⚙️ Rectificar / Recuperar</option>
-                  <option value="COMPRA_DIRECTA_BOM">🛒 Compra Directa BOM</option>
-                </select>
-                <input
-                  type="number"
-                  min="1"
-                  placeholder="Cant"
-                  value={nuevaPiezaTemp.cantidad}
-                  onChange={(e) => setNuevaPiezaTemp({ ...nuevaPiezaTemp, cantidad: e.target.value })}
-                  className="col-span-1 p-2 border border-slate-300 rounded text-slate-800 text-center font-bold"
-                />
-                <button
-                  type="button"
-                  onClick={handleAgregarPiezaLevantamiento}
-                  className="col-span-2 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded transition cursor-pointer"
-                >
-                  + Agregar
-                </button>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-auto border border-slate-200 rounded-lg bg-white">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-slate-100 text-slate-700 font-bold border-b sticky top-0">
-                    <th className="p-2.5 text-center">Ítem</th>
-                    <th className="p-2.5">Código Plano</th>
-                    <th className="p-2.5">Descripción de la Pieza</th>
-                    <th className="p-2.5">Acción Requerida</th>
-                    <th className="p-2.5 text-center">Cant</th>
-                    <th className="p-2.5">Material</th>
-                    <th className="p-2.5 text-right">Cotizado ($)</th>
-                    <th className="p-2.5 text-center">Autorizado Cliente</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200 text-slate-700">
-                  {piezasLevantamiento.map((p, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50 transition">
-                      <td className="p-2.5 text-center font-mono text-slate-400">#{p.posicion}</td>
-                      <td className="p-2.5 font-mono font-bold text-purple-700">{p.codigo}</td>
-                      <td className="p-2.5 font-bold text-slate-800">{p.descripcion}</td>
-                      <td className="p-2.5">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                          p.accion === 'FABRICAR_NUEVA' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
-                          p.accion === 'RECTIFICAR_RECUPERAR' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
-                          'bg-purple-100 text-purple-800 border border-purple-200'
-                        }`}>
-                          {p.accion === 'FABRICAR_NUEVA' ? 'Fabricar Nueva' : p.accion === 'RECTIFICAR_RECUPERAR' ? 'Rectificar' : 'Compra BOM'}
-                        </span>
-                      </td>
-                      <td className="p-2.5 text-center font-bold text-emerald-700">{p.cantidad}</td>
-                      <td className="p-2.5 text-slate-500">{p.material}</td>
-                      <td className="p-2.5 text-right font-mono">$ {p.cotizado.toLocaleString()}</td>
-                      <td className="p-2.5 text-center">
-                        <button
-                          type="button"
-                          onClick={() => toggleAutorizacionPieza(idx)}
-                          className={`px-3 py-1 rounded font-bold text-[10px] transition cursor-pointer ${
-                            p.autorizado ? 'bg-emerald-600 text-white shadow-sm' : 'bg-slate-200 text-slate-600'
-                          }`}
-                        >
-                          {p.autorizado ? '✓ APROBADA' : '✕ NO AUTORIZADA'}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="flex justify-between items-center border-t pt-3">
-              <div className="text-slate-500 text-xs">
-                Total Piezas: <strong className="text-slate-800">{piezasLevantamiento.length}</strong> | Autorizadas: <strong className="text-emerald-700">{piezasLevantamiento.filter(p => p.autorizado).length}</strong>
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setModalLevantamientoAbierto(false)}
-                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold rounded cursor-pointer"
-                >
-                  Cerrar
-                </button>
-                <button
-                  type="button"
-                  onClick={handleExplotarAMicroProduccionMES}
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded shadow-sm transition cursor-pointer"
-                >
-                  🚀 Confirmar Aprobación y Explotar al MES (Planta)
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
+      {/* MODAL NUEVO PEDIDO COMERCIAL */}
       {modalNuevoPedidoAbierto && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-6xl w-full p-6 space-y-4 max-h-[92vh] overflow-y-auto">
@@ -1344,10 +1511,9 @@ export default function ProyectosView() {
                 </div>
 
                 <div>
-                  <label className="block font-bold text-slate-800 mb-1">📅 Fecha Compromiso Global *</label>
+                  <label className="block font-bold text-slate-800 mb-1">📅 Fecha Compromiso Global</label>
                   <input
                     type="date"
-                    required
                     value={nuevoPedido.fecha_compromiso}
                     onChange={(e) => setNuevoPedido({ ...nuevoPedido, fecha_compromiso: e.target.value })}
                     className="w-full p-2 border border-blue-300 rounded font-bold text-blue-900 bg-blue-50/50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -1414,7 +1580,7 @@ export default function ProyectosView() {
                         <th className="p-2.5 w-24">Tipo *</th>
                         <th className="p-2.5 w-20 text-center">Cantidad *</th>
                         <th className="p-2.5 w-16">Unidad</th>
-                        <th className="p-2.5 w-36">📅 Fecha Entrega Parcial *</th>
+                        <th className="p-2.5 w-36">📅 Fecha Entrega Parcial</th>
                         <th className="p-2.5 w-20">Prioridad</th>
                         <th className="p-2.5">Requisitos Técnicos Específicos del Ítem</th>
                         <th className="p-2.5 w-8 text-center"></th>
@@ -1481,7 +1647,6 @@ export default function ProyectosView() {
                           <td className="p-2">
                             <input
                               type="date"
-                              required
                               value={det.fecha_compromiso || nuevoPedido.fecha_compromiso}
                               onChange={(e) => handleCambioDetalle(det.id, 'fecha_compromiso', e.target.value)}
                               className="w-full p-1.5 border border-purple-300 rounded font-bold text-purple-900 bg-purple-50/60 focus:outline-none focus:bg-white"
@@ -1557,17 +1722,211 @@ export default function ProyectosView() {
         </div>
       )}
 
-      {modalDetalleAbierto && proyectoSeleccionado && (
+      {/* MODAL 1: EXPEDIENTE DE PEDIDO (CONFIRMADO - SOLO LECTURA) */}
+      {modalDetalleAbierto && proyectoSeleccionado && !esEdicion && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="expediente-pedido-titulo"
+            className="flex max-h-[94vh] w-full max-w-7xl flex-col overflow-hidden rounded-xl border-t-4 border-emerald-600 bg-white text-xs shadow-2xl"
+          >
+            <header className="border-b border-slate-200 bg-white px-4 py-1.5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-bold uppercase tracking-wide text-slate-500">Expediente Comercial del Pedido</span>
+                    <span className="rounded border border-emerald-300 bg-emerald-100 px-2 py-0.5 text-[10px] font-extrabold text-emerald-800">
+                      CONFIRMADO
+                    </span>
+                  </div>
+                  <h2 id="expediente-pedido-titulo" className="mt-0.5 font-mono text-lg font-extrabold text-slate-900">
+                    {proyectoSeleccionado.numero_pedido || 'Pedido sin número'}
+                  </h2>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleAbrirHistorial(proyectoSeleccionado)}
+                    className="rounded border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[10px] font-bold text-amber-900 hover:bg-amber-100 flex items-center gap-1 cursor-pointer"
+                  >
+                    📜 Historial & Trazabilidad
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => abrirModalExpediente(proyectoSeleccionado)}
+                    disabled={expedienteCargando}
+                    className="rounded border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50 cursor-pointer"
+                  >
+                    {expedienteCargando ? 'Actualizando…' : 'Actualizar avance'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setModalDetalleAbierto(false)}
+                    aria-label="Cerrar expediente comercial"
+                    className="rounded px-2 py-1 text-lg font-bold text-slate-400 hover:bg-slate-100 hover:text-slate-700 cursor-pointer"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            </header>
+
+            <div className="overflow-y-auto p-3 sm:p-4">
+              {expedienteError && (
+                <div role="alert" className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 font-semibold text-red-800">
+                  {expedienteError}
+                </div>
+              )}
+              {expedienteCargando ? (
+                <div className="rounded border border-slate-200 bg-slate-50 py-10 text-center font-semibold text-slate-500">
+                  Cargando posiciones, imputaciones y cobertura en planta…
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <section aria-label="Cabecera comercial" className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="mb-2 font-bold uppercase tracking-wide text-slate-700">Cabecera Comercial</div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3 lg:grid-cols-6">
+                      <div className="col-span-2 sm:col-span-2">
+                        <span className="text-slate-500">Razón Social</span>
+                        <strong className="block text-slate-900">{proyectoSeleccionado.cliente_nombre || 'No registrado'}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">NIT / RUT</span>
+                        <strong className="block text-slate-800">{proyectoSeleccionado.nit_rut || 'No registrado'}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Persona de Contacto</span>
+                        <strong className="block text-slate-800">{proyectoSeleccionado.contacto_nombre || 'No registrada'}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Teléfono</span>
+                        <strong className="block text-slate-800">{proyectoSeleccionado.contacto_telefono || 'No registrado'}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Email</span>
+                        <strong className="block break-all text-slate-800">{proyectoSeleccionado.contacto_email || 'No registrado'}</strong>
+                      </div>
+                      <div className="col-span-2 sm:col-span-2">
+                        <span className="text-slate-500">Ubicación de Planta / Entrega</span>
+                        <strong className="block text-slate-800">{proyectoSeleccionado.ubicacion_cliente || 'No registrada'}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Compromiso Global</span>
+                        <strong className="block text-blue-800">{proyectoSeleccionado.fecha_compromiso || 'Sin fecha'}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Condición de Pago</span>
+                        <strong className="block text-slate-800">
+                          {proyectoSeleccionado.condiciones_pago_dias == null ? 'No registrada' : `${proyectoSeleccionado.condiciones_pago_dias} días`}
+                        </strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Valor Total Cotizado</span>
+                        <strong className="block text-emerald-800">
+                          {proyectoSeleccionado.valor_total_cotizado == null
+                            ? 'No registrado'
+                            : `$ ${Number(proyectoSeleccionado.valor_total_cotizado).toLocaleString('es-CO')}`}
+                        </strong>
+                      </div>
+                      <div className="col-span-2">
+                        <span className="text-slate-500">Centro de Costos Imputado</span>
+                        <strong className="block text-purple-800">{proyectoSeleccionado.centro_costo_imputado || 'No registrado'}</strong>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section aria-label="Posiciones solicitadas" className="overflow-hidden rounded-lg border border-slate-200">
+                    <div className="flex items-center justify-between border-b border-slate-200 bg-white px-3 py-1.5">
+                      <h3 className="font-bold text-slate-800">Posiciones Solicitadas</h3>
+                      <span className="text-[10px] font-semibold text-slate-500">
+                        {(proyectoSeleccionado.detalles || []).length} posiciones
+                      </span>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[900px] border-collapse text-left text-[11px]">
+                        <thead className="bg-slate-100 text-[10px] font-extrabold uppercase text-slate-600">
+                          <tr>
+                            <th className="px-2 py-1.5">Posición</th>
+                            <th className="px-2 py-1.5">Código / Pieza</th>
+                            <th className="px-2 py-1.5">Descripción Técnica</th>
+                            <th className="px-2 py-1.5 text-right">Cantidad &amp; Unidad</th>
+                            <th className="px-2 py-1.5">Fecha de Entrega</th>
+                            <th className="px-2 py-1.5">Estado de Cobertura (OP)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {(proyectoSeleccionado.detalles || []).map((detalle, indice) => {
+                            const solicitado = Number(detalle.cantidad_solicitada || 0);
+                            const asignado = Number(detalle.cantidad_asignada || 0);
+                            const cobertura = detalle.estado_cobertura || (
+                              asignado <= 0 ? 'SIN_ASIGNAR' : asignado < solicitado ? 'PARCIAL' : 'ASIGNADO'
+                            );
+                            const cantidadOrdenes = new Set(
+                              (detalle.ot_detalles || [])
+                                .map(relacion => relacion.orden_produccion?.codigo_op)
+                                .filter(Boolean)
+                            ).size;
+                            const estilosCobertura = {
+                              ASIGNADO: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+                              PARCIAL: 'border-amber-200 bg-amber-50 text-amber-800',
+                              SIN_ASIGNAR: 'border-slate-200 bg-slate-100 text-slate-600'
+                            };
+                            const etiquetaCobertura = cobertura === 'ASIGNADO'
+                              ? '100% ASIGNADO'
+                              : cobertura === 'PARCIAL' ? 'PARCIAL' : 'SIN ASIGNAR';
+                            return (
+                              <tr key={detalle.detalle_id || detalle.id || indice} className="hover:bg-slate-50">
+                                <td className="whitespace-nowrap px-2 py-1.5 font-mono font-bold text-slate-700">
+                                  {detalle.posicion || `POS-${(indice + 1) * 10}`}
+                                </td>
+                                <td className="px-2 py-1.5 font-mono font-bold text-blue-800">
+                                  {detalle.codigo_producto || 'Sin código'}
+                                </td>
+                                <td className="max-w-sm px-2 py-1.5 font-semibold text-slate-800">
+                                  {detalle.descripcion || 'Sin descripción'}
+                                  {detalle.tipo && <span className="ml-1 text-[9px] font-medium uppercase text-slate-400">{ETIQUETAS_TIPO_MATERIAL[detalle.tipo] || detalle.tipo}</span>}
+                                </td>
+                                <td className="whitespace-nowrap px-2 py-1.5 text-right font-bold text-slate-800">
+                                  {solicitado} {detalle.unidad || 'UND'}
+                                </td>
+                                <td className="whitespace-nowrap px-2 py-1.5 text-slate-700">
+                                  {detalle.fecha_compromiso || proyectoSeleccionado.fecha_compromiso || 'Sin fecha'}
+                                </td>
+                                <td className="whitespace-nowrap px-2 py-1.5">
+                                  <span className={`inline-flex rounded border px-2 py-0.5 text-[9px] font-extrabold ${estilosCobertura[cobertura] || estilosCobertura.SIN_ASIGNAR}`}>
+                                    {etiquetaCobertura} · {cantidadOrdenes} órdenes
+                                  </span>
+                                  <span className="ml-1 text-[9px] text-slate-500">{asignado}/{solicitado}</span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          {(proyectoSeleccionado.detalles || []).length === 0 && (
+                            <tr>
+                              <td colSpan="6" className="px-3 py-6 text-center text-slate-400">No hay posiciones asociadas al pedido.</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {/* MODAL 2: EDICIÓN DE PEDIDO COMERCIAL (EN REVISIÓN - EDITABLE) */}
+      {modalDetalleAbierto && proyectoSeleccionado && esEdicion && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-6xl w-full p-6 space-y-4 max-h-[92vh] overflow-y-auto">
             <div className="flex justify-between items-start border-b pb-3">
               <div>
-                <span className={`px-2 py-0.5 text-[10px] font-bold rounded uppercase ${
-                  proyectoSeleccionado.confirmado ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-amber-100 text-amber-800 border border-amber-300'
-                }`}>
-                  {proyectoSeleccionado.confirmado 
-                    ? 'EXPEDIENTE COMERCIAL (CONFIRMADO - SOLO LECTURA)' 
-                    : 'EDICIÓN DE PEDIDO COMERCIAL (EN REVISIÓN)'}
+                <span className="px-2 py-0.5 text-[10px] font-bold rounded uppercase bg-amber-100 text-amber-800 border border-amber-300">
+                  EDICIÓN DE PEDIDO COMERCIAL (EN REVISIÓN)
                 </span>
                 <h3 className="text-xl font-bold text-slate-800 mt-1">
                   Pedido Comercial N°: <span className="text-purple-700 font-mono">{proyectoSeleccionado.numero_pedido}</span>
@@ -1582,10 +1941,10 @@ export default function ProyectosView() {
                   <label className="block font-bold text-slate-700 mb-1">N° Pedido *</label>
                   <input
                     type="text"
-                    disabled={!esEdicion}
+                    required
                     value={proyectoSeleccionado.numero_pedido || ''}
                     onChange={(e) => setProyectoSeleccionado({ ...proyectoSeleccionado, numero_pedido: e.target.value })}
-                    className="w-full p-2 border border-slate-300 rounded font-mono font-bold text-purple-800 bg-white disabled:bg-slate-100"
+                    className="w-full p-2 border border-slate-300 rounded font-mono font-bold text-purple-800 bg-white"
                   />
                 </div>
 
@@ -1593,10 +1952,10 @@ export default function ProyectosView() {
                   <label className="block font-bold text-slate-700 mb-1">Cliente / Razón Social *</label>
                   <input
                     type="text"
-                    disabled={!esEdicion}
+                    required
                     value={proyectoSeleccionado.cliente_nombre || ''}
                     onChange={(e) => setProyectoSeleccionado({ ...proyectoSeleccionado, cliente_nombre: capitalize(e.target.value) })}
-                    className="w-full p-2 border border-slate-300 rounded font-bold text-slate-800 bg-white disabled:bg-slate-100"
+                    className="w-full p-2 border border-slate-300 rounded font-bold text-slate-800 bg-white"
                   />
                 </div>
 
@@ -1604,21 +1963,19 @@ export default function ProyectosView() {
                   <label className="block font-bold text-slate-700 mb-1">Ubicación / Planta</label>
                   <input
                     type="text"
-                    disabled={!esEdicion}
                     value={proyectoSeleccionado.ubicacion_cliente || ''}
                     onChange={(e) => setProyectoSeleccionado({ ...proyectoSeleccionado, ubicacion_cliente: capitalize(e.target.value) })}
-                    className="w-full p-2 border border-slate-300 rounded text-slate-800 bg-white disabled:bg-slate-100"
+                    className="w-full p-2 border border-slate-300 rounded text-slate-800 bg-white"
                   />
                 </div>
 
                 <div>
-                  <label className="block font-bold text-slate-800 mb-1">📅 Fecha Límite Pedido Global *</label>
+                  <label className="block font-bold text-slate-800 mb-1">📅 Fecha Límite Pedido Global</label>
                   <input
                     type="date"
-                    disabled={!esEdicion}
                     value={proyectoSeleccionado.fecha_compromiso || ''}
                     onChange={(e) => setProyectoSeleccionado({ ...proyectoSeleccionado, fecha_compromiso: e.target.value })}
-                    className="w-full p-2 border border-blue-300 rounded font-bold text-blue-900 bg-blue-50/50 disabled:bg-slate-100 disabled:text-slate-700"
+                    className="w-full p-2 border border-blue-300 rounded font-bold text-blue-900 bg-blue-50/50"
                   />
                 </div>
               </div>
@@ -1628,10 +1985,9 @@ export default function ProyectosView() {
                   <label className="block font-bold text-slate-700 mb-1">Contacto Nombre</label>
                   <input
                     type="text"
-                    disabled={!esEdicion}
                     value={proyectoSeleccionado.contacto_nombre || ''}
                     onChange={(e) => setProyectoSeleccionado({ ...proyectoSeleccionado, contacto_nombre: capitalize(e.target.value) })}
-                    className="w-full p-2 border border-slate-300 rounded text-slate-800 bg-white disabled:bg-slate-100"
+                    className="w-full p-2 border border-slate-300 rounded text-slate-800 bg-white"
                   />
                 </div>
 
@@ -1639,10 +1995,9 @@ export default function ProyectosView() {
                   <label className="block font-bold text-slate-700 mb-1">Teléfono Contacto</label>
                   <input
                     type="text"
-                    disabled={!esEdicion}
                     value={proyectoSeleccionado.contacto_telefono || ''}
                     onChange={(e) => setProyectoSeleccionado({ ...proyectoSeleccionado, contacto_telefono: e.target.value })}
-                    className="w-full p-2 border border-slate-300 rounded text-slate-800 bg-white disabled:bg-slate-100"
+                    className="w-full p-2 border border-slate-300 rounded text-slate-800 bg-white"
                   />
                 </div>
 
@@ -1650,10 +2005,9 @@ export default function ProyectosView() {
                   <label className="block font-bold text-slate-700 mb-1">Email Contacto</label>
                   <input
                     type="email"
-                    disabled={!esEdicion}
                     value={proyectoSeleccionado.contacto_email || ''}
                     onChange={(e) => setProyectoSeleccionado({ ...proyectoSeleccionado, contacto_email: e.target.value })}
-                    className="w-full p-2 border border-slate-300 rounded text-slate-800 bg-white disabled:bg-slate-100"
+                    className="w-full p-2 border border-slate-300 rounded text-slate-800 bg-white"
                   />
                 </div>
               </div>
@@ -1661,15 +2015,13 @@ export default function ProyectosView() {
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <h4 className="font-bold text-slate-700 text-xs">📦 Detalle de Elementos / Piezas y Programación Parcial</h4>
-                  {esEdicion && (
-                    <button
-                      type="button"
-                      onClick={handleAgregarFilaEdicion}
-                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded text-[11px] shadow-sm transition cursor-pointer"
-                    >
-                      ➕ Agregar Ítem a PEDIDO_DETALLE
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={handleAgregarFilaEdicion}
+                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded text-[11px] shadow-sm transition cursor-pointer"
+                  >
+                    ➕ Agregar Ítem a PEDIDO_DETALLE
+                  </button>
                 </div>
 
                 <div className="border border-slate-200 rounded-lg overflow-hidden text-xs bg-white">
@@ -1678,14 +2030,14 @@ export default function ProyectosView() {
                       <tr>
                         <th className="p-2 w-8 text-center">#</th>
                         <th className="p-2 w-24">Código Prod.</th>
-                        <th className="p-2">Descripción del Elemento / Pieza</th>
+                        <th className="p-2">Descripción del Elemento / Pieza *</th>
                         <th className="p-2 w-24">Tipo</th>
-                        <th className="p-2 w-20 text-center">Cantidad</th>
+                        <th className="p-2 w-20 text-center">Cantidad *</th>
                         <th className="p-2 w-16">Unidad</th>
                         <th className="p-2 w-36">📅 Fecha Entrega Parcial</th>
                         <th className="p-2 w-20">Prioridad</th>
                         <th className="p-2">Requisitos Específicos</th>
-                        {esEdicion && <th className="p-2 w-8 text-center"></th>}
+                        <th className="p-2 w-8 text-center"></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 text-slate-600">
@@ -1693,126 +2045,93 @@ export default function ProyectosView() {
                         <tr key={det.id || idx} className="hover:bg-slate-50">
                           <td className="p-2 text-center font-bold text-slate-400">{idx + 1}</td>
                           <td className="p-2">
-                            {esEdicion ? (
-                              <input
-                                type="text"
-                                value={det.codigo_producto || ''}
-                                onChange={(e) => handleCambioDetalleEdicion(idx, 'codigo_producto', e.target.value)}
-                                className="w-full p-1 border rounded font-mono font-bold text-blue-700"
-                              />
-                            ) : (
-                              <span className="font-mono font-bold text-blue-700">{det.codigo_producto || 'PROD-01'}</span>
-                            )}
+                            <input
+                              type="text"
+                              value={det.codigo_producto || ''}
+                              onChange={(e) => handleCambioDetalleEdicion(idx, 'codigo_producto', e.target.value)}
+                              className="w-full p-1 border rounded font-mono font-bold text-blue-700"
+                            />
                           </td>
                           <td className="p-2">
-                            {esEdicion ? (
-                              <input
-                                type="text"
-                                required
-                                value={det.descripcion || ''}
-                                onChange={(e) => handleCambioDetalleEdicion(idx, 'descripcion', e.target.value)}
-                                className="w-full p-1 border rounded font-medium text-slate-800"
-                              />
-                            ) : (
-                              <span className="font-bold text-slate-800">{det.descripcion}</span>
-                            )}
+                            <input
+                              type="text"
+                              required
+                              value={det.descripcion || ''}
+                              onChange={(e) => handleCambioDetalleEdicion(idx, 'descripcion', e.target.value)}
+                              className="w-full p-1 border rounded font-medium text-slate-800"
+                            />
                           </td>
                           <td className="p-2">
-                            {esEdicion ? (
-                              <select
-                                value={det.tipo || 'pieza'}
-                                onChange={(e) => handleCambioDetalleEdicion(idx, 'tipo', e.target.value)}
-                                className="w-full p-1 border rounded bg-white cursor-pointer"
-                              >
-                                <option value="pieza">Pieza</option>
-                                <option value="conjunto">Conjunto</option>
-                                <option value="servicio">Servicio</option>
-                                <option value="trabajo">Trabajo</option>
-                                <option value="producto">Producto</option>
-                              </select>
-                            ) : (
-                              <span className="uppercase font-semibold text-purple-700">{det.tipo || 'pieza'}</span>
-                            )}
+                            <select
+                              value={det.tipo || 'pieza'}
+                              onChange={(e) => handleCambioDetalleEdicion(idx, 'tipo', e.target.value)}
+                              className="w-full p-1 border rounded bg-white cursor-pointer"
+                            >
+                              <option value="pieza">Pieza</option>
+                              <option value="conjunto">Conjunto</option>
+                              <option value="servicio">Servicio</option>
+                              <option value="trabajo">Trabajo</option>
+                              <option value="producto">Producto</option>
+                            </select>
                           </td>
                           <td className="p-2 text-center">
-                            {esEdicion ? (
-                              <input
-                                type="number"
-                                min="1"
-                                value={det.cantidad_solicitada === '' ? '' : det.cantidad_solicitada}
-                                onFocus={(e) => e.target.select()}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  handleCambioDetalleEdicion(idx, 'cantidad_solicitada', val === '' ? '' : Math.max(1, parseInt(val, 10) || 1));
-                                }}
-                                className="w-full p-1 border rounded font-bold text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
-                              />
-                            ) : (
-                              <span className="font-bold text-blue-900">{det.cantidad_solicitada}</span>
-                            )}
+                            <input
+                              type="number"
+                              min="1"
+                              required
+                              value={det.cantidad_solicitada === '' ? '' : det.cantidad_solicitada}
+                              onFocus={(e) => e.target.select()}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                handleCambioDetalleEdicion(idx, 'cantidad_solicitada', val === '' ? '' : Math.max(1, parseInt(val, 10) || 1));
+                              }}
+                              className="w-full p-1 border rounded font-bold text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
                           </td>
                           <td className="p-2">
-                            {esEdicion ? (
-                              <input
-                                type="text"
-                                value={det.unidad || 'UND'}
-                                onChange={(e) => handleCambioDetalleEdicion(idx, 'unidad', e.target.value)}
-                                className="w-full p-1 border rounded text-center uppercase"
-                              />
-                            ) : (
-                              <span>{det.unidad || 'UND'}</span>
-                            )}
+                            <input
+                              type="text"
+                              value={det.unidad || 'UND'}
+                              onChange={(e) => handleCambioDetalleEdicion(idx, 'unidad', e.target.value)}
+                              className="w-full p-1 border rounded text-center uppercase"
+                            />
                           </td>
                           <td className="p-2">
-                            {esEdicion ? (
-                              <input
-                                type="date"
-                                value={det.fecha_compromiso || proyectoSeleccionado.fecha_compromiso || ''}
-                                onChange={(e) => handleCambioDetalleEdicion(idx, 'fecha_compromiso', e.target.value)}
-                                className="w-full p-1 border border-purple-300 rounded font-bold text-purple-900 bg-purple-50/50"
-                              />
-                            ) : (
-                              <span className="font-bold text-purple-900">📅 {det.fecha_compromiso || proyectoSeleccionado.fecha_compromiso || 'Sin fecha'}</span>
-                            )}
+                            <input
+                              type="date"
+                              value={det.fecha_compromiso || ''}
+                              onChange={(e) => handleCambioDetalleEdicion(idx, 'fecha_compromiso', e.target.value)}
+                              className="w-full p-1 border border-purple-300 rounded font-bold text-purple-900 bg-purple-50/50"
+                            />
                           </td>
                           <td className="p-2">
-                            {esEdicion ? (
-                              <select
-                                value={det.prioridad || 'MEDIA'}
-                                onChange={(e) => handleCambioDetalleEdicion(idx, 'prioridad', e.target.value)}
-                                className="w-full p-1 border rounded bg-white font-bold cursor-pointer"
-                              >
-                                <option value="ALTA">ALTA</option>
-                                <option value="MEDIA">MEDIA</option>
-                                <option value="BAJA">BAJA</option>
-                              </select>
-                            ) : (
-                              <span className="font-bold text-slate-700">{det.prioridad || 'MEDIA'}</span>
-                            )}
+                            <select
+                              value={det.prioridad || 'MEDIA'}
+                              onChange={(e) => handleCambioDetalleEdicion(idx, 'prioridad', e.target.value)}
+                              className="w-full p-1 border rounded bg-white font-bold cursor-pointer"
+                            >
+                              <option value="ALTA">ALTA</option>
+                              <option value="MEDIA">MEDIA</option>
+                              <option value="BAJA">BAJA</option>
+                            </select>
                           </td>
                           <td className="p-2">
-                            {esEdicion ? (
-                              <input
-                                type="text"
-                                value={det.requisitos_especificos || ''}
-                                onChange={(e) => handleCambioDetalleEdicion(idx, 'requisitos_especificos', e.target.value)}
-                                className="w-full p-1 border rounded text-slate-800"
-                              />
-                            ) : (
-                              <span className="text-slate-700 font-medium">{det.requisitos_especificos || 'N/A'}</span>
-                            )}
+                            <input
+                              type="text"
+                              value={det.requisitos_especificos || ''}
+                              onChange={(e) => handleCambioDetalleEdicion(idx, 'requisitos_especificos', e.target.value)}
+                              className="w-full p-1 border rounded text-slate-800"
+                            />
                           </td>
-                          {esEdicion && (
-                            <td className="p-2 text-center">
-                              <button
-                                type="button"
-                                onClick={() => handleEliminarFilaEdicion(idx)}
-                                className="text-red-500 hover:text-red-700 font-bold px-1.5 py-0.5 rounded hover:bg-red-50 transition cursor-pointer"
-                              >
-                                🗑️
-                              </button>
-                            </td>
-                          )}
+                          <td className="p-2 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleEliminarFilaEdicion(idx)}
+                              className="text-red-500 hover:text-red-700 font-bold px-1.5 py-0.5 rounded hover:bg-red-50 transition cursor-pointer"
+                            >
+                              🗑️
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -1826,28 +2145,98 @@ export default function ProyectosView() {
                 </label>
                 <input
                   type="text"
-                  disabled={!esEdicion}
                   value={proyectoSeleccionado.requisitos_cliente || ''}
                   onChange={(e) => setProyectoSeleccionado({ ...proyectoSeleccionado, requisitos_cliente: capitalize(e.target.value) })}
-                  className="w-full p-2 border border-slate-300 rounded text-slate-800 bg-white disabled:bg-slate-100"
+                  className="w-full p-2 border border-slate-300 rounded text-slate-800 bg-white"
                 />
               </div>
 
+              <section className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/50 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h4 className="font-bold text-slate-800">Presupuestos de costo por componente</h4>
+                    <p className="mt-1 text-[11px] text-slate-600">
+                      Defina los importes previstos antes de confirmar el pedido. Se comparan con el costo real liquidado de cada OP.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAgregarPresupuestoComponente}
+                    className="rounded bg-amber-600 px-2.5 py-1 font-bold text-white hover:bg-amber-700 cursor-pointer"
+                  >
+                    + Agregar presupuesto
+                  </button>
+                </div>
+
+                {(proyectoSeleccionado.presupuestos_componentes || []).length > 0 ? (
+                  <div className="space-y-2">
+                    {(proyectoSeleccionado.presupuestos_componentes || []).map((item, indice) => (
+                      <div
+                        key={`${item.categoria}-${item.referencia}-${indice}`}
+                        className="grid grid-cols-1 gap-2 rounded border border-amber-100 bg-white p-2 sm:grid-cols-[1fr_1.5fr_1fr_auto]"
+                      >
+                        <select
+                          value={item.categoria || 'MATERIA_PRIMA'}
+                          onChange={(e) => handleCambioPresupuestoComponente(indice, 'categoria', e.target.value)}
+                          aria-label={`Categoría del presupuesto ${indice + 1}`}
+                          className="w-full rounded border border-slate-300 p-2 bg-white cursor-pointer"
+                        >
+                          {CATEGORIAS_PRESUPUESTO.map(categoria => (
+                            <option key={categoria.valor} value={categoria.valor}>{categoria.etiqueta}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          required
+                          maxLength={200}
+                          value={item.referencia || ''}
+                          onChange={(e) => handleCambioPresupuestoComponente(indice, 'referencia', e.target.value)}
+                          placeholder={PLACEHOLDERS_REFERENCIA_PRESUPUESTO[item.categoria] || 'Referencia del componente'}
+                          aria-label={`Referencia del presupuesto ${indice + 1}`}
+                          className="w-full rounded border border-slate-300 p-2 font-mono"
+                        />
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          required
+                          value={item.monto_presupuestado ?? ''}
+                          onChange={(e) => handleCambioPresupuestoComponente(indice, 'monto_presupuestado', e.target.value)}
+                          aria-label={`Monto presupuestado ${indice + 1}`}
+                          placeholder="Presupuesto en COP"
+                          className="w-full rounded border border-slate-300 p-2 text-right"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleEliminarPresupuestoComponente(indice)}
+                          aria-label={`Eliminar presupuesto ${indice + 1}`}
+                          className="rounded px-2 font-bold text-red-600 hover:bg-red-50 cursor-pointer"
+                        >
+                          Eliminar
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="rounded border border-dashed border-amber-200 bg-white p-2 text-slate-500">
+                    No hay presupuestos por componente configurados para este pedido.
+                  </p>
+                )}
+
+                <p className="text-[10px] text-slate-500">
+                  Referencias: materia prima = código/SKU; horas MES = centro|SETUP o centro|MECANIZADO; servicios = proveedor|descripción. Los importes están expresados en COP.
+                </p>
+              </section>
+
               <div className="flex justify-between items-center border-t pt-3">
                 <div>
-                  {!proyectoSeleccionado.confirmado ? (
-                    <button
-                      type="button"
-                      onClick={() => handleConfirmarProyecto(proyectoSeleccionado.id_proyecto)}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded text-xs transition shadow-sm flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <span>✓</span> Confirmar Pedido Comercial (Pasar a Diseño)
-                    </button>
-                  ) : (
-                    <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded border border-emerald-200">
-                      ✓ Pedido Confirmado y Disponible en Diseño
-                    </span>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleConfirmarProyecto(proyectoSeleccionado.id_proyecto)}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded text-xs transition shadow-sm flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>✓</span> Confirmar Pedido Comercial (Pasar a Diseño)
+                  </button>
                 </div>
 
                 <div className="flex gap-2">
@@ -1856,17 +2245,15 @@ export default function ProyectosView() {
                     onClick={() => setModalDetalleAbierto(false)}
                     className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold rounded transition cursor-pointer"
                   >
-                    {esEdicion ? 'Cancelar' : 'Cerrar Expediente'}
+                    Cancelar
                   </button>
-                  {esEdicion && (
-                    <button
-                      type="submit"
-                      disabled={loading}
-                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded transition shadow-sm cursor-pointer"
-                    >
-                      {loading ? 'Guardando...' : '💾 Guardar Cambios'}
-                    </button>
-                  )}
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded transition shadow-sm cursor-pointer"
+                  >
+                    {loading ? 'Guardando...' : '💾 Guardar Cambios'}
+                  </button>
                 </div>
               </div>
             </form>
@@ -1874,13 +2261,14 @@ export default function ProyectosView() {
         </div>
       )}
 
+      {/* MODAL BOM */}
       {modalBomAbierto && bomSeleccionado && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-6 space-y-4 border-t-4 border-purple-600 text-xs">
             <div className="flex justify-between items-start border-b pb-3">
               <div>
                 <span className="px-2.5 py-1 bg-purple-100 text-purple-800 text-xs font-extrabold rounded uppercase tracking-wider">
-                  🔎 Trazabilidad del BOM y Estado del Material [ISO 9001:2026]
+                  🔎 Trazabilidad de la lista de materiales y estado de insumos
                 </span>
                 <h3 className="text-xl font-bold text-slate-800 mt-2">
                   {bomSeleccionado.codigo_op} / Plano: <span className="text-purple-700 font-mono">{bomSeleccionado.codigo_plano}</span>
@@ -1939,6 +2327,231 @@ export default function ProyectosView() {
           </div>
         </div>
       )}
+
+      {/* MODAL VISOR FORMAL DE COTIZACIÓN */}
+      {modalVisorCotizacionAbierto && cotizacionDetalle && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-3 backdrop-blur-sm">
+          <div className="flex max-h-[96vh] w-full max-w-5xl flex-col rounded-xl border border-slate-300 bg-white text-xs shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-100 px-4 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold text-slate-800">📄 Expediente de Cotización</span>
+                <span className="font-mono font-black text-blue-900 rounded bg-blue-100 px-2 py-0.5 text-xs">
+                  {cotizacionDetalle.numero_cotizacion}
+                </span>
+                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                  cotizacionDetalle.estado === 'APROBADA'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : cotizacionDetalle.estado === 'EMITIDA'
+                    ? 'bg-blue-100 text-blue-800'
+                    : 'bg-amber-100 text-amber-800'
+                }`}>
+                  {cotizacionDetalle.estado}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  🖨️ Imprimir / Guardar PDF
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setMostrarModalEmail(!mostrarModalEmail)}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  ✉️ Enviar al Cliente
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setModalVisorCotizacionAbierto(false)}
+                  className="text-slate-400 hover:text-slate-600 text-lg font-bold ml-2 cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {mostrarModalEmail && (
+              <form onSubmit={handleEnviarCotizacionPorCorreo} className="p-3 bg-emerald-50 border-b border-emerald-300 space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="font-bold text-emerald-950 text-xs">✉️ Notificar Oferta Comercial al Cliente</span>
+                  <button type="button" onClick={() => setMostrarModalEmail(false)} className="text-slate-400 hover:text-slate-600 font-bold">✕</button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-700 mb-0.5">Correo Destino (Cliente) *</label>
+                    <input
+                      type="email"
+                      required
+                      value={emailDestino}
+                      onChange={e => setEmailDestino(e.target.value)}
+                      placeholder="cliente@empresa.com"
+                      className="w-full p-1.5 border border-slate-300 rounded bg-white text-xs font-semibold text-slate-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-700 mb-0.5">Asunto del Mensaje *</label>
+                    <input
+                      type="text"
+                      required
+                      value={asuntoEmail}
+                      onChange={e => setAsuntoEmail(e.target.value)}
+                      className="w-full p-1.5 border border-slate-300 rounded bg-white text-xs text-slate-900"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-700 mb-0.5">Cuerpo del Mensaje</label>
+                  <textarea
+                    rows="2"
+                    value={mensajeEmail}
+                    onChange={e => setMensajeEmail(e.target.value)}
+                    className="w-full p-1.5 border border-slate-300 rounded bg-white text-xs text-slate-900 font-sans"
+                  />
+                </div>
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setMostrarModalEmail(false)}
+                    className="px-3 py-1 bg-slate-200 hover:bg-slate-300 rounded font-semibold text-slate-700"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={enviandoEmail}
+                    className="px-4 py-1 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded shadow-xs"
+                  >
+                    {enviandoEmail ? 'Enviando…' : '🚀 Enviar Ahora'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            <div className="flex-1 overflow-y-auto p-6 bg-slate-100">
+              <div className="max-w-4xl mx-auto bg-white p-8 rounded-lg shadow-md border border-slate-300 font-sans text-slate-900 space-y-5">
+                <div className="flex justify-between items-start border-b border-slate-300 pb-4">
+                  <div>
+                    <h1 className="text-xl font-black tracking-tight text-blue-900">HD Precision &amp; Technology</h1>
+                    <p className="text-[10px] text-slate-500 font-medium">Mecanizado CNC de Alta Precisión · Fabricación &amp; Overhaul Industrial</p>
+                    <p className="text-[10px] text-slate-400">NIT: 900.852.147-1 · Funza, Cundinamarca</p>
+                  </div>
+                  <div className="text-right">
+                    <span className="font-extrabold text-xs text-slate-500 uppercase tracking-wider">Oferta Comercial</span>
+                    <div className="text-xl font-mono font-black text-blue-900">{cotizacionDetalle.numero_cotizacion}</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">Fecha Emisión: {cotizacionDetalle.fecha_emision}</div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3.5 rounded border border-slate-200 text-xs">
+                  <div className="space-y-1">
+                    <div><span className="font-bold text-slate-600">Cliente / Razón Social:</span> <strong className="text-slate-900">{cotizacionDetalle.cliente?.razon_social || cotizacionDetalle.id_socio}</strong></div>
+                    <div><span className="font-bold text-slate-600">NIT / Identificación:</span> {cotizacionDetalle.cliente?.nit || 'N/A'}</div>
+                    <div><span className="font-bold text-slate-600">Dirección:</span> {cotizacionDetalle.cliente?.direccion || 'Planta Principal'}</div>
+                  </div>
+                  <div className="space-y-1">
+                    <div><span className="font-bold text-slate-600">E-mail Contacto:</span> {cotizacionDetalle.cliente?.email || 'N/A'}</div>
+                    <div><span className="font-bold text-slate-600">Teléfono:</span> {cotizacionDetalle.cliente?.telefono || 'N/A'}</div>
+                    <div><span className="font-bold text-slate-600">Condición de Pago:</span> {cotizacionDetalle.cliente?.condiciones_pago || '30 Días'}</div>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse border border-slate-300 text-left text-xs">
+                    <thead>
+                      <tr className="bg-slate-100 font-bold border-b border-slate-300 text-slate-700">
+                        <th className="p-2 border-r text-center w-12">#</th>
+                        <th className="p-2 border-r w-28">Código / Ref</th>
+                        <th className="p-2 border-r">Descripción del Ítem</th>
+                        <th className="p-2 border-r text-center w-16">Cant.</th>
+                        <th className="p-2 border-r text-right w-28">Valor Unit.</th>
+                        <th className="p-2 text-right w-32">Subtotal</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {cotizacionDetalle.posiciones && cotizacionDetalle.posiciones.length > 0 ? (
+                        cotizacionDetalle.posiciones.map((pos, idx) => (
+                          <tr key={idx} className="hover:bg-slate-50">
+                            <td className="p-2 border-r text-center font-mono text-slate-400">{(idx + 1) * 10}</td>
+                            <td className="p-2 border-r font-mono font-bold text-purple-800">{pos.numero_producto}</td>
+                            <td className="p-2 border-r font-semibold uppercase">{pos.descripcion}</td>
+                            <td className="p-2 border-r text-center font-bold">{pos.cantidad}</td>
+                            <td className="p-2 border-r text-right font-mono">$ {Number(pos.precio_unitario).toLocaleString('es-CO')}</td>
+                            <td className="p-2 text-right font-mono font-bold text-slate-900">
+                              $ {Number(pos.subtotal || pos.cantidad * pos.precio_unitario).toLocaleString('es-CO')}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan="6" className="p-3 text-center text-slate-400">
+                            Detalles incluidos en la oferta consolidada de la orden.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <div className="w-72 space-y-1 text-right font-mono text-xs">
+                    <div className="flex justify-between border-t-2 border-slate-800 pt-1.5 font-black text-sm text-blue-900">
+                      <span>Total Oferta (COP):</span>
+                      <span>$ {Number(cotizacionDetalle.valor_total).toLocaleString('es-CO')}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {cotizacionDetalle.condiciones_comerciales && (
+                  <div className="p-3 bg-slate-50 border rounded text-[11px] text-slate-600 leading-relaxed">
+                    <strong className="block text-slate-800 mb-1 font-bold">CONDICIONES COMERCIALES Y PLAZOS:</strong>
+                    <p className="whitespace-pre-line">{cotizacionDetalle.condiciones_comerciales}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex justify-end border-t border-slate-200 bg-slate-50 px-4 py-2.5">
+              <button
+                type="button"
+                onClick={() => setModalVisorCotizacionAbierto(false)}
+                className="rounded bg-slate-800 px-4 py-1.5 font-bold text-white hover:bg-slate-900 cursor-pointer"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL NUEVA COTIZACIÓN */}
+      {modalNuevoCotizacionAbierto && (
+        <ModalNuevaCotizacion
+          isOpen={modalNuevoCotizacionAbierto}
+          onClose={() => setModalNuevoCotizacionAbierto(false)}
+          onCotizacionGuardada={(nuevaCot) => {
+            setModalNuevoCotizacionAbierto(false);
+            if (nuevaCot && nuevaCot.numero_cotizacion) {
+              setCotizaciones(prev => [nuevaCot, ...prev]);
+            }
+            cargarProyectos();
+          }}
+        />
+      )}
+
+      {/* MODAL HISTORIAL Y TRAZABILIDAD */}
+      <HistorialTimelineModal
+        isOpen={modalHistorial.abierto}
+        onClose={() => setModalHistorial(prev => ({ ...prev, abierto: false }))}
+        tipoEntidad={modalHistorial.tipoEntidad}
+        identificador={modalHistorial.identificador}
+        tituloDoc={modalHistorial.tituloDoc}
+      />
     </div>
   );
 }

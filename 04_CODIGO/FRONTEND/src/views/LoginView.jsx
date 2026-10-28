@@ -26,7 +26,7 @@ export default function LoginView({ onLoginSuccess }) {
       if (typeof access_token !== 'string' || !access_token.trim()) {
         throw new Error('El servidor de autenticación no devolvió un token válido.');
       }
-      
+
       // 1. Guardar token inmutable en localStorage
       localStorage.setItem('sgi_token', access_token);
 
@@ -45,6 +45,32 @@ export default function LoginView({ onLoginSuccess }) {
       } else {
         setError(err.response?.data?.detail || 'Credenciales inválidas o servidor inalcanzable.');
       }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fastLogin = async (email) => {
+    setLoading(true);
+    setError('');
+    try {
+      const formData = new URLSearchParams();
+      formData.append('username', email);
+      formData.append('password', '123456');
+
+      const response = await API.post('/auth/token', formData, {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      });
+
+      const { access_token } = response.data;
+      localStorage.setItem('sgi_token', access_token);
+      if (onLoginSuccess) {
+        onLoginSuccess(access_token);
+      } else {
+        window.location.href = '/ventas/proyectos';
+      }
+    } catch (err) {
+      setError('Error en acceso rápido: ' + (err.response?.data?.detail || err.message));
     } finally {
       setLoading(false);
     }
@@ -100,6 +126,27 @@ export default function LoginView({ onLoginSuccess }) {
 
         <div className="mt-6 text-center text-[11px] text-slate-400">
           Control de Acceso Autenticado — [ISO 9001:2026]
+        </div>
+
+        <div className="mt-8 pt-6 border-t border-slate-100">
+          <p className="text-[10px] font-bold text-slate-400 uppercase mb-3 text-center">Acceso de Pruebas (Dev Mode)</p>
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { email: 'admin@sgi.com', label: 'Admin' },
+              { email: 'jefe_diseno@sgi.local', label: 'Jefe Ing.' },
+              { email: 'dibujante_1@sgi.local', label: 'Dibujante 1' },
+              { email: 'lider_produccion@sgi.local', label: 'Líder Prod.' },
+            ].map((user) => (
+              <button
+                key={user.email}
+                onClick={() => fastLogin(user.email)}
+                disabled={loading}
+                className="py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-[10px] transition border border-slate-200 font-medium"
+              >
+                {user.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     </div>

@@ -19,3 +19,7 @@ El software debe apoyar los controles definidos por la organización. La existen
 - Requisito del ERP relacionado:
 - Prueba relacionada:
 - Estado de aprobación:
+## Requisitos y Procesos de Calidad
+- [[REQ-CAL-001]]
+- [[PRO-CAL-001]]
+- [[PM-04_Compras_MRP_Kardex]]

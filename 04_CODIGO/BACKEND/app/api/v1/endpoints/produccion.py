@@ -4,7 +4,8 @@ from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.db.database import get_db
 from app.db.models import (
@@ -24,6 +25,7 @@ from app.db.models_produccion import (
 )
 
 router = APIRouter()
+cola_router = APIRouter()
 
 
 # =============================================================================
@@ -64,6 +66,30 @@ class SubLoteCrearSchema(BaseModel):
     operario_nombre: str
     maquina_codigo: str
     instrucciones: Optional[str] = None
+
+
+class ReordenarSublotesSchema(BaseModel):
+    operario_nombre: str = Field(..., min_length=1)
+    maquina_codigo: Optional[str] = None
+    orden_ids: List[UUID] = Field(..., min_length=1)
+
+
+class EstadoSubloteUpdateSchema(BaseModel):
+    estado_sublote: EstadoOperacionEnum
+
+
+class FinalizarSubloteSchema(BaseModel):
+    id_sublote: UUID
+    codigo_op: str
+    operario: str = Field(..., min_length=1)
+    maquina: str = Field(..., min_length=1)
+    piezas_ok: int = Field(..., ge=0)
+    piezas_scrap: int = Field(0, ge=0)
+    segundos_setup: int = Field(0, ge=0)
+    segundos_produccion: int = Field(0, ge=0)
+    segundos_pausa: int = Field(0, ge=0)
+    motivo_pausa: Optional[str] = None
+    novedades: Optional[str] = None
 
 
 class ReporteCierreOperarioSchema(BaseModel):
@@ -338,20 +364,144 @@ def pausar_turno_op(data: PausarTurnoRequest, db: Session = Depends(get_db)):
 # BLOQUE 2: OPERACIONES MES (SUB-LOTES Y NOTIFICACIONES DE PLANTA)
 # =============================================================================
 
-@router.get("/sublotes", status_code=status.HTTP_200_OK)
+@cola_router.get("/sublotes", status_code=status.HTTP_200_OK)
 def listar_sublotes(
     area: Optional[str] = Query(None),
     maquina: Optional[str] = Query(None),
+    operario_nombre: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
-    """Consulta de sub-lotes asignados a operarios y puestos de trabajo."""
-    query = db.query(SubLoteOperacion)
+    """Consulta trabajos activos y pendientes ordenados por operario, estación y prioridad."""
+    query = db.query(SubLoteOperacion).options(joinedload(SubLoteOperacion.operacion))
+    query = query.filter(SubLoteOperacion.estado_sublote.in_([
+        EstadoOperacionEnum.PENDIENTE,
+        EstadoOperacionEnum.PENDIENTE_ASIGNACION,
+        EstadoOperacionEnum.EN_COLA,
+        EstadoOperacionEnum.EN_SETUP,
+        EstadoOperacionEnum.EN_PRODUCCION,
+        EstadoOperacionEnum.PAUSADA,
+    ]))
     if maquina:
         query = query.filter(SubLoteOperacion.maquina_codigo == maquina)
-    return query.all()
+    if operario_nombre:
+        query = query.filter(SubLoteOperacion.operario_nombre == operario_nombre)
+    if area:
+        query = query.join(SubLoteOperacion.operacion).filter(
+            OperacionOT.unidad_planta == area
+        )
+    sublotes = query.order_by(
+        SubLoteOperacion.operario_nombre,
+        SubLoteOperacion.prioridad_cola,
+        SubLoteOperacion.id_sublote,
+    ).all()
+    respuesta = []
+    for sublote in sublotes:
+        operacion = sublote.operacion
+        plano = db.query(Plano).filter(Plano.id_plano == operacion.id_plano).first()
+        respuesta.append({
+            "id_sublote": sublote.id_sublote,
+            "id_operacion": operacion.id_operacion,
+            "codigo_op": operacion.codigo_op,
+            "codigo_plano": operacion.codigo_plano,
+            "numero_pedido": None,
+            "detalle_pieza": plano.material_requerido if plano else operacion.codigo_plano,
+            "sublote_tag": sublote.numero_sublote,
+            "cantidad_asignada": sublote.cantidad_asignada,
+            "nombre_proceso": operacion.nombre_proceso,
+            "secuencia_paso": operacion.secuencia_paso,
+            "archivo_url": plano.archivo_url if plano else None,
+            "instrucciones": plano.causa_espera if plano else None,
+            "operario_id": sublote.operario_id,
+            "operario_nombre": sublote.operario_nombre,
+            "maquina_codigo": sublote.maquina_codigo,
+            "estado_sublote": sublote.estado_sublote.value if hasattr(sublote.estado_sublote, "value") else sublote.estado_sublote,
+            "prioridad_cola": sublote.prioridad_cola,
+            "unidad_planta": operacion.unidad_planta.value if hasattr(operacion.unidad_planta, "value") else operacion.unidad_planta,
+        })
+    return respuesta
 
 
-@router.post("/sublotes/crear", status_code=status.HTTP_201_CREATED)
+@cola_router.post("/sublotes/reordenar", status_code=status.HTTP_200_OK)
+def reordenar_sublotes(payload: ReordenarSublotesSchema, db: Session = Depends(get_db)):
+    """Guarda atómicamente la secuencia de espera de un operario en una estación."""
+    consulta = db.query(SubLoteOperacion).filter(
+        SubLoteOperacion.operario_nombre == payload.operario_nombre,
+        SubLoteOperacion.estado_sublote.in_([
+            EstadoOperacionEnum.PENDIENTE,
+            EstadoOperacionEnum.PENDIENTE_ASIGNACION,
+            EstadoOperacionEnum.EN_COLA,
+        ]),
+    )
+    if payload.maquina_codigo:
+        consulta = consulta.filter(SubLoteOperacion.maquina_codigo == payload.maquina_codigo)
+    sublotes = consulta.with_for_update().all()
+    ids_existentes = {sublote.id_sublote for sublote in sublotes}
+    ids_solicitados = payload.orden_ids
+    if len(ids_solicitados) != len(set(ids_solicitados)) or set(ids_solicitados) != ids_existentes:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="La cola cambió. Actualice la vista y vuelva a ordenar los sublotes.",
+        )
+    por_id = {sublote.id_sublote: sublote for sublote in sublotes}
+    try:
+        for prioridad, id_sublote in enumerate(ids_solicitados, start=1):
+            por_id[id_sublote].prioridad_cola = prioridad
+        db.commit()
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="No se pudo guardar el orden de la cola.") from error
+    return {
+        "operario_nombre": payload.operario_nombre,
+        "maquina_codigo": payload.maquina_codigo,
+        "orden_ids": ids_solicitados,
+        "mensaje": "La prioridad de los sublotes quedó guardada.",
+    }
+
+
+@cola_router.patch("/sublotes/{id_sublote}/estado", status_code=status.HTTP_200_OK)
+def actualizar_estado_sublote(
+    id_sublote: UUID,
+    payload: EstadoSubloteUpdateSchema,
+    db: Session = Depends(get_db),
+):
+    sublote = db.query(SubLoteOperacion).filter(
+        SubLoteOperacion.id_sublote == id_sublote
+    ).with_for_update().first()
+    if not sublote:
+        raise HTTPException(status_code=404, detail="No existe el sublote solicitado.")
+
+    estado_actual = sublote.estado_sublote
+    transiciones_permitidas = {
+        EstadoOperacionEnum.PENDIENTE: {EstadoOperacionEnum.EN_SETUP},
+        EstadoOperacionEnum.PENDIENTE_ASIGNACION: {EstadoOperacionEnum.EN_SETUP},
+        EstadoOperacionEnum.EN_COLA: {EstadoOperacionEnum.EN_SETUP},
+        EstadoOperacionEnum.EN_SETUP: {
+            EstadoOperacionEnum.EN_PRODUCCION,
+            EstadoOperacionEnum.PAUSADA,
+        },
+        EstadoOperacionEnum.EN_PRODUCCION: {EstadoOperacionEnum.PAUSADA},
+        EstadoOperacionEnum.PAUSADA: {EstadoOperacionEnum.EN_PRODUCCION},
+    }
+    if payload.estado_sublote not in transiciones_permitidas.get(estado_actual, set()):
+        raise HTTPException(
+            status_code=409,
+            detail="La transición de estado solicitada no está permitida para este sublote.",
+        )
+
+    sublote.estado_sublote = payload.estado_sublote
+    try:
+        db.commit()
+        db.refresh(sublote)
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="No se pudo actualizar el estado del sublote.") from error
+    return {
+        "id_sublote": str(sublote.id_sublote),
+        "estado_sublote": sublote.estado_sublote.value,
+    }
+
+
+@cola_router.post("/sublotes/crear", status_code=status.HTTP_201_CREATED)
 def crear_sublote_programado(data: SubLoteCrearSchema, db: Session = Depends(get_db)):
     """Permite al Líder fraccionar una OT en sub-lotes asignados a máquinas/operarios."""
     operacion = db.query(OperacionOT).filter(
@@ -378,6 +528,15 @@ def crear_sublote_programado(data: SubLoteCrearSchema, db: Session = Depends(get
         db.flush()
 
     conteo = db.query(SubLoteOperacion).filter(SubLoteOperacion.id_operacion == operacion.id_operacion).count()
+    prioridad = db.query(SubLoteOperacion.prioridad_cola).filter(
+        SubLoteOperacion.operario_nombre == data.operario_nombre,
+        SubLoteOperacion.maquina_codigo == data.maquina_codigo,
+        SubLoteOperacion.estado_sublote.in_([
+            EstadoOperacionEnum.PENDIENTE,
+            EstadoOperacionEnum.PENDIENTE_ASIGNACION,
+            EstadoOperacionEnum.EN_COLA,
+        ]),
+    ).order_by(SubLoteOperacion.prioridad_cola.desc()).with_for_update().first()
     
     nuevo_sublote = SubLoteOperacion(
         id_sublote=uuid4(),
@@ -387,6 +546,7 @@ def crear_sublote_programado(data: SubLoteCrearSchema, db: Session = Depends(get
         operario_nombre=data.operario_nombre,
         operario_id=data.operario_nombre.lower().replace(" ", "_"),
         maquina_codigo=data.maquina_codigo,
+        prioridad_cola=(prioridad[0] if prioridad else 0) + 1,
         estado_sublote=EstadoOperacionEnum.EN_COLA
     )
     
@@ -398,6 +558,72 @@ def crear_sublote_programado(data: SubLoteCrearSchema, db: Session = Depends(get
         "mensaje": f"Sub-lote de {data.cantidad_sublote} UND enviado a la tablet de {data.operario_nombre} [{data.maquina_codigo}].",
         "id_sublote": nuevo_sublote.id_sublote
     }
+
+
+@cola_router.post("/sublotes/finalizar", status_code=status.HTTP_200_OK)
+def finalizar_sublote(payload: FinalizarSubloteSchema, db: Session = Depends(get_db)):
+    sublote = db.query(SubLoteOperacion).filter(
+        SubLoteOperacion.id_sublote == payload.id_sublote
+    ).with_for_update().first()
+    if not sublote:
+        raise HTTPException(status_code=404, detail="No se encontró el sublote indicado.")
+    if sublote.estado_sublote == EstadoOperacionEnum.COMPLETADA:
+        raise HTTPException(status_code=409, detail="El sublote ya fue registrado como terminado.")
+    if payload.piezas_ok + payload.piezas_scrap > sublote.cantidad_asignada:
+        raise HTTPException(status_code=422, detail="Las piezas conformes y rechazadas superan la cantidad asignada.")
+    operacion = db.query(OperacionOT).filter(
+        OperacionOT.id_operacion == sublote.id_operacion
+    ).with_for_update().first()
+    if not operacion or operacion.codigo_op != payload.codigo_op:
+        raise HTTPException(status_code=409, detail="El código de orden no corresponde al sublote.")
+    ahora = datetime.now(timezone.utc)
+    registro = RegistroTiempoOperario(
+        id_sublote=sublote.id_sublote,
+        operario_id=sublote.operario_id or payload.operario,
+        maquina_codigo=sublote.maquina_codigo or payload.maquina,
+        tiempo_setup_segundos=payload.segundos_setup,
+        tiempo_produccion_segundos=payload.segundos_produccion,
+        fecha_fin_operacion=ahora,
+        piezas_conformes_ok=payload.piezas_ok,
+        piezas_defectuosas_scrap=payload.piezas_scrap,
+        es_entrega_parcial=int(payload.piezas_ok + payload.piezas_scrap < sublote.cantidad_asignada),
+        comentarios_operario=payload.novedades,
+        motivo_pausa=payload.motivo_pausa,
+    )
+    sublote.estado_sublote = (
+        EstadoOperacionEnum.COMPLETADA
+        if payload.piezas_ok + payload.piezas_scrap >= sublote.cantidad_asignada
+        else EstadoOperacionEnum.PARCIALMENTE_COMPLETADA
+    )
+    operacion.cantidad_acumulada_ok = (operacion.cantidad_acumulada_ok or 0) + payload.piezas_ok
+    if operacion.cantidad_acumulada_ok >= operacion.cantidad_total_orden:
+        operacion.estado_operacion = EstadoOperacionEnum.COMPLETADA
+    notificacion = NotificacionLider(
+        id_sublote=sublote.id_sublote,
+        unidad_planta=operacion.unidad_planta,
+        tipo_notificacion=(
+            TipoNotificacionEnum.PIEZAS_DEFECTUOSAS
+            if payload.piezas_scrap
+            else TipoNotificacionEnum.ENTREGA_PARCIAL
+            if sublote.estado_sublote == EstadoOperacionEnum.PARCIALMENTE_COMPLETADA
+            else TipoNotificacionEnum.SUBLOTE_COMPLETADO
+        ),
+        titulo=f"Reporte de planta · OP {operacion.codigo_op}",
+        mensaje=f"{payload.operario} reportó {payload.piezas_ok} piezas conformes y {payload.piezas_scrap} rechazadas en {payload.maquina}.",
+        codigo_op=operacion.codigo_op,
+        codigo_plano=operacion.codigo_plano,
+        operario_nombre=payload.operario,
+        maquina_codigo=payload.maquina,
+        piezas_reportadas=payload.piezas_ok,
+    )
+    try:
+        db.add_all([registro, notificacion])
+        db.commit()
+        db.refresh(registro)
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="No se pudo registrar el cierre del sublote.") from error
+    return {"mensaje": "El reporte de producción quedó registrado.", "id_registro": registro.id_registro}
 
 
 @router.post("/reportar-cierre", status_code=status.HTTP_200_OK)
@@ -457,4 +683,3 @@ def listar_notificaciones_area(area: TipoUnidadPlantaEnum, db: Session = Depends
     return db.query(NotificacionLider).filter(
         NotificacionLider.unidad_planta == area
     ).order_by(NotificacionLider.creado_en.desc()).all()
-

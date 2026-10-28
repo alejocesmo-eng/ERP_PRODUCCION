@@ -4,20 +4,26 @@ import API from '../../services/api';
 import VisorPlanoModal from '../../components/VisorPlanoModal';
 
 export default function DisenoPlanosView() {
+  // BLOQUE 1: ESTADOS PRINCIPALES DEL MÓDULO PM-02 Y ROL DEL USUARIO
   const [usuarioActual, setUsuarioActual] = useState(null);
   const [planos, setPlanos] = useState([]);
   const [pedidosEntrantes, setPedidosEntrantes] = useState([]);
   const [solicitudesCompra, setSolicitudesCompra] = useState([]);
   const [listaMantenimientos, setListaMantenimientos] = useState([]);
+  const [catalogoProductos, setCatalogoProductos] = useState([]);
+  const [dibujantesDisponibles, setDibujantesDisponibles] = useState([]);
+
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState({ tipo: '', texto: '' });
   const [busqueda, setBusqueda] = useState('');
   const [busquedaBandeja, setBusquedaBandeja] = useState('');
   const [filtroEstado, setFiltroEstado] = useState('TODOS');
   const [filtroBandeja, setFiltroBandeja] = useState('PENDIENTES');
+  const [filtroDibujante, setFiltroDibujante] = useState('TODOS');
 
   const [pestanaActiva, setPestanaActiva] = useState('BANDEJA');
 
+  // Controles de despliegue de piezas y modales
   const [piezasExpandidas, setPiezasExpandidas] = useState({});
   const [piezasProyectoMap, setPiezasProyectoMap] = useState({});
   const [cargandoPiezasMap, setCargandoPiezasMap] = useState({});
@@ -33,6 +39,9 @@ export default function DisenoPlanosView() {
 
   const [modalBomAbierto, setModalBomAbierto] = useState(false);
   const [bomSeleccionado, setBomSeleccionado] = useState(null);
+
+  const [modalHistorialVersionesAbierto, setModalHistorialVersionesAbierto] = useState(false);
+  const [planoHistorialSeleccionado, setPlanoHistorialSeleccionado] = useState(null);
 
   const [mantenimientoSeleccionado, setMantenimientoSeleccionado] = useState(null);
   const [piezasLevantamiento, setPiezasLevantamiento] = useState([]);
@@ -61,6 +70,8 @@ export default function DisenoPlanosView() {
     codigo_op: '4007256',
     unidad_planta: 'Mecanizados',
     estado_diseno: 'PLANIFICADA',
+    fecha_confirmacion_pedido: '',
+    fecha_apertura_orden: new Date().toISOString().split('T')[0],
     fecha_inicio_programada: '',
     fecha_entrega_cliente: '',
     fecha_entrega_produccion: '',
@@ -108,14 +119,22 @@ export default function DisenoPlanosView() {
     }
   };
 
+  const isDibujante = () => {
+    if (!usuarioActual) return false;
+    const rol = (usuarioActual.rol || '').toUpperCase();
+    return rol === 'DISENO' || rol === 'DIBUJANTE';
+  };
+
   const cargarPlanosYPedidos = async () => {
     try {
       setLoading(true);
-      const [resPlanos, resPedidos, resSolicitudes, resMantenimientos] = await Promise.allSettled([
+      const [resPlanos, resPedidos, resSolicitudes, resMantenimientos, resProductos, resPersonal] = await Promise.allSettled([
         API.get('/planos/'),
         API.get('/proyectos/'),
         API.get('/solicitudes-compra/'),
-        API.get('/mantenimientos/monitor-kits')
+        API.get('/mantenimientos/monitor-kits'),
+        API.get('/maestros/productos'),
+        API.get('/maestros/personal')
       ]);
 
       const listaPedidos = resPedidos.status === 'fulfilled' && Array.isArray(resPedidos.value.data) ? resPedidos.value.data : [];
@@ -125,17 +144,53 @@ export default function DisenoPlanosView() {
 
       setSolicitudesCompra(listaSolicitudes);
 
+      // Cargar Dibujantes
+      if (resPersonal.status === 'fulfilled' && Array.isArray(resPersonal.value.data)) {
+        const dibujantesFilter = resPersonal.value.data.filter(p => p.area === 'DISENO' || p.area === 'Diseño');
+        setDibujantesDisponibles(dibujantesFilter.map(d => d.nombre_completo));
+      } else {
+        setDibujantesDisponibles(['Ing. Carlos Ruiz', 'Arq. María López', 'Ing. Andrés Molina']);
+      }
+
+      // Cargar SKUs Maestros
+      if (resProductos.status === 'fulfilled' && Array.isArray(resProductos.value.data)) {
+        setCatalogoProductos(resProductos.value.data);
+      } else {
+        setCatalogoProductos([
+          { numero_producto: 'SKU-TOR-001', nombre: 'Eje de Transmisión Principal Ø4"', codigo_plano_defecto: 'PLN-2026-088-A', version_defecto: 'v1.0' },
+          { numero_producto: 'SKU-BRN-044', nombre: 'Buje de Desgaste Mecanizado', codigo_plano_defecto: 'PLN-2026-115-B', version_defecto: 'v1.1' }
+        ]);
+      }
+
       const listaPlanosMapeados = listaPlanosBrutos.map(pl => {
         const pedEncontrado = listaPedidos.find(p => p.id_proyecto === pl.id_proyecto || p.numero_pedido === pl.numero_pedido);
         const solEncontrada = listaSolicitudes.find(s => s.codigo_op === pl.codigo_op && s.codigo_plano === pl.codigo_plano);
+        const bomItems = Array.isArray(pl.bom_items) ? pl.bom_items : [];
+        const estadosBom = bomItems.map(item => item.estado_abastecimiento);
+        const estadoBomPlano = estadosBom.length > 0
+          ? (estadosBom.every(estado => estado === 'ENTREGADO')
+            ? 'ENTREGADO'
+            : estadosBom.every(estado => ['EN_ALMACEN', 'ENTREGADO'].includes(estado))
+              ? 'EN_ALMACEN'
+              : estadosBom.find(estado => estado && estado !== 'SIN_SOLICITAR') || 'SIN_SOLICITAR')
+          : (solEncontrada?.estado_bom || 'SIN_SOLICITAR');
 
         return {
           ...pl,
+          version_plano: pl.version_plano || pl.revision || 'v1.0',
           numero_pedido: pedEncontrado?.numero_pedido || pl.numero_pedido || 'PED-2026-110',
           cliente_nombre: pl.cliente_nombre || pedEncontrado?.cliente_nombre || 'Cliente General',
           ubicacion_cliente: pl.ubicacion_cliente || pedEncontrado?.ubicacion_cliente || 'Planta Principal',
+          fecha_confirmacion_pedido: pl.fecha_confirmacion_pedido || pedEncontrado?.created_at?.split('T')[0] || '2026-10-15',
+          fecha_apertura_orden: pl.fecha_apertura_orden || pl.created_at?.split('T')[0] || '2026-10-18',
           solicitud_compra: solEncontrada || null,
-          estado_bom: solEncontrada?.estado_bom || (pl.material_requerido ? 'SOLICITADO' : 'SIN_SOLICITAR')
+          bom_items: bomItems,
+          estado_bom: estadoBomPlano,
+          archivo_step_url: pl.archivo_step_url || '',
+          archivo_dxf_url: pl.archivo_dxf_url || '',
+          historial_versiones: pl.historial_versiones || [
+            { version: pl.version_plano || 'v1.0', fecha: pl.created_at?.split('T')[0] || '2026-10-18', dibujante: pl.dibujante_asignado || 'Ing. Carlos Ruiz', motivo: 'Versión inicial de plano cargada.' }
+          ]
         };
       });
 
@@ -169,6 +224,14 @@ export default function DisenoPlanosView() {
     }
   };
 
+  // RESTRICCIÓN DE APERTURA Y ASIGNACIÓN
+  const tienePermisoAperturaYAsignacion = () => {
+    if (!usuarioActual) return true;
+    const rol = (usuarioActual.rol || '').toLowerCase();
+    const area = (usuarioActual.area || '').toLowerCase();
+    return rol.includes('admin') || rol.includes('jefe') || area.includes('diseño') || area.includes('diseno');
+  };
+
   const esAreaAutorizadaParaPaso = (areaRequerida) => {
     if (!usuarioActual) return true;
     const rol = (usuarioActual.rol || '').toLowerCase();
@@ -178,6 +241,49 @@ export default function DisenoPlanosView() {
 
     const areaReqLower = areaRequerida.toLowerCase();
     return area.includes(areaReqLower) || areaReqLower.includes(area);
+  };
+
+  // CÁLCULO DE DÍAS TRANSCURRIDOS Y ALERTA DE KPI
+  const calcularMetricasTiempo = (fechaApertura, fechaCompromiso) => {
+    if (!fechaApertura) return { diasTranscurridos: 0, esCritico: false };
+
+    const hoy = new Date();
+    const inicio = new Date(fechaApertura);
+    const limite = fechaCompromiso ? new Date(fechaCompromiso) : null;
+
+    const diffTiempo = Math.max(0, hoy - inicio);
+    const diasTranscurridos = Math.floor(diffTiempo / (1000 * 60 * 60 * 24));
+
+    let esCritico = false;
+    if (limite && limite > inicio) {
+      const tiempoTotal = limite - inicio;
+      const tiempoConsumido = hoy - inicio;
+      const porcentajeTiempo = Math.min(100, Math.round((tiempoConsumido / tiempoTotal) * 100));
+      if (porcentajeTiempo >= 80) esCritico = true;
+    }
+
+    return { diasTranscurridos, esCritico };
+  };
+
+  // VÍNCULO AUTOMÁTICO POR NÚMERO DE PRODUCTO (SKU)
+  const handleSeleccionarSKU = (skuBuscado) => {
+    const prodEncontrado = catalogoProductos.find(p => p.numero_producto === skuBuscado);
+    if (prodEncontrado) {
+      setNuevoPlano(prev => ({
+        ...prev,
+        numero_producto: prodEncontrado.numero_producto,
+        piezas: prev.piezas.map(pz => ({
+          ...pz,
+          codigo_plano: prodEncontrado.codigo_plano_defecto || pz.codigo_plano,
+          version_plano: prodEncontrado.version_defecto || 'v1.0',
+          detalle_pieza: prodEncontrado.nombre || pz.detalle_pieza
+        }))
+      }));
+      setMensaje({
+        tipo: 'exito',
+        texto: `🔗 Información y plano predeterminado (${prodEncontrado.codigo_plano_defecto}) precargados para SKU ${prodEncontrado.numero_producto}.`
+      });
+    }
   };
 
   const handleAvanzarPuertaPasoSGI = async (proyecto) => {
@@ -314,10 +420,13 @@ export default function DisenoPlanosView() {
 
     if (nuevoEstado === 'LIBERADA') {
       const faltaPlano = !plano.archivo_url || plano.archivo_url.trim() === '';
-      const faltaMaterial = !plano.material_requerido || plano.material_requerido.trim() === '';
+      const bomItems = Array.isArray(plano.bom_items) ? plano.bom_items : [];
+      const faltaMaterial = bomItems.length === 0 || bomItems.some(
+        item => !['EN_ALMACEN', 'ENTREGADO'].includes(item.estado_abastecimiento)
+      );
 
       if (faltaPlano || faltaMaterial) {
-        alert("❌ Bloqueo de Calidad (ISO 9001): No se puede LIBERAR la orden a Producción sin haber adjuntado el plano PDF y la materia prima/BOM.");
+        alert("❌ Bloqueo de Calidad RN-OP-004: se requiere el PDF y todas las líneas BOM en estado EN_ALMACEN o ENTREGADO.");
         return;
       }
     }
@@ -350,7 +459,10 @@ export default function DisenoPlanosView() {
       detalle_pieza: pieza.detalle_pieza || pieza.descripcion || planoPadre?.detalle_pieza || 'Pieza Mecanizada',
       material_requerido: pieza.material_requerido || pieza.material || planoPadre?.material_requerido || 'Sin especificar',
       solicitud: solAsociada || null,
-      estado_bom: solAsociada?.estado_bom || (solAsociada ? 'SOLICITADO' : 'SIN_SOLICITAR')
+      estado_bom: pieza.estado_abastecimiento
+        || planoPadre?.bom_items?.find(item => item.codigo_material === (pieza.codigo_material || pieza.material_requerido))?.estado_abastecimiento
+        || solAsociada?.estado_bom
+        || 'SIN_SOLICITAR'
     });
     setModalBomAbierto(true);
   };
@@ -397,6 +509,10 @@ export default function DisenoPlanosView() {
     e.stopPropagation();
     setMensaje({ tipo: '', texto: '' });
 
+    if (!tienePermisoAperturaYAsignacion()) {
+      alert("🔒 Acceso Restringido: La asignación y reasignación de dibujantes está reservada exclusivamente para el Jefe de Ingeniería o el Administrador.");
+    }
+
     const pedidoAsociado = pedidosEntrantes.find(p => p.numero_pedido === pl.numero_pedido || p.id_proyecto === pl.id_proyecto) || {};
     const numeroPedidoReal = pl.numero_pedido || pedidoAsociado.numero_pedido || 'PED-2026-110';
 
@@ -406,34 +522,40 @@ export default function DisenoPlanosView() {
           unidad_planta: p.unidad_planta || pl.unidad_planta || 'Mecanizados',
           codigo_op: p.codigo_op || pl.codigo_op || '4007256',
           codigo_plano: p.codigo_plano || pl.codigo_plano || 'PLN-001',
-          revision: p.revision || pl.revision || 'REV-01',
+          version_plano: p.version_plano || pl.version_plano || 'v1.0',
           detalle_pieza: p.detalle_pieza || p.descripcion || pl.detalle_producto || 'Pieza Mecanizada',
           cantidad: p.cantidad !== undefined ? p.cantidad : (pl.cantidad || 1),
-          dibujante_asignado: p.dibujante_asignado || pl.dibujante_asignado || 'Ing. Carlos Ruiz',
+          dibujante_asignado: p.dibujante_asignado || pl.dibujante_asignado || dibujantesDisponibles[0] || 'Ing. Carlos Ruiz',
           tiempo_estimado_valor: p.tiempo_estimado_valor || 4,
           tiempo_estimado_unidad: p.tiempo_estimado_unidad || 'HORAS',
           fecha_compromiso: p.fecha_compromiso || pl.fecha_entrega_produccion || pedidoAsociado.fecha_compromiso || '',
           causa_espera: p.causa_espera || pl.causa_espera || '',
           estado_item: p.estado_item || 'EN_COLA',
           material_requerido: p.material_requerido || pl.material_requerido || '',
-          archivo_url: p.archivo_url || pl.archivo_url || ''
+          archivo_url: p.archivo_url || pl.archivo_url || '',
+          archivo_step_url: p.archivo_step_url || pl.archivo_step_url || '',
+          archivo_dxf_url: p.archivo_dxf_url || pl.archivo_dxf_url || '',
+          estado_abastecimiento: p.estado_abastecimiento || pl.bom_items?.[0]?.estado_abastecimiento || 'SIN_SOLICITAR'
         }))
       : [{
           id: Date.now(),
           unidad_planta: pl.unidad_planta || 'Mecanizados',
           codigo_op: pl.codigo_op || '4007256',
           codigo_plano: pl.codigo_plano || 'PLN-001-A',
-          revision: pl.revision || 'REV-01',
+          version_plano: pl.version_plano || 'v1.0',
           detalle_pieza: pl.detalle_pieza || pl.detalle_producto || pl.descripcion || 'Corona en Bronce SAE 65 Z=48',
           cantidad: pl.cantidad !== undefined ? pl.cantidad : 12,
-          dibujante_asignado: pl.dibujante_asignado || 'Ing. Carlos Ruiz',
+          dibujante_asignado: pl.dibujante_asignado || dibujantesDisponibles[0] || 'Ing. Carlos Ruiz',
           tiempo_estimado_valor: pl.tiempo_estimado_valor || 4,
           tiempo_estimado_unidad: pl.tiempo_estimado_unidad || 'HORAS',
           fecha_compromiso: pl.fecha_entrega_produccion || pedidoAsociado.fecha_compromiso || '',
           causa_espera: pl.causa_espera || '',
           estado_item: 'EN_COLA',
           material_requerido: pl.material_requerido || '',
-          archivo_url: pl.archivo_url || ''
+          archivo_url: pl.archivo_url || '',
+          archivo_step_url: pl.archivo_step_url || '',
+          archivo_dxf_url: pl.archivo_dxf_url || '',
+          estado_abastecimiento: pl.bom_items?.[0]?.estado_abastecimiento || 'SIN_SOLICITAR'
         }];
 
     setPiezasProcesadas(piezasFormateadas.map(p => p.id));
@@ -450,6 +572,8 @@ export default function DisenoPlanosView() {
       codigo_op: pl.codigo_op || '4007256',
       unidad_planta: pl.unidad_planta || 'Mecanizados',
       estado_diseno: pl.estado_diseno || 'PLANIFICADA',
+      fecha_confirmacion_pedido: pl.fecha_confirmacion_pedido || '2026-10-15',
+      fecha_apertura_orden: pl.fecha_apertura_orden || '2026-10-18',
       fecha_inicio_programada: pl.fecha_inicio_programada || '',
       fecha_entrega_cliente: pl.fecha_entrega_cliente || pedidoAsociado.fecha_compromiso || '',
       fecha_entrega_produccion: pl.fecha_entrega_produccion || pedidoAsociado.fecha_compromiso || '',
@@ -480,6 +604,10 @@ export default function DisenoPlanosView() {
   const handleAsignarOpDesdePedido = (pedido) => {
     setMensaje({ tipo: '', texto: '' });
     
+    if (!tienePermisoAperturaYAsignacion()) {
+      alert("🔒 Acceso Restringido: La apertura y asignación inicial de OPs debe realizarla el Jefe de Ingeniería.");
+    }
+
     const prefijo = pedido.numero_pedido ? pedido.numero_pedido.replace('PED-', '') : '001';
     const lineas = pedido.detalles && pedido.detalles.length > 0 
       ? pedido.detalles 
@@ -507,19 +635,21 @@ export default function DisenoPlanosView() {
         codigo_op: codigoOpSugerido,
         unidad_planta: 'Mecanizados',
         codigo_plano: codigoPlanoSugerido,
-        revision: 'REV-01',
+        version_plano: 'v1.0',
         detalle_pieza: d.descripcion || d.detalle_producto || 'Pieza / Servicio Requerido',
         cantidad: parseInt(cantidadOriginal, 10) || 1,
         cantidad_solicitada: parseInt(cantidadOriginal, 10) || 1,
         cantidad_pendiente: d.cantidad_pendiente ?? cantidadOriginal,
-        dibujante_asignado: 'Ing. Carlos Ruiz',
+        dibujante_asignado: dibujantesDisponibles[0] || 'Ing. Carlos Ruiz',
         tiempo_estimado_valor: 4,
         tiempo_estimado_unidad: 'HORAS',
         fecha_compromiso: d.fecha_compromiso || pedido.fecha_compromiso || '',
         causa_espera: '',
         estado_item: 'EN_COLA',
         material_requerido: d.material_requerido || '',
-        archivo_url: ''
+        archivo_url: '',
+        archivo_step_url: '',
+        archivo_dxf_url: ''
       };
     });
 
@@ -537,6 +667,8 @@ export default function DisenoPlanosView() {
       codigo_op: codigoOpSugerido,
       unidad_planta: 'Mecanizados',
       estado_diseno: 'PLANIFICADA',
+      fecha_confirmacion_pedido: pedido.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+      fecha_apertura_orden: new Date().toISOString().split('T')[0],
       fecha_inicio_programada: '',
       fecha_entrega_cliente: pedido.fecha_compromiso || '',
       fecha_entrega_produccion: pedido.fecha_compromiso || '',
@@ -667,35 +799,32 @@ export default function DisenoPlanosView() {
     }));
   };
 
-  // HANDLER PARA SUBIR EL ARCHIVO PDF DE LA PIEZA DIRECTO AL BACKEND
-  const handleSubirPdfPieza = async (piezaId, e) => {
+  // HANDLER SUBIR ARCHIVO PDF / CAD CON EXTENSIONES DEDICADAS
+  const handleSubirArchivoCAD = async (piezaId, e, tipoFormato) => {
     const file = e.target.files[0];
     if (!file) return;
-
-    if (!file.name.toLowerCase().endsWith('.pdf')) {
-      alert('Solo se permiten archivos en formato PDF.');
-      return;
-    }
 
     try {
       setLoading(true);
       const formData = new FormData();
       formData.append('archivo', file);
 
+      const campoMapeado = tipoFormato === 'STEP' ? 'archivo_step_url' : tipoFormato === 'DXF' ? 'archivo_dxf_url' : 'archivo_url';
+
       if (nuevoPlano.id_plano) {
         const res = await API.post(`/planos/upload-pdf/${nuevoPlano.id_plano}`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
         });
         
-        handleCambioPieza(piezaId, 'archivo_url', res.data.archivo_url);
-        setMensaje({ tipo: 'exito', texto: `✅ Plano PDF [${file.name}] subido y asignado correctamente al plano.` });
+        handleCambioPieza(piezaId, campoMapeado, res.data.archivo_url);
+        setMensaje({ tipo: 'exito', texto: `✅ Archivo CAD ${tipoFormato} [${file.name}] adjunto exitosamente al plano.` });
       } else {
         const urlTemp = `/static/planos/${file.name}`;
-        handleCambioPieza(piezaId, 'archivo_url', urlTemp);
-        setMensaje({ tipo: 'exito', texto: `📄 Plano PDF [${file.name}] adjunto temporalmente. Guarde la OP para confirmar.` });
+        handleCambioPieza(piezaId, campoMapeado, urlTemp);
+        setMensaje({ tipo: 'exito', texto: `📄 Archivo ${tipoFormato} [${file.name}] vinculado temporalmente. Guarde la OP.` });
       }
     } catch (err) {
-      alert('Error al subir el archivo PDF al servidor backend.');
+      alert(`Error al subir el archivo ${tipoFormato} al servidor backend.`);
     } finally {
       setLoading(false);
     }
@@ -704,6 +833,11 @@ export default function DisenoPlanosView() {
   const handleAbrirVisorPlano = (url, op, plano) => {
     setDatosVisorPlano({ archivoUrl: url, codigoOp: op, codigoPlano: plano });
     setModalVisorPlanoOpen(true);
+  };
+
+  const handleAbrirHistorialVersiones = (plano) => {
+    setPlanoHistorialSeleccionado(plano);
+    setModalHistorialVersionesAbierto(true);
   };
 
   const handleCrearOrdenPorItem = async (pieza) => {
@@ -716,12 +850,17 @@ export default function DisenoPlanosView() {
 
     if (nuevoPlano.estado_diseno === 'LIBERADA') {
       const faltaPlano = !pieza.archivo_url || pieza.archivo_url.trim() === '';
-      const faltaMaterial = !pieza.material_requerido || pieza.material_requerido.trim() === '';
+      const solicitud = solicitudesCompra.find(s =>
+        s.codigo_op === (pieza.codigo_op || nuevoPlano.codigo_op) &&
+        s.codigo_plano === pieza.codigo_plano
+      );
+      const estadoBom = pieza.estado_abastecimiento || solicitud?.estado_bom;
+      const faltaMaterial = !['EN_ALMACEN', 'ENTREGADO'].includes(estadoBom);
 
       if (faltaPlano || faltaMaterial) {
         setMensaje({
           tipo: 'error',
-          texto: `❌ Bloqueo ISO 9001: No se puede LIBERAR la OP-${pieza.codigo_op} sin adjuntar el plano PDF y la materia prima/BOM.`
+          texto: `❌ RN-OP-004: no se puede liberar OP-${pieza.codigo_op}; requiere PDF y BOM en EN_ALMACEN o ENTREGADO.`
         });
         return;
       }
@@ -768,12 +907,19 @@ export default function DisenoPlanosView() {
     if (nuevoPlano.estado_diseno === 'LIBERADA') {
       const piezasOp = nuevoPlano.piezas.filter(p => (p.cantidad || 0) > 0);
       const faltaPlano = piezasOp.some(p => !p.archivo_url || p.archivo_url.trim() === '');
-      const faltaMaterial = piezasOp.some(p => !p.material_requerido || p.material_requerido.trim() === '');
+      const faltaMaterial = piezasOp.some(p => {
+        const solicitud = solicitudesCompra.find(s =>
+          s.codigo_op === (p.codigo_op || nuevoPlano.codigo_op) &&
+          s.codigo_plano === (p.codigo_plano || nuevoPlano.codigo_plano)
+        );
+        const estadoBom = p.estado_abastecimiento || solicitud?.estado_bom;
+        return !['EN_ALMACEN', 'ENTREGADO'].includes(estadoBom);
+      });
 
       if (faltaPlano || faltaMaterial) {
         setMensaje({
           tipo: 'error',
-          texto: '❌ Bloqueo ISO 9001: No se puede LIBERAR la orden sin adjuntar el plano PDF y la materia prima/BOM de todas las piezas.'
+          texto: '❌ RN-OP-004: cada pieza requiere PDF y todas sus líneas BOM en EN_ALMACEN o ENTREGADO.'
         });
         return;
       }
@@ -888,11 +1034,13 @@ export default function DisenoPlanosView() {
     const codigoPlano = (p.codigo_plano || '').toLowerCase();
     const pedido = (p.numero_pedido || '').toLowerCase();
     const dibujante = (p.dibujante_asignado || '').toLowerCase();
-    const coincideBusqueda = codigoOp.includes(termino) || codigoPlano.includes(termino) || pedido.includes(termino) || dibujante.includes(termino);
 
-    if (filtroEstado === 'TODOS') return coincideBusqueda;
+    const coincideBusqueda = codigoOp.includes(termino) || codigoPlano.includes(termino) || pedido.includes(termino) || dibujante.includes(termino);
+    const coincideDibujante = filtroDibujante === 'TODOS' || (p.dibujante_asignado || 'Ing. Carlos Ruiz') === filtroDibujante;
+
+    if (filtroEstado === 'TODOS') return coincideBusqueda && coincideDibujante;
     const est = p.estado_diseno || 'PLANIFICADA';
-    return coincideBusqueda && est === filtroEstado;
+    return coincideBusqueda && coincideDibujante && est === filtroEstado;
   });
 
   const renderBadgeBom = (estadoBom) => {
@@ -918,10 +1066,13 @@ export default function DisenoPlanosView() {
             <span>📐</span> Ingeniería y Diseño de Planos (PM-02)
           </h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Gestión Individual de Órdenes de Producción (OP) e Levantamiento de Mantenimientos [ISO 9001:2026 / SAP B1]
+            Asignación Exclusiva, Control de Versiones CAD y Seguimiento Temporal ISO 9001:2026
           </p>
         </div>
         <div className="flex items-center gap-2 self-end sm:self-auto">
+          <div className="bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200 text-xs font-semibold text-blue-900">
+            👤 Usuario: <strong>{usuarioActual?.nombre || 'Ing. Carlos Ruiz'}</strong> [{usuarioActual?.area || 'Diseño'}]
+          </div>
           <button 
             type="button"
             onClick={() => { setMensaje({ tipo: '', texto: '' }); cargarPlanosYPedidos(); }}
@@ -987,7 +1138,8 @@ export default function DisenoPlanosView() {
         </button>
       </div>
 
-      {pestanaActiva === 'BANDEJA' && (
+      {/* PESTAÑA 1: BANDEJA DE PEDIDOS */}
+      {pestanaActiva === 'BANDEJA' && !isDibujante() && (
         <div className="bg-white rounded-b-xl border border-blue-200 shadow-sm overflow-hidden p-4 space-y-3">
           <div className="flex justify-between items-center pb-1">
             <span className="text-xs font-bold text-slate-600 uppercase">Matriz de Distribución de Pedidos Comerciales en OPs</span>
@@ -1136,6 +1288,34 @@ export default function DisenoPlanosView() {
       {/* PESTAÑA 2: ÓRDENES ACTIVAS E INGENIERÍA */}
       {pestanaActiva === 'ORDENES' && (
         <div className="space-y-6">
+          {isDibujante() && (
+            <div className="bg-purple-50 p-4 rounded-xl border border-purple-200 shadow-sm mb-6">
+              <h3 className="text-sm font-bold text-purple-900 mb-3 flex items-center gap-2">
+                <span>🎯</span> Mi Estación de Trabajo: Foco en Operaciones Asignadas
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {planosFiltrados
+                  .filter(p => p.dibujante_asignado === usuarioActual?.nombre)
+                  .map(p => (
+                    <div key={p.id_plano} className="bg-white p-3 rounded-lg border border-purple-300 shadow-sm flex justify-between items-center">
+                      <div>
+                        <p className="text-[10px] font-bold text-slate-500 uppercase">OP-{p.codigo_op}</p>
+                        <p className="text-xs font-bold text-slate-800">{p.codigo_plano} - {p.detalle_pieza || 'Pieza'}</p>
+                      </div>
+                      <button
+                        onClick={(e) => handleAbrirExpedienteOp(e, p)}
+                        className="px-2 py-1 bg-purple-600 text-white text-[10px] font-bold rounded hover:bg-purple-700 transition cursor-pointer"
+                      >
+                        Abrir ⚙
+                      </button>
+                    </div>
+                  ))}
+                {planosFiltrados.filter(p => p.dibujante_asignado === usuarioActual?.nombre).length === 0 && (
+                  <p className="text-xs text-slate-500 italic">No tienes OPs asignadas actualmente.</p>
+                )}
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
             <button
               type="button"
@@ -1206,6 +1386,21 @@ export default function DisenoPlanosView() {
               </div>
 
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto">
+                {/* FILTRO KPI DIBUJANANTE */}
+                <div className="flex items-center gap-1.5 bg-slate-100 p-1 px-2 rounded-lg border border-slate-200">
+                  <span className="text-[10px] font-extrabold text-slate-500 uppercase">Dibujante:</span>
+                  <select
+                    value={filtroDibujante}
+                    onChange={(e) => setFiltroDibujante(e.target.value)}
+                    className="bg-white font-bold text-slate-700 text-xs rounded border border-slate-300 px-2 py-1 focus:outline-none cursor-pointer"
+                  >
+                    <option value="TODOS">👥 Todos los Diseñadores</option>
+                    {dibujantesDisponibles.map(d => (
+                      <option key={d} value={d}>👤 {d}</option>
+                    ))}
+                  </select>
+                </div>
+
                 <select
                   value={filtroEstado}
                   onChange={(e) => setFiltroEstado(e.target.value)}
@@ -1219,10 +1414,10 @@ export default function DisenoPlanosView() {
 
                 <input
                   type="text"
-                  placeholder="🔍 Buscar por N° Orden (OP), Plano, Pedido o Diseñador..."
+                  placeholder="🔍 Buscar por N° OP, Plano, Pedido o Diseñador..."
                   value={busqueda}
                   onChange={(e) => setBusqueda(e.target.value)}
-                  className="w-full sm:w-72 p-2 border border-slate-300 rounded-lg text-xs bg-slate-50 focus:bg-white"
+                  className="w-full sm:w-64 p-2 border border-slate-300 rounded-lg text-xs bg-slate-50 focus:bg-white"
                 />
               </div>
             </div>
@@ -1230,15 +1425,16 @@ export default function DisenoPlanosView() {
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-slate-600 border-collapse">
                 <thead>
-                  <tr className="bg-slate-100 text-slate-700 font-bold uppercase border-b border-slate-200">
+                  <tr className="bg-slate-100 text-slate-700 font-bold uppercase border-b border-slate-200 text-[10px]">
                     <th className="p-3">N° Orden (OP)</th>
-                    <th className="p-3">N° Pedido</th>
-                    <th className="p-3">Código Plano / Pieza</th>
-                    <th className="p-3">Plano PDF</th>
-                    <th className="p-3">Unidad Planta</th>
-                    <th className="p-3">Diseñador</th>
-                    <th className="p-3">Causa de Espera</th>
-                    <th className="p-3">Fechas Clave</th>
+                    <th className="p-3">Código Plano / Versión</th>
+                    <th className="p-3">Detalle / Pieza</th>
+                    <th className="p-3">Diseñador Asignado</th>
+                    <th className="p-3 text-center bg-blue-50 text-blue-900 border-x">📅 Confirmado Pedido</th>
+                    <th className="p-3 text-center bg-blue-50 text-blue-900 border-r">📅 Apertura Orden</th>
+                    <th className="p-3 text-center bg-amber-50 text-amber-900 border-r">⏱️ Tiempo (Días)</th>
+                    <th className="p-3 text-center bg-purple-50 text-purple-900 border-r">📅 Compromiso Entrega</th>
+                    <th className="p-3 text-center">Archivos CAD (.PDF/.STEP/.DXF)</th>
                     <th className="p-3">Etapa Lineal</th>
                     <th className="p-3 text-center">Acciones</th>
                   </tr>
@@ -1246,7 +1442,7 @@ export default function DisenoPlanosView() {
                 <tbody className="divide-y divide-slate-200">
                   {planosFiltrados.length === 0 ? (
                     <tr>
-                      <td colSpan="10" className="p-6 text-center text-slate-400 font-medium">
+                      <td colSpan="11" className="p-6 text-center text-slate-400 font-medium">
                         {loading ? 'Cargando órdenes...' : 'No hay órdenes de producción registradas.'}
                       </td>
                     </tr>
@@ -1254,6 +1450,7 @@ export default function DisenoPlanosView() {
                     planosFiltrados.map((pl) => {
                       const estadoActual = pl.estado_diseno || 'PLANIFICADA';
                       const idxActual = SECUENCIA_ESTADOS.indexOf(estadoActual);
+                      const metricas = calcularMetricasTiempo(pl.fecha_apertura_orden || '2026-10-18', pl.fecha_entrega_produccion);
 
                       return (
                         <tr key={pl.id_plano} className="hover:bg-slate-50 transition">
@@ -1267,63 +1464,79 @@ export default function DisenoPlanosView() {
                             </button>
                           </td>
 
-                          <td className="p-3 font-mono font-bold whitespace-nowrap">
-                            <button
-                              type="button"
-                              onClick={(e) => handleAbrirExpedientePedido(e, pl.numero_pedido)}
-                              className="text-purple-700 hover:text-purple-900 underline bg-purple-50 hover:bg-purple-100 px-2 py-1 rounded border border-purple-200 transition cursor-pointer"
-                            >
-                              📋 {pl.numero_pedido}
-                            </button>
+                          <td className="p-3 font-mono font-bold text-purple-900 whitespace-nowrap">
+                            📄 {pl.codigo_plano}
+                            <span className="ml-1.5 bg-purple-100 text-purple-900 font-extrabold px-1.5 py-0.2 rounded text-[9px] border border-purple-300">
+                              {pl.version_plano || 'v1.0'}
+                            </span>
                           </td>
 
-                          <td className="p-3 font-mono font-bold text-slate-800">
-                            📄 {pl.codigo_plano} ({pl.revision || 'REV-01'})
-                            <div className="text-[10px] text-slate-500 font-normal">{pl.detalle_pieza || pl.material_requerido || 'Pieza Mecanizada'}</div>
+                          <td className="p-3 font-bold text-slate-800">
+                            {pl.detalle_pieza || pl.material_requerido || 'Pieza Mecanizada'}
                           </td>
 
-                          <td className="p-3 text-center whitespace-nowrap">
+                          <td className="p-3 font-semibold text-slate-700 whitespace-nowrap">
+                            👤 {pl.dibujante_asignado || 'Ing. Carlos Ruiz'}
+                          </td>
+
+                          {/* DATES KPI */}
+                          <td className="p-3 text-center font-mono text-slate-600 bg-blue-50/20 border-x">
+                            {pl.fecha_confirmacion_pedido || '2026-10-15'}
+                          </td>
+
+                          <td className="p-3 text-center font-mono font-bold text-blue-900 bg-blue-50/20 border-r">
+                            {pl.fecha_apertura_orden || '2026-10-18'}
+                          </td>
+
+                          <td className="p-3 text-center bg-amber-50/20 border-r whitespace-nowrap">
+                            <span className={`px-2 py-0.5 rounded font-mono font-extrabold text-[10px] shadow-sm border ${
+                              metricas.esCritico
+                                ? 'bg-red-100 text-red-800 border-red-300 animate-pulse'
+                                : 'bg-amber-100 text-amber-900 border-amber-300'
+                            }`}>
+                              ⏱️ {metricas.diasTranscurridos} Días
+                            </span>
+                          </td>
+
+                          <td className="p-3 text-center font-mono font-bold text-purple-900 bg-purple-50/20 border-r">
+                            {pl.fecha_entrega_produccion || 'Sin Fecha'}
+                          </td>
+
+                          {/* MULTIFORMATO CAD */}
+                          <td className="p-3 text-center whitespace-nowrap space-x-1">
                             {pl.archivo_url ? (
                               <button
                                 type="button"
                                 onClick={() => handleAbrirVisorPlano(pl.archivo_url, pl.codigo_op, pl.codigo_plano)}
-                                className="px-2.5 py-1 bg-emerald-100 text-emerald-800 hover:bg-emerald-200 border border-emerald-300 font-bold rounded text-[10px] transition cursor-pointer flex items-center gap-1 mx-auto"
+                                className="px-1.5 py-0.5 bg-red-100 hover:bg-red-200 text-red-900 border border-red-300 rounded font-mono font-bold text-[9px] inline-block cursor-pointer"
                               >
-                                👁️ Ver Plano PDF
+                                📄 PDF
                               </button>
                             ) : (
-                              <span className="text-[10px] text-amber-700 font-semibold italic bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                                ⏳ Sin Adjunto
-                              </span>
+                              <span className="text-slate-300 text-[9px] italic">Sin PDF</span>
                             )}
-                          </td>
 
-                          <td className="p-3 font-bold text-slate-700">🏭 {pl.unidad_planta || 'Mecanizados'}</td>
+                            {pl.archivo_step_url ? (
+                              <a
+                                href={pl.archivo_step_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="px-1.5 py-0.5 bg-blue-100 hover:bg-blue-200 text-blue-900 border border-blue-300 rounded font-mono font-bold text-[9px] inline-block"
+                              >
+                                🔷 STEP
+                              </a>
+                            ) : null}
 
-                          <td className="p-3 font-medium text-slate-800">👤 {pl.dibujante_asignado || 'Ing. Carlos Ruiz'}</td>
-
-                          <td className="p-3 font-medium text-slate-700 max-w-xs">
-                            <select
-                              value={pl.causa_espera || 'RESUELTA'}
-                              onChange={(e) => handleCambiarCausaEsperaTabla(pl, e.target.value)}
-                              className={`p-1 rounded text-[10px] font-bold border focus:outline-none cursor-pointer w-full truncate ${
-                                !pl.causa_espera 
-                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300' 
-                                  : 'bg-amber-50 text-amber-900 border-amber-300'
-                              }`}
-                            >
-                              <option value="RESUELTA">✓ Sin demoras / Resuelta (EN COLA)</option>
-                              {OPCIONES_CAUSA_ESPERA.map((opcion, idx) => (
-                                <option key={idx} value={opcion}>
-                                  ⚠️ {opcion}
-                                </option>
-                              ))}
-                            </select>
-                          </td>
-
-                          <td className="p-3 font-medium text-slate-800 text-[11px] whitespace-nowrap space-y-0.5">
-                            <div>📅 Prog: <strong>{pl.fecha_inicio_programada || 'Sin Fecha'}</strong></div>
-                            <div className="text-blue-800">🏁 Límite: <strong>{pl.fecha_entrega_produccion || 'Sin Fecha'}</strong></div>
+                            {pl.archivo_dxf_url ? (
+                              <a
+                                href={pl.archivo_dxf_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="px-1.5 py-0.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300 rounded font-mono font-bold text-[9px] inline-block"
+                              >
+                                📐 DXF
+                              </a>
+                            ) : null}
                           </td>
 
                           <td className="p-3 whitespace-nowrap">
@@ -1349,13 +1562,22 @@ export default function DisenoPlanosView() {
                             </select>
                           </td>
 
-                          <td className="p-3 text-center whitespace-nowrap">
+                          <td className="p-3 text-center whitespace-nowrap space-x-1">
+                            <button
+                              type="button"
+                              onClick={() => handleAbrirHistorialVersiones(pl)}
+                              className="px-2 py-1 bg-purple-100 hover:bg-purple-200 text-purple-900 font-bold rounded text-[10px] border border-purple-300 transition cursor-pointer"
+                              title="Ver historial de versiones"
+                            >
+                              📜 Versiones
+                            </button>
+
                             <button
                               type="button"
                               onClick={(e) => handleAbrirExpedienteOp(e, pl)}
                               className="px-2.5 py-1 font-semibold rounded text-[11px] bg-slate-700 text-white hover:bg-slate-800 shadow-sm transition cursor-pointer"
                             >
-                              ⚙ Modificar Orden de Producción
+                              ⚙ Reasignar / Editar
                             </button>
                           </td>
                         </tr>
@@ -1399,14 +1621,15 @@ export default function DisenoPlanosView() {
                     <th className="p-3">Cliente / Razón Social</th>
                     <th className="p-3">Máquina / Equipo</th>
                     <th className="p-3">OP Venta</th>
-                    <th className="p-3">Fase SGI</th>
+                    <th className="p-3">Fase SGI / Validación</th>
+                    <th className="p-3 text-center">Acción de Puerta de Paso (Quality Gate)</th>
                     <th className="p-3 text-center">Acciones de Despliegue</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
                   {listaMantenimientos.length === 0 ? (
                     <tr>
-                      <td colSpan="6" className="p-6 text-center text-slate-400 font-medium">
+                      <td colSpan="7" className="p-6 text-center text-slate-400 font-medium">
                         No hay proyectos de mantenimiento registrados.
                       </td>
                     </tr>
@@ -1416,6 +1639,10 @@ export default function DisenoPlanosView() {
                       const piezasAbiertas = !!piezasExpandidas[idUnico];
                       const cargandoPiezas = !!cargandoPiezasMap[idUnico];
                       const piezasProyecto = piezasProyectoMap[idUnico] || p.piezas || p.detalles || [];
+
+                      const faseActualStr = p.fase_mantenimiento || 'LAVADO_DESARME';
+                      const etapaObjActual = ETAPAS_SGI.find(e => e.id === faseActualStr) || ETAPAS_SGI[1];
+                      const tienePermisoArea = esAreaAutorizadaParaPaso(etapaObjActual.area);
 
                       return (
                         <React.Fragment key={idUnico}>
@@ -1434,9 +1661,32 @@ export default function DisenoPlanosView() {
                             </td>
                             <td className="p-3 whitespace-nowrap">
                               <span className="px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase bg-amber-50 text-amber-800 border border-amber-300">
-                                {p.fase_mantenimiento || 'LAVADO_DESARME'}
+                                {etapaObjActual.nombre}
                               </span>
                             </td>
+
+                            <td className="p-3 text-center whitespace-nowrap">
+                              {tienePermisoArea ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAvanzarPuertaPasoSGI(p)}
+                                  disabled={loading}
+                                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded text-[11px] shadow-sm transition cursor-pointer flex items-center justify-center gap-1 mx-auto"
+                                >
+                                  {etapaObjActual.accion}
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled
+                                  title={`Solo el área de ${etapaObjActual.area} puede aprobar esta etapa.`}
+                                  className="px-3 py-1.5 bg-slate-100 text-slate-400 border border-slate-300 font-bold rounded text-[10px] cursor-not-allowed flex items-center justify-center gap-1 mx-auto"
+                                >
+                                  🔒 Requiere {etapaObjActual.area}
+                                </button>
+                              )}
+                            </td>
+
                             <td className="p-3 text-center whitespace-nowrap space-x-2">
                               <button
                                 type="button"
@@ -1463,7 +1713,7 @@ export default function DisenoPlanosView() {
 
                           {piezasAbiertas && (
                             <tr className="bg-slate-50">
-                              <td colSpan="6" className="p-4">
+                              <td colSpan="7" className="p-4">
                                 <div className="p-3 bg-white rounded-lg border border-slate-300 space-y-2 shadow-inner">
                                   <div className="flex justify-between items-center text-xs font-bold text-slate-700 border-b pb-1.5">
                                     <span>📦 Piezas e Ítems del Proyecto ({piezasProyecto.length})</span>
@@ -1682,7 +1932,7 @@ export default function DisenoPlanosView() {
             <div className="flex justify-between items-start border-b pb-3">
               <div>
                 <span className="px-2.5 py-1 bg-purple-100 text-purple-800 text-xs font-extrabold rounded uppercase tracking-wider">
-                  📋 Expediente Comercial del Pedido [ISO 9001:2026 / SAP B1]
+                  📋 Expediente comercial del pedido
                 </span>
                 <h3 className="text-2xl font-bold text-slate-800 mt-2">
                   Pedido Comercial N°: <span className="text-purple-700 font-mono">{pedidoSeleccionado.numero_pedido}</span>
@@ -1796,14 +2046,14 @@ export default function DisenoPlanosView() {
         </div>
       )}
 
-      {/* MODAL MODIFICAR / ESTRUCTURAR ORDEN DE PRODUCCIÓN */}
+      {/* MODAL MODIFICAR / ESTRUCTURAR ORDEN DE PRODUCCIÓN CON APERTURA Y REASIGNACIÓN */}
       {modalNuevoPlanoAbierto && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-2 sm:p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-[96vw] w-full p-4 sm:p-6 space-y-4 max-h-[95vh] overflow-y-auto border-t-4 border-blue-600">
             <div className="flex justify-between items-start border-b pb-3">
               <div>
                 <span className="px-2.5 py-1 bg-blue-100 text-blue-800 text-xs font-extrabold rounded uppercase tracking-wider">
-                  Apertura y Asignación Granular HD por Ítem [PM-02 / ISO 9001:2026]
+                  Apertura y Asignación Exclusiva HD por Ítem [PM-02 / ISO 9001:2026]
                 </span>
                 <h3 className="text-xl sm:text-2xl font-bold text-slate-800 mt-1">
                   ⚙️ Estructurar / Modificar Orden de Producción (OP)
@@ -1821,6 +2071,17 @@ export default function DisenoPlanosView() {
                     disabled
                     value={nuevoPlano.numero_pedido}
                     className="w-full p-1.5 border border-slate-300 rounded font-mono font-bold text-purple-700 bg-slate-100 cursor-not-allowed"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-600 mb-1">SKU / Producto Maestro</label>
+                  <input
+                    type="text"
+                    placeholder="Escriba SKU..."
+                    value={nuevoPlano.numero_producto || ''}
+                    onChange={(e) => handleSeleccionarSKU(e.target.value)}
+                    className="w-full p-1.5 border border-purple-300 rounded font-mono font-bold text-purple-900 bg-purple-50/50"
                   />
                 </div>
 
@@ -1855,16 +2116,6 @@ export default function DisenoPlanosView() {
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-slate-600 mb-1">Teléfono</label>
-                  <input
-                    type="text"
-                    disabled
-                    value={`📞 ${nuevoPlano.contacto_telefono || 'N/A'}`}
-                    className="w-full p-1.5 border border-slate-300 rounded text-slate-800 bg-slate-100 cursor-not-allowed text-[11px]"
-                  />
-                </div>
-
-                <div>
                   <label className="block font-semibold text-slate-600 mb-1">Email</label>
                   <input
                     type="text"
@@ -1875,7 +2126,8 @@ export default function DisenoPlanosView() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5 bg-blue-50/40 p-3 rounded-xl border border-blue-200 items-center">
+              {/* SECCIÓN DE FECHAS TEMPORALES Y ETAPAS */}
+              <div className="grid grid-cols-1 sm:grid-cols-6 gap-2.5 bg-blue-50/40 p-3 rounded-xl border border-blue-200 items-center">
                 <div>
                   <label className="block font-semibold text-slate-800 mb-1">Etapa de la Orden *</label>
                   <select
@@ -1891,12 +2143,23 @@ export default function DisenoPlanosView() {
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-slate-800 mb-1">📅 Fecha Inicio Programada</label>
+                  <label className="block font-semibold text-slate-600 mb-1">📅 Confirmación Pedido</label>
                   <input
                     type="date"
-                    value={nuevoPlano.fecha_inicio_programada}
-                    onChange={(e) => setNuevoPlano({ ...nuevoPlano, fecha_inicio_programada: e.target.value })}
-                    className="w-full p-1.5 border border-slate-300 rounded font-bold text-slate-800 bg-white"
+                    value={nuevoPlano.fecha_confirmacion_pedido || ''}
+                    onChange={(e) => setNuevoPlano({ ...nuevoPlano, fecha_confirmacion_pedido: e.target.value })}
+                    className="w-full p-1.5 border border-slate-300 rounded font-mono text-slate-700 bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-blue-900 mb-1">📅 Apertura Orden *</label>
+                  <input
+                    type="date"
+                    required
+                    value={nuevoPlano.fecha_apertura_orden || ''}
+                    onChange={(e) => setNuevoPlano({ ...nuevoPlano, fecha_apertura_orden: e.target.value })}
+                    className="w-full p-1.5 border border-blue-300 rounded font-mono font-bold text-blue-900 bg-white"
                   />
                 </div>
 
@@ -1931,7 +2194,7 @@ export default function DisenoPlanosView() {
               <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/50 space-y-2">
                 <div className="flex justify-between items-center border-b pb-2">
                   <h4 className="font-bold text-slate-800 flex items-center gap-1.5 text-xs">
-                    <span>📄</span> Desglose Granular por Ítem (Unidad, OP, Tiempo, Fecha Parcial y Estado)
+                    <span>📄</span> Desglose Granular por Ítem y Carga Multiformato CAD (.PDF / .STEP / .DXF)
                   </h4>
                 </div>
 
@@ -1943,16 +2206,16 @@ export default function DisenoPlanosView() {
                         <th className="p-2 w-28">Unidad Planta *</th>
                         <th className="p-2 w-24">N° Orden (OP) *</th>
                         <th className="p-2 w-24">Código Plano *</th>
-                        <th className="p-2 w-12 text-center">Rev.</th>
+                        <th className="p-2 w-16 text-center">Versión</th>
                         <th className="p-2 w-48">Nombre / Detalle Pieza *</th>
                         <th className="p-2 w-16 text-center">Cant.</th>
-                        <th className="p-2 w-28">Diseñador *</th>
+                        <th className="p-2 w-32 bg-blue-50 text-blue-900">👤 Diseñador Asignado *</th>
                         <th className="p-2 w-24">Tiempo Estimado</th>
                         <th className="p-2 w-32">📅 Fecha Parcial *</th>
                         <th className="p-2 w-32">Causa de Espera</th>
                         <th className="p-2 w-20 text-center">Estado</th>
-                        <th className="p-2 w-40 text-center">Materia Prima (BOM) 🔒</th>
-                        <th className="p-2 w-36 text-center">Plano PDF (Carga)</th>
+                        <th className="p-2 w-36 text-center">Materia Prima (BOM) 🔒</th>
+                        <th className="p-2 w-44 text-center">Archivos CAD (.PDF/.STEP/.DXF)</th>
                         <th className="p-2 w-20 text-center">Acción</th>
                       </tr>
                     </thead>
@@ -1962,7 +2225,7 @@ export default function DisenoPlanosView() {
                           s => s.codigo_op === (p.codigo_op || nuevoPlano.codigo_op) && 
                                s.codigo_plano === (p.codigo_plano || nuevoPlano.codigo_plano)
                         );
-                        const estBomItem = solAsociada?.estado_bom || (p.material_requerido ? 'SOLICITADO' : 'SIN_SOLICITAR');
+                        const estBomItem = p.estado_abastecimiento || solAsociada?.estado_bom || 'SIN_SOLICITAR';
 
                         return (
                           <tr key={p.id} className="hover:bg-slate-50 transition">
@@ -2005,9 +2268,9 @@ export default function DisenoPlanosView() {
                             <td className="p-2">
                               <input
                                 type="text"
-                                value={p.revision}
-                                onChange={(e) => handleCambioPieza(p.id, 'revision', e.target.value)}
-                                className="w-full p-1 border border-slate-300 rounded text-center font-bold focus:outline-none text-[11px]"
+                                value={p.version_plano || 'v1.0'}
+                                onChange={(e) => handleCambioPieza(p.id, 'version_plano', e.target.value)}
+                                className="w-full p-1 border border-purple-300 rounded text-center font-bold text-purple-900 bg-purple-50 focus:outline-none text-[11px]"
                               />
                             </td>
 
@@ -2026,15 +2289,17 @@ export default function DisenoPlanosView() {
                               />
                             </td>
 
-                            <td className="p-2">
-                              <input
-                                type="text"
-                                required
-                                placeholder="Ing. Carlos Ruiz"
-                                value={p.dibujante_asignado || 'Ing. Carlos Ruiz'}
+                            {/* RESTRICCIÓN Y DIBUJANANTE RESPONSABLE */}
+                            <td className="p-2 bg-blue-50/40">
+                              <select
+                                value={p.dibujante_asignado || dibujantesDisponibles[0] || 'Ing. Carlos Ruiz'}
                                 onChange={(e) => handleCambioPieza(p.id, 'dibujante_asignado', e.target.value)}
-                                className="w-full p-1 border border-slate-300 rounded text-slate-800 font-medium text-[11px]"
-                              />
+                                className="w-full p-1 border border-blue-300 rounded text-slate-800 font-bold bg-white cursor-pointer text-[11px]"
+                              >
+                                {dibujantesDisponibles.map(d => (
+                                  <option key={d} value={d}>👤 {d}</option>
+                                ))}
+                              </select>
                             </td>
 
                             <td className="p-2">
@@ -2102,39 +2367,23 @@ export default function DisenoPlanosView() {
                               </button>
                             </td>
 
-                            {/* SECCIÓN PLANO PDF CON VER PLANO Y SUBIR OTRO PARALELOS */}
+                            {/* SECCIÓN CARGA MULTIFORMATO CAD (.PDF / .STEP / .DXF) */}
                             <td className="p-2 text-center whitespace-nowrap">
-                              <div className="flex flex-col gap-1 items-center">
-                                {p.archivo_url ? (
-                                  <div className="flex items-center gap-1.5">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleAbrirVisorPlano(p.archivo_url, p.codigo_op, p.codigo_plano)}
-                                      className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded text-[10px] transition cursor-pointer flex items-center gap-1 shadow-sm"
-                                    >
-                                      👁️ Ver PDF
-                                    </button>
-                                    <label className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded text-[10px] shadow-sm transition cursor-pointer flex items-center gap-0.5">
-                                      <span>📤</span> Cambiar
-                                      <input 
-                                        type="file" 
-                                        accept=".pdf" 
-                                        onChange={(e) => handleSubirPdfPieza(p.id, e)} 
-                                        className="hidden" 
-                                      />
-                                    </label>
-                                  </div>
-                                ) : (
-                                  <label className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded text-[10px] shadow-sm transition cursor-pointer flex items-center gap-1">
-                                    <span>📤</span> Cargar PDF
-                                    <input 
-                                      type="file" 
-                                      accept=".pdf" 
-                                      onChange={(e) => handleSubirPdfPieza(p.id, e)} 
-                                      className="hidden" 
-                                    />
-                                  </label>
-                                )}
+                              <div className="flex items-center justify-center gap-1">
+                                <label className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded text-[9px] cursor-pointer shadow-sm" title="Cargar Plano PDF">
+                                  📄 PDF
+                                  <input type="file" accept=".pdf" onChange={(e) => handleSubirArchivoCAD(p.id, e, 'PDF')} className="hidden" />
+                                </label>
+
+                                <label className="px-1.5 py-0.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded text-[9px] cursor-pointer shadow-sm" title="Cargar Modelo 3D STEP">
+                                  🔷 STEP
+                                  <input type="file" accept=".step,.stp" onChange={(e) => handleSubirArchivoCAD(p.id, e, 'STEP')} className="hidden" />
+                                </label>
+
+                                <label className="px-1.5 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded text-[9px] cursor-pointer shadow-sm" title="Cargar Vectorial 2D DXF">
+                                  📐 DXF
+                                  <input type="file" accept=".dxf" onChange={(e) => handleSubirArchivoCAD(p.id, e, 'DXF')} className="hidden" />
+                                </label>
                               </div>
                             </td>
 
@@ -2175,7 +2424,7 @@ export default function DisenoPlanosView() {
                   disabled={loading}
                   className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded shadow-sm cursor-pointer"
                 >
-                  {loading ? 'Guardando...' : '💾 Guardar Estructuración de OP'}
+                  {loading ? 'Guardando...' : '💾 Guardar y Asignar Estructuración OP'}
                 </button>
               </div>
             </form>
@@ -2183,7 +2432,120 @@ export default function DisenoPlanosView() {
         </div>
       )}
 
-      {/* COMPONENTE VISOR PLANO MODAL */}
+      {/* MODAL HISTORIAL DE VERSIÓN DEL PLANO */}
+      {modalHistorialVersionesAbierto && planoHistorialSeleccionado && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-5 space-y-3 border-t-4 border-purple-600 text-xs">
+            <div className="flex justify-between items-start border-b pb-2">
+              <div>
+                <span className="px-2 py-0.5 bg-purple-100 text-purple-900 text-[10px] font-extrabold rounded uppercase">
+                  Trazabilidad de Versiones CAD [ISO 9001:2026]
+                </span>
+                <h3 className="text-base font-bold text-slate-800 mt-1">
+                  Historial: {planoHistorialSeleccionado.codigo_plano} (OP-{planoHistorialSeleccionado.codigo_op})
+                </h3>
+              </div>
+              <button onClick={() => setModalHistorialVersionesAbierto(false)} className="text-slate-400 hover:text-slate-600 font-bold text-base cursor-pointer">✕</button>
+            </div>
+
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {(planoHistorialSeleccionado.historial_versiones || [
+                { version: planoHistorialSeleccionado.version_plano || 'v1.0', fecha: planoHistorialSeleccionado.fecha_apertura_orden, dibujante: planoHistorialSeleccionado.dibujante_asignado, motivo: 'Versión inicial de plano cargada.' }
+              ]).map((ver, idx) => (
+                <div key={idx} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
+                  <div className="flex justify-between items-center font-bold text-slate-800">
+                    <span className="bg-purple-600 text-white px-2 py-0.5 rounded text-[10px]">{ver.version}</span>
+                    <span className="text-[10px] text-slate-500 font-mono">📅 {ver.fecha}</span>
+                  </div>
+                  <p className="text-slate-700 font-medium text-[11px] mt-1">{ver.motivo}</p>
+                  <div className="text-[10px] text-slate-500 font-semibold pt-1 border-t border-slate-200">
+                    👤 Diseñador Responsable: <strong>{ver.dibujante}</strong>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-end border-t pt-2">
+              <button
+                type="button"
+                onClick={() => setModalHistorialVersionesAbierto(false)}
+                className="px-4 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded text-xs cursor-pointer"
+              >
+                Cerrar Historial
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DETALLE BOM */}
+      {modalBomAbierto && bomSeleccionado && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-6 space-y-4 border-t-4 border-purple-600 text-xs">
+            <div className="flex justify-between items-start border-b pb-3">
+              <div>
+                <span className="px-2.5 py-1 bg-purple-100 text-purple-800 text-xs font-extrabold rounded uppercase tracking-wider">
+                  🔎 Trazabilidad del BOM y Estado del Material [ISO 9001:2026]
+                </span>
+                <h3 className="text-xl font-bold text-slate-800 mt-2">
+                  OP-{bomSeleccionado.codigo_op} / Plano: <span className="text-purple-700 font-mono">{bomSeleccionado.codigo_plano}</span>
+                </h3>
+                <p className="text-xs text-slate-500 font-medium">Pieza: {bomSeleccionado.detalle_pieza}</p>
+              </div>
+              <button onClick={() => setModalBomAbierto(false)} className="text-slate-400 hover:text-slate-600 font-bold text-xl cursor-pointer">✕</button>
+            </div>
+
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">Estado de la Materia Prima / Insumos:</span>
+              <div className="flex items-center justify-between text-xs gap-1 pt-1">
+                <div className={`p-2 rounded text-center w-1/4 font-bold border ${
+                  bomSeleccionado.estado_bom === 'SOLICITADO' ? 'bg-amber-100 text-amber-900 border-amber-400 ring-2 ring-amber-300' : 'bg-slate-100 text-slate-400'
+                }`}>
+                  1. SOLICITADO 🟡
+                </div>
+                <span className="text-slate-300 font-bold">→</span>
+                <div className={`p-2 rounded text-center w-1/4 font-bold border ${
+                  bomSeleccionado.estado_bom === 'EN_COMPRA' ? 'bg-blue-100 text-blue-900 border-blue-400 ring-2 ring-blue-300' : 'bg-slate-100 text-slate-400'
+                }`}>
+                  2. EN COMPRA 🔵
+                </div>
+                <span className="text-slate-300 font-bold">→</span>
+                <div className={`p-2 rounded text-center w-1/4 font-bold border ${
+                  bomSeleccionado.estado_bom === 'EN_ALMACEN' ? 'bg-purple-100 text-purple-900 border-purple-400 ring-2 ring-purple-300' : 'bg-slate-100 text-slate-400'
+                }`}>
+                  3. EN ALMACÉN 🟣
+                </div>
+                <span className="text-slate-300 font-bold">→</span>
+                <div className={`p-2 rounded text-center w-1/4 font-bold border ${
+                  bomSeleccionado.estado_bom === 'ENTREGADO' ? 'bg-emerald-100 text-emerald-800 border-emerald-400 ring-2 ring-emerald-300' : 'bg-slate-100 text-slate-400'
+                }`}>
+                  4. ENTREGADO 🟢
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2 border p-3.5 rounded-xl bg-white text-xs">
+              <h4 className="font-bold text-slate-800 flex items-center gap-1.5">
+                <span>📦</span> Insumos Consolidados para esta Orden:
+              </h4>
+              <p className="p-3 bg-slate-50 border rounded-lg font-semibold text-slate-700 leading-relaxed">
+                {bomSeleccionado.material_requerido}
+              </p>
+            </div>
+
+            <div className="flex justify-end border-t pt-3">
+              <button
+                onClick={() => setModalBomAbierto(false)}
+                className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded text-xs transition cursor-pointer"
+              >
+                Cerrar Seguimiento
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* COMPONENTE VISOR PLANO MODAL CON VISUALIZADOR INTEGRADOR */}
       <VisorPlanoModal
         abierto={modalVisorPlanoOpen}
         onClose={() => setModalVisorPlanoOpen(false)}

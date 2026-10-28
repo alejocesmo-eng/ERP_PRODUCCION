@@ -9,6 +9,7 @@ export default function ProduccionOperarioView() {
   const [estacionMaquina, setEstacionMaquina] = useState('TORN-CNC-01');
   const [colaOrdenes, setColaOrdenes] = useState([]);
   const [ordenEnCurso, setOrdenEnCurso] = useState(null);
+  const [errorCola, setErrorCola] = useState('');
   
   // Estado del proceso en tablet: 'COLA' | 'SETUP' | 'PRODUCCION' | 'PAUSA' | 'REPORTE'
   const [faseTrabajo, setFaseTrabajo] = useState('COLA');
@@ -35,7 +36,9 @@ export default function ProduccionOperarioView() {
   // =========================================================================
   useEffect(() => {
     cargarColaOperario();
-  }, [operarioLogueado]);
+    const actualizacion = window.setInterval(cargarColaOperario, 2000);
+    return () => window.clearInterval(actualizacion);
+  }, [operarioLogueado, estacionMaquina, ordenEnCurso?.id_sublote]);
 
   useEffect(() => {
     let timer = null;
@@ -53,44 +56,28 @@ export default function ProduccionOperarioView() {
 
   const cargarColaOperario = async () => {
     try {
-      const res = await API.get(`/operaciones/sublotes?maquina=${estacionMaquina}`);
-      if (res.data && res.data.length > 0) {
-        setColaOrdenes(res.data);
-      } else {
-        throw new Error("Usar datos locales de cola");
-      }
+      const params = new URLSearchParams({ maquina: estacionMaquina, operario_nombre: operarioLogueado });
+      const res = await API.get(`/operaciones/sublotes?${params.toString()}`);
+      if (!Array.isArray(res.data)) throw new Error('La respuesta de cola no tiene un formato válido.');
+      const estadosEnCola = ['PENDIENTE', 'PENDIENTE_ASIGNACION', 'EN_COLA'];
+      setColaOrdenes(res.data.filter((item) =>
+        item.id_sublote !== ordenEnCurso?.id_sublote
+        && estadosEnCola.includes(item.estado_sublote)
+      ));
+      setErrorCola('');
     } catch (error) {
-      const mockCola = [
-        {
-          id_sublote: 'sub-101',
-          codigo_op: '4007260',
-          numero_pedido: 'PED-2026-110',
-          codigo_plano: 'PLN-2026-110-B',
-          revision: 'REV-01',
-          detalle_pieza: 'Piñón Helicoidal Z=24 Módulo 4 en Acero AISI 4140',
-          sublote_tag: 'SUB-01 (3 UND)',
-          cantidad_asignada: 3,
-          nombre_proceso: 'Fresado Helicoidal CNC',
-          secuencia_paso: 20,
-          archivo_url: 'http://127.0.0.1:8000/static/planos/PLN-110-B.pdf',
-          instrucciones: 'Verificar tolerancia en el diámetro primitivo con micrómetro de discos.'
-        },
-        {
-          id_sublote: 'sub-102',
-          codigo_op: '4007256',
-          numero_pedido: 'PED-2026-110',
-          codigo_plano: 'PLN-2026-110-A',
-          revision: 'REV-01',
-          detalle_pieza: 'Corona en Bronce SAE 65 Z=48 con Dientes Rectos',
-          sublote_tag: 'SUB-02 (6 UND)',
-          cantidad_asignada: 6,
-          nombre_proceso: 'Torneado y Tallado',
-          secuencia_paso: 10,
-          archivo_url: 'http://127.0.0.1:8000/static/planos/PLN-110-A.pdf',
-          instrucciones: 'Revisar acabado superficial N6 en caras de ajuste.'
-        }
-      ];
-      setColaOrdenes(mockCola);
+      setErrorCola(error.response?.data?.detail || error.message || 'No fue posible actualizar la cola de trabajo.');
+    }
+  };
+
+  const actualizarEstadoSublote = async (sublote, estado_sublote) => {
+    try {
+      await API.patch(`/operaciones/sublotes/${sublote.id_sublote}/estado`, { estado_sublote });
+      setErrorCola('');
+      return true;
+    } catch (error) {
+      setErrorCola(error.response?.data?.detail || error.message || 'No se pudo sincronizar el estado del trabajo.');
+      return false;
     }
   };
 
@@ -104,7 +91,8 @@ export default function ProduccionOperarioView() {
   // =========================================================================
   // BLOQUE 4: ACCIONES DE TRANSICIÓN
   // =========================================================================
-  const handleAbrirOrdenSetup = (orden) => {
+  const handleAbrirOrdenSetup = async (orden) => {
+    if (!await actualizarEstadoSublote(orden, 'EN_SETUP')) return;
     setOrdenEnCurso(orden);
     setPiezasOk(orden.cantidad_asignada);
     setPiezasScrap(0);
@@ -116,17 +104,20 @@ export default function ProduccionOperarioView() {
     setFaseTrabajo('SETUP');
   };
 
-  const handleIniciarTrabajoMaquina = () => {
+  const handleIniciarTrabajoMaquina = async () => {
+    if (!await actualizarEstadoSublote(ordenEnCurso, 'EN_PRODUCCION')) return;
     setFaseTrabajo('PRODUCCION');
   };
 
-  const handleConfirmarPausa = (motivo) => {
+  const handleConfirmarPausa = async (motivo) => {
+    if (!await actualizarEstadoSublote(ordenEnCurso, 'PAUSADA')) return;
     setMotivoPausa(motivo);
     setFaseTrabajo('PAUSA');
     setModalPausaAbierto(false);
   };
 
-  const handleReanudarProduccion = () => {
+  const handleReanudarProduccion = async () => {
+    if (!await actualizarEstadoSublote(ordenEnCurso, 'EN_PRODUCCION')) return;
     setFaseTrabajo('PRODUCCION');
   };
 
@@ -157,8 +148,10 @@ export default function ProduccionOperarioView() {
       };
 
       await API.post('/operaciones/sublotes/finalizar', payloadReporte);
+      setErrorCola('');
     } catch (error) {
-      console.warn("Reportado en modo local.");
+      setErrorCola(error.response?.data?.detail || 'No se pudo registrar el cierre. La orden permanece activa.');
+      return;
     }
 
     const colaRestante = colaOrdenes.filter(o => o.id_sublote !== ordenEnCurso.id_sublote);
@@ -264,6 +257,11 @@ export default function ProduccionOperarioView() {
           </span>
         </div>
       </header>
+      {errorCola && (
+        <div role="alert" className="rounded-lg border border-amber-700 bg-amber-950 px-3 py-2 text-[11px] font-semibold text-amber-200">
+          {errorCola}
+        </div>
+      )}
 
       {/* FASE 1: VISTA DE COLA DE TRABAJO */}
       {faseTrabajo === 'COLA' && (
@@ -395,7 +393,7 @@ export default function ProduccionOperarioView() {
               {[
                 'Almuerzo / Descanso de Horario',
                 'Necesidad Personal',
-                'Falta de Materia Prima / Insumo BOM',
+                'Falta de materia prima o insumo requerido',
                 'Falla Mecánica / Mantenimiento',
                 'Ajuste o Cambio de Herramental',
                 'Espera de Inspección de Calidad'
@@ -494,7 +492,7 @@ export default function ProduccionOperarioView() {
 
       {/* FOOTER INFORMATIVO PLANTA */}
       <footer className="text-center text-[10px] text-slate-500 pt-1 border-t border-slate-900">
-        Sistema MES de Ejecución de Planta [ISO 9001:2026]
+        Sistema de ejecución de producción en planta [ISO 9001:2026]
       </footer>
     </div>
   );

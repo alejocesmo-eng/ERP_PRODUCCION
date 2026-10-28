@@ -59,13 +59,38 @@ export const SidebarNavigation = () => {
                 </Link>
               </li>
               <li>
+                <Link to="/inventario/general" className={`block py-2 px-3 rounded transition ${isActive('/inventario/general')}`}>
+                  🧾 Inventario General
+                </Link>
+              </li>
+              <li>
+                <Link to="/configuracion/maestros" className={`block py-2 px-3 rounded transition ${isActive('/configuracion/maestros')}`}>
+                  ⚙️ Datos Maestros
+                </Link>
+              </li>
+              <li>
                 <Link to="/almacen/inventario" className={`block py-2 px-3 rounded transition ${isActive('/almacen/inventario')}`}>
-                  📦 Almacén e Inventarios
+                  📦 Almacén Operativo
                 </Link>
               </li>
               <li>
                 <Link to="/produccion" className={`block py-2 px-3 rounded transition ${isActive('/produccion')}`}>
                   🏭 Producción y Planta
+                </Link>
+              </li>
+              <li>
+                <Link to="/mantenimiento/planta" className={`block py-2 px-3 rounded transition ${isActive('/mantenimiento/planta')}`}>
+                  🔧 Mantenimiento de Planta
+                </Link>
+              </li>
+              <li>
+                <Link to="/produccion/capacidad" className={`block py-2 px-3 rounded transition ${isActive('/produccion/capacidad')}`}>
+                  🕹️ Carga de Máquinas
+                </Link>
+              </li>
+              <li>
+                <Link to="/costos/liquidacion" className={`block py-2 px-3 rounded transition ${isActive('/costos/liquidacion')}`}>
+                  💵 Costos por OP
                 </Link>
               </li>
             </ul>
@@ -80,9 +105,10 @@ export const SidebarNavigation = () => {
                   🗜️ Metrología / Calidad de Producto
                 </Link>
               </li>
+             
               <li>
-                <Link to="/auditorias" className={`block py-2 px-3 rounded transition ${isActive('/auditorias')}`}>
-                  🔍 Auditorías / No Conformidades
+                <Link to="/calidad/rnc-capa" className={`block py-2 px-3 rounded transition ${isActive('/calidad/rnc-capa')}`}>
+                  📋 RNC / Acciones Correctivas
                 </Link>
               </li>
             </ul>

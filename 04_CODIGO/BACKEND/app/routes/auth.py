@@ -14,15 +14,18 @@ def login_for_access_token(
 ):
     usuario = None
     
+    username = (form_data.username or "").strip()
+    password = form_data.password or ""
+
     # 1. Intentar buscar usuario en PostgreSQL por email
     try:
-        usuario = db.query(models.Usuario).filter(models.Usuario.email == form_data.username).first()
+        usuario = db.query(models.Usuario).filter(models.Usuario.email == username).first()
     except Exception:
         usuario = None
 
     # 2. Validar contraseña contra el atributo real password_hash si el usuario existe en BD
     if usuario and hasattr(usuario, 'password_hash') and usuario.password_hash:
-        if security.verify_password(form_data.password, usuario.password_hash):
+        if security.verify_password(password, usuario.password_hash):
             access_token = security.create_access_token(
                 data={"sub": usuario.email, "rol": getattr(usuario, 'id_rol', 'ADMIN')}
             )
@@ -34,7 +37,7 @@ def login_for_access_token(
             }
 
     # 3. Fallback de contingencia para usuario administrador por defecto (desarrollo/pruebas)
-    if form_data.username == "admin@sgi.com" and form_data.password in ["admin123", "admin", "admin2026"]:
+    if username.lower() == "admin@sgi.com" and password in ["admin123", "admin", "admin2026"]:
         access_token = security.create_access_token(
             data={"sub": "admin@sgi.com", "rol": "ADMIN"}
         )

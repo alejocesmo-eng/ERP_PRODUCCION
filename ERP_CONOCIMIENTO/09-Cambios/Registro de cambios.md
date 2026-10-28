@@ -8,7 +8,10 @@ version: 1.0
 autor: Arquitecto de Software / Project Lead
 sistema_destino: ERP FastAPI + PostgreSQL
 ---
-
+---
+## Enlaces de Control
+- [[Inicio]]
+- [[Arquitectura del ERP]]
 # CHG-SIST-001: Registro de Cambios y Hoja de Ruta hacia el MVP
 
 ## 1. Hoja de Ruta de Entregables (MVP: 31/12/2026)
@@ -26,3 +29,5 @@ gantt
     section Calidad & Pruebas
     Módulo Metrología, TT y NC               :         des5, 2027-04-16, 2027-06-30
     Pruebas Integrales y Despliegue MVP      :         des6, 2027-07-01, 2026-12-31
+    
+    

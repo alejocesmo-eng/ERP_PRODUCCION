@@ -31,6 +31,12 @@ Esta suite valida las reglas de negocio críticas para las Fases 1 a 3 del ERP:
 | **TC-04** | Calidad / TT | Pieza en inspección que requiere Tratamiento Térmico. | 1. Intentar guardar el informe de TT sin adjuntar imagen. <br> 2. Cargar archivo de imagen y presionar `Enviar a Proveedor`. | Al faltar la foto, la API rechaza el registro (`422 Unprocessable Entity`). Con foto adjunta, registra la URL y dispara el envío de correo. | La tabla `informes_tratamiento_termico` almacena `ruta_fotografia` `NOT NULL`. |
 | **TC-05** | No Conformidad | Pieza fuera de tolerancia dimensional. | 1. Marcar resultado como `NO_CONFORME`. <br> 2. Intentar ejecutar `Cierre de OP` desde el rol de Jefe de Operaciones. | El sistema rechaza el cierre e informa que la OP tiene una No Conformidad pendiente sin reposición de material. | Bloqueo en backend (`400 Bad Request`) si existe NC activa en la OP. |
 
+
+---
+## Enlaces de Operación
+- [[Contexto_Puesto_CNC]]
+- [[PM-04_Compras_MRP_Kardex]]
+- [[Controles de calidad]]
 ---
 
 ## 3. Matriz de Datos de Prueba (Seed SQL para desarrollo)
@@ -45,3 +51,4 @@ VALUES ('CNC-01', 'Torno CNC Mazak', 'MECANIZADOS');
 
 INSERT INTO ordenes_produccion (consecutivo_op, pedido_comercial_id, descripcion_pieza, cantidad, estado) 
 VALUES ('4001001', 'PED-2026-050', 'Eje Principal Agitador Inox 316L', 5, 'LIBERADA');
+

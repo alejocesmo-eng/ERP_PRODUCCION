@@ -72,3 +72,10 @@ Definir las fórmulas, fuentes de datos SQL y umbrales de aceptación para la me
 - Riesgos de interpretación:
 - Acción si se desvía:
 - Fecha de revisión:
+
+
+---
+## Enlaces de Métricas y Costos
+- [[ADR-004_Costeo_Real_vs_Estandar_OP]]
+- [[Mapa de procesos]]
+- [[Inicio]]
