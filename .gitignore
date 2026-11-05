@@ -1,4 +1,3 @@
-@"
 .venv/
 venv/
 node_modules/
@@ -9,4 +8,7 @@ dist/
 build/
 .DS_Store
 *.log
-"@ | Out-File -FilePath .gitignore -Encoding utf8
+desktop.ini
+Claude outputs/
+_respaldo_claude_2026-10-31/
+tmp_ot8/
