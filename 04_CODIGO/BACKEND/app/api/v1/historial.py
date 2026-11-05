@@ -6,6 +6,7 @@ from typing import Optional, List
 from datetime import datetime
 import uuid
 
+from app.api.deps import requerir_roles
 from app.db.database import get_db
 from app.db.models import HistorialAccionesDocumento
 
@@ -24,44 +25,45 @@ def registrar_evento_historial(
     motivo: Optional[str] = None,
     pausa: bool = False
 ):
+    nuevo_registro = HistorialAccionesDocumento(
+        id_historial=uuid.uuid4(),
+        tipo_entidad=tipo_entidad.upper(),
+        identificador_documento=str(identificador),
+        accion=accion,
+        estado_anterior=estado_ant,
+        estado_nuevo=estado_nuev,
+        pausa_tiempo_productivo=pausa,
+        motivo_observacion=motivo,
+        usuario_responsable=usuario,
+        area_origen=area.upper(),
+        fecha_hora=datetime.now().astimezone()
+    )
+    db.add(nuevo_registro)
     try:
-        nuevo_registro = HistorialAccionesDocumento(
-            id_historial=uuid.uuid4(),
-            tipo_entidad=tipo_entidad.upper(),
-            identificador_documento=str(identificador),
-            accion=accion,
-            estado_anterior=estado_ant,
-            estado_nuevo=estado_nuev,
-            pausa_tiempo_productivo=pausa,
-            motivo_observacion=motivo,
-            usuario_responsable=usuario,
-            area_origen=area.upper(),
-            fecha_hora=datetime.utcnow()
-        )
-        db.add(nuevo_registro)
         db.commit()
-    except Exception as e:
+    except Exception:
         db.rollback()
-        print(f"[ALERTA HISTORIAL] Error al registrar evento: {e}")
+        raise
 
 # Esquemas Pydantic
 class SuspensionRequest(BaseModel):
     tipo_entidad: str
     identificador: str
     motivo: str
-    usuario: str = "Usuario en Sesión"
-    area: str = "VENTAS"
 
 class ReactivacionRequest(BaseModel):
     tipo_entidad: str
     identificador: str
     motivo: Optional[str] = "Reanudación regular de actividades"
-    usuario: str = "Usuario en Sesión"
-    area: str = "VENTAS"
 
 # 1. Consulta cronológica de la línea de tiempo
 @router.get("/{tipo_entidad}/{identificador}")
-def obtener_historial_documento(tipo_entidad: str, identificador: str, db: Session = Depends(get_db)):
+def obtener_historial_documento(
+    tipo_entidad: str,
+    identificador: str,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requerir_roles(["ADMIN", "VENTAS", "DISENO", "ALMACEN", "PRODUCCION", "CALIDAD", "MANTENIMIENTO"])),
+):
     registros = db.query(HistorialAccionesDocumento).filter(
         HistorialAccionesDocumento.tipo_entidad == tipo_entidad.upper(),
         HistorialAccionesDocumento.identificador_documento == str(identificador)
@@ -77,14 +79,18 @@ def obtener_historial_documento(tipo_entidad: str, identificador: str, db: Sessi
             "motivo": r.motivo_observacion,
             "usuario": r.usuario_responsable,
             "area": r.area_origen,
-            "fecha_hora": r.fecha_hora.strftime("%Y-%m-%d %H:%M:%S") if r.fecha_hora else ""
+            "fecha_hora": r.fecha_hora.isoformat() if r.fecha_hora else ""
         }
         for r in registros
     ]
 
 # 2. Registrar suspensión (congelamiento de reloj de productividad)
 @router.post("/suspender", status_code=status.HTTP_201_CREATED)
-def suspender_documento(req: SuspensionRequest, db: Session = Depends(get_db)):
+def suspender_documento(
+    req: SuspensionRequest,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requerir_roles(["ADMIN", "VENTAS", "DISENO", "PRODUCCION", "CALIDAD", "MANTENIMIENTO"])),
+):
     if not req.motivo or not req.motivo.strip():
         raise HTTPException(status_code=400, detail="El motivo de la suspensión es obligatorio.")
 
@@ -93,8 +99,8 @@ def suspender_documento(req: SuspensionRequest, db: Session = Depends(get_db)):
         tipo_entidad=req.tipo_entidad,
         identificador=req.identificador,
         accion="SUSPENDIDO_COMERCIAL",
-        usuario=req.usuario,
-        area=req.area,
+        usuario=usuario["email"],
+        area=usuario["rol"],
         estado_ant="ACTIVO",
         estado_nuev="SUSPENDIDO",
         motivo=req.motivo,
@@ -107,14 +113,18 @@ def suspender_documento(req: SuspensionRequest, db: Session = Depends(get_db)):
 
 # 3. Registrar reactivación del flujo regular
 @router.post("/reactivar", status_code=status.HTTP_201_CREATED)
-def reactivar_documento(req: ReactivacionRequest, db: Session = Depends(get_db)):
+def reactivar_documento(
+    req: ReactivacionRequest,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requerir_roles(["ADMIN", "VENTAS", "DISENO", "PRODUCCION", "CALIDAD", "MANTENIMIENTO"])),
+):
     registrar_evento_historial(
         db=db,
         tipo_entidad=req.tipo_entidad,
         identificador=req.identificador,
         accion="REACTIVADO",
-        usuario=req.usuario,
-        area=req.area,
+        usuario=usuario["email"],
+        area=usuario["rol"],
         estado_ant="SUSPENDIDO",
         estado_nuev="ACTIVO",
         motivo=req.motivo,

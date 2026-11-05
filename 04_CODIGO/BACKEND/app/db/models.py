@@ -1206,8 +1206,8 @@ class HistorialAccionesDocumento(Base):
     __tablename__ = "historial_acciones_documento"
 
     id_historial = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tipo_entidad = Column(String(30), nullable=False, index=True)  # 'PEDIDO' u 'ORDEN_PRODUCCION'
-    identificador_documento = Column(String(50), nullable=False, index=True)  # Ej: 'PED-2026-088', '4007256'
+    tipo_entidad = Column(String(30), nullable=False, index=True)  # COTIZACION, PEDIDO u ORDEN_PRODUCCION
+    identificador_documento = Column(String(50), nullable=False, index=True)  # Código visible del registro
     
     accion = Column(String(60), nullable=False)
     # Estados de ejemplo: 'COTIZACION_EMITIDA', 'COTIZACION_APROBADA', 'PEDIDO_CREADO',
