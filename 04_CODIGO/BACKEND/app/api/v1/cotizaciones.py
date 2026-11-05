@@ -7,14 +7,18 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.db.database import get_db
+from app.api.deps import requerir_roles
+from app.services.auditoria import agregar_evento_trazabilidad
 from app.db.models import (
     Cotizacion,
     PosicionCotizacion,
     SocioNegocio,
     Proyecto,
     PedidoDetalle,
-    EstadoCotizacionEnum
+    EstadoCotizacionEnum,
+    ArticuloInventario
 )
+from app.services.stock_pt import CATEGORIA_PT, ORIGEN_STOCK_PT
 
 router = APIRouter(prefix="/ventas/cotizaciones", tags=["Cotizaciones Comerciales"])
 
@@ -31,6 +35,8 @@ class PosicionCotizacionIn(BaseModel):
     unidad: Optional[str] = "UND"
     tipo_impuesto: Optional[str] = "IVA_19"
     vinculo_plano_catalogo: Optional[str] = None
+    origen: Optional[str] = "PLANO"
+    id_articulo: Optional[uuid.UUID] = None
 
 class CotizacionCreateIn(BaseModel):
     id_socio: Optional[Any] = None
@@ -88,7 +94,11 @@ def listar_cotizaciones(db: Session = Depends(get_db)):
     return resultado
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
-def crear_cotizacion(data: CotizacionCreateIn, db: Session = Depends(get_db)):
+def crear_cotizacion(
+    data: CotizacionCreateIn,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requerir_roles(["ADMIN", "VENTAS"])),
+):
     try:
         socio = None
 
@@ -140,16 +150,52 @@ def crear_cotizacion(data: CotizacionCreateIn, db: Session = Depends(get_db)):
         db.flush()
 
         for pos in data.posiciones:
+            origen_pos = (pos.origen or "PLANO").strip().upper()
+            if origen_pos not in ("PLANO", ORIGEN_STOCK_PT):
+                raise HTTPException(status_code=400, detail="El origen de la posición debe ser PLANO o STOCK_PT.")
+            sku_pos = pos.numero_producto or "REF-COT"
+            descripcion_pos = pos.descripcion
+            id_articulo_pos = None
+            if origen_pos == ORIGEN_STOCK_PT:
+                # La cotización no es vinculante: solo valida el artículo PT y fija SKU/descripción.
+                # No reserva ni modifica el saldo de inventario.
+                art = (
+                    db.query(ArticuloInventario)
+                    .filter(ArticuloInventario.id_articulo == pos.id_articulo)
+                    .first()
+                    if pos.id_articulo else None
+                )
+                if art is None or art.categoria != CATEGORIA_PT:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="La posición de stock PT requiere un artículo existente de categoría PRODUCTO_TERMINADO."
+                    )
+                sku_pos = art.codigo_sku
+                descripcion_pos = art.nombre
+                id_articulo_pos = art.id_articulo
             nueva_pos = PosicionCotizacion(
                 id_posicion=uuid.uuid4(),
                 id_cotizacion=nueva_cot.id_cotizacion,
-                numero_producto=pos.numero_producto or "REF-COT",
-                descripcion=pos.descripcion,
+                numero_producto=sku_pos,
+                descripcion=descripcion_pos,
                 cantidad=int(pos.cantidad),
                 precio_unitario=pos.precio_unitario,
-                vinculo_plano_catalogo=pos.vinculo_plano_catalogo
+                vinculo_plano_catalogo=pos.vinculo_plano_catalogo,
+                origen=origen_pos,
+                id_articulo=id_articulo_pos
             )
             db.add(nueva_pos)
+
+        agregar_evento_trazabilidad(
+            db,
+            tipo_entidad="COTIZACION",
+            identificador=nueva_cot.numero_cotizacion,
+            accion="COTIZACION_CREADA",
+            usuario=usuario["email"],
+            area="VENTAS",
+            estado_nuevo="BORRADOR",
+            motivo=f"id_cotizacion={nueva_cot.id_cotizacion}; id_socio={socio.id_socio}",
+        )
 
         db.commit()
         db.refresh(nueva_cot)
@@ -163,6 +209,9 @@ def crear_cotizacion(data: CotizacionCreateIn, db: Session = Depends(get_db)):
             "estado": "BORRADOR"
         }
 
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(
@@ -206,14 +255,21 @@ def obtener_detalle_cotizacion(id_cotizacion: uuid.UUID, db: Session = Depends(g
                 "cantidad": p.cantidad,
                 "precio_unitario": float(p.precio_unitario or 0),
                 "subtotal": float(p.cantidad * p.precio_unitario) if (p.cantidad and p.precio_unitario) else 0.0,
-                "vinculo_plano_catalogo": p.vinculo_plano_catalogo
+                "vinculo_plano_catalogo": p.vinculo_plano_catalogo,
+                "origen": p.origen or "PLANO",
+                "id_articulo": str(p.id_articulo) if p.id_articulo else None
             }
             for p in c.posiciones
         ]
     }
 
 @router.post("/{id_cotizacion}/enviar-cliente")
-def enviar_cotizacion_cliente(id_cotizacion: uuid.UUID, data: EnviarCotizacionMailIn, db: Session = Depends(get_db)):
+def enviar_cotizacion_cliente(
+    id_cotizacion: uuid.UUID,
+    data: EnviarCotizacionMailIn,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requerir_roles(["ADMIN", "VENTAS"])),
+):
     """
     Registra el envío formal de la oferta al cliente y actualiza el estado a EMITIDA.
     """
@@ -231,15 +287,42 @@ def enviar_cotizacion_cliente(id_cotizacion: uuid.UUID, data: EnviarCotizacionMa
     }
 
 @router.patch("/{id_cotizacion}/aprobar-y-generar-pedido")
-def aprobar_cotizacion_y_generar_pedido(id_cotizacion: uuid.UUID, db: Session = Depends(get_db)):
-    cot = db.query(Cotizacion).filter(Cotizacion.id_cotizacion == id_cotizacion).first()
+def aprobar_cotizacion_y_generar_pedido(
+    id_cotizacion: uuid.UUID,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requerir_roles(["ADMIN", "VENTAS"])),
+):
+    cot = (
+        db.query(Cotizacion)
+        .filter(Cotizacion.id_cotizacion == id_cotizacion)
+        .with_for_update()
+        .first()
+    )
     if not cot:
         raise HTTPException(status_code=404, detail="Cotización no encontrada.")
 
+    numero_ped = f"PED-{cot.numero_cotizacion.replace('COT-', '')}"
+    estado_actual = cot.estado.value if hasattr(cot.estado, "value") else str(cot.estado)
+    if estado_actual == EstadoCotizacionEnum.APROBADA.value:
+        pedido_existente = db.query(Proyecto).filter(Proyecto.codigo_proyecto == numero_ped).first()
+        if pedido_existente:
+            db.rollback()
+            return {
+                "status": "ok",
+                "mensaje": f"La cotización {cot.numero_cotizacion} ya fue aprobada.",
+                "id_proyecto": str(pedido_existente.id_proyecto),
+                "numero_pedido": numero_ped,
+            }
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="La cotización ya figura aprobada, pero no se encontró su pedido asociado.",
+        )
+
+    estado_anterior_cotizacion = estado_actual
     cot.estado = EstadoCotizacionEnum.APROBADA
     socio = db.query(SocioNegocio).filter(SocioNegocio.id_socio == cot.id_socio).first()
 
-    numero_ped = f"PED-{cot.numero_cotizacion.replace('COT-', '')}"
     nuevo_pedido = Proyecto(
         id_proyecto=uuid.uuid4(),
         id_cliente=None,
@@ -266,12 +349,36 @@ def aprobar_cotizacion_y_generar_pedido(id_cotizacion: uuid.UUID, db: Session = 
             codigo_producto=p.numero_producto,
             descripcion=p.descripcion,
             tipo="PIEZA",
+            origen=p.origen or "PLANO",
+            id_articulo=p.id_articulo,
             cantidad_solicitada=p.cantidad,
             unidad="UND",
             cantidad_asignada=0,
             cantidad_pendiente=p.cantidad
         )
         db.add(detalle)
+
+    agregar_evento_trazabilidad(
+        db,
+        tipo_entidad="COTIZACION",
+        identificador=cot.numero_cotizacion,
+        accion="COTIZACION_APROBADA",
+        usuario=usuario["email"],
+        area="VENTAS",
+        estado_anterior=estado_anterior_cotizacion,
+        estado_nuevo=EstadoCotizacionEnum.APROBADA.value,
+        motivo=f"id_proyecto={nuevo_pedido.id_proyecto}; pedido={numero_ped}",
+    )
+    agregar_evento_trazabilidad(
+        db,
+        tipo_entidad="PEDIDO",
+        identificador=numero_ped,
+        accion="PEDIDO_CREADO_DESDE_COTIZACION",
+        usuario=usuario["email"],
+        area="VENTAS",
+        estado_nuevo="BORRADOR",
+        motivo=f"id_proyecto={nuevo_pedido.id_proyecto}; cotizacion={cot.numero_cotizacion}",
+    )
 
     db.commit()
 

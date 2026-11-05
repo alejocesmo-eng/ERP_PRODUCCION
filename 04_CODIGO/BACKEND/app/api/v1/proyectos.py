@@ -4,14 +4,18 @@ from uuid import UUID
 from datetime import datetime, date
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from pydantic import BaseModel, Field, validator
 
+from app.api.deps import requerir_roles
+from app.services.auditoria import agregar_evento_trazabilidad
 from app.db.database import get_db
+from app.services.stock_pt import ORIGEN_STOCK_PT, validar_lineas_stock, crear_picking_para_pedido
 from app.db.models import (
     BOMListaMateriales,
     Cliente,
     MovimientoKardexSAP,
+    OrdenPicking,
     OrdenProduccion,
     Proyecto,
     PedidoDetalle,
@@ -65,6 +69,8 @@ class PedidoDetalleItem(BaseModel):
     codigo_producto: Optional[str] = None
     descripcion: str = Field(..., description="Nombre / Detalle de la pieza o servicio")
     tipo: Optional[str] = "pieza"
+    origen: Optional[str] = "PLANO"
+    id_articulo: Optional[UUID] = None
     cantidad_solicitada: int = Field(1, ge=1)
     unidad: Optional[str] = "UND"
     prioridad: Optional[str] = "MEDIA"
@@ -83,10 +89,26 @@ class PedidoDetalleItem(BaseModel):
                 return None
         return v
 
+    @validator('origen', pre=True)
+    def validar_origen(cls, v):
+        if v is None or v == "":
+            return "PLANO"
+        origen = str(v).strip().upper()
+        if origen not in {"PLANO", "STOCK_PT"}:
+            raise ValueError("El origen de la línea debe ser PLANO o STOCK_PT.")
+        return origen
+
     @validator('cantidad_solicitada', pre=True)
-    def parse_cantidad(cls, v):
+    def parse_cantidad(cls, v, values):
         if v == "" or v is None:
             return 1
+        if values.get("origen") == "STOCK_PT":
+            # Stock PT: cantidades enteras (OT-2026-008, D-7); un decimal se rechaza en validación.
+            try:
+                if float(v) != int(float(v)):
+                    return v
+            except (ValueError, TypeError):
+                return v
         try:
             return int(v)
         except (ValueError, TypeError):
@@ -191,11 +213,22 @@ class PedidoDetalleResponse(BaseModel):
     cantidad_asignada: int
     cantidad_pendiente: int
     estado_asignacion: Optional[str] = "SIN_ASIGNAR"
+    origen: Optional[str] = "PLANO"
+    id_articulo: Optional[UUID] = None
     prioridad: str
     fecha_compromiso: Optional[date] = None
     requisitos_especificos: Optional[str] = None
     observaciones: Optional[str] = None
     ot_detalles: List[OTDetalleResponse] = Field(default_factory=list)
+
+    class Config:
+        from_attributes = True
+
+
+class PickingResumen(BaseModel):
+    id_picking: UUID
+    codigo_picking: str
+    estado: str
 
     class Config:
         from_attributes = True
@@ -218,6 +251,7 @@ class ProyectoResponse(BaseModel):
     creado_en: datetime
     presupuestos_componentes: List[PresupuestoComponente] = Field(default_factory=list)
     detalles: List[PedidoDetalleResponse] = Field(default_factory=list)
+    picking: Optional[PickingResumen] = None
 
     class Config:
         from_attributes = True
@@ -238,6 +272,12 @@ def listar_proyectos(db: Session = Depends(get_db)):
         
         for det in p.detalles:
             cant_sol = det.cantidad_solicitada or 0
+            if det.origen == ORIGEN_STOCK_PT:
+                # Línea servida desde stock PT: no pasa por planos/OP (sin ot_detalles).
+                det.cantidad_asignada = cant_sol
+                det.cantidad_pendiente = 0
+                det.estado_asignacion = "DESDE_STOCK"
+                continue
             cant_asig = sum(rel.cantidad_asignada for rel in det.ot_detalles) if det.ot_detalles else 0
             cant_pend = cant_sol - cant_asig
             
@@ -395,8 +435,12 @@ def obtener_expediente_pedido(id_proyecto: UUID, db: Session = Depends(get_db)):
         relaciones_detalle = relaciones_por_detalle.get(detalle.detalle_id, [])
         cantidad_asignada = sum(relacion.cantidad_asignada or 0 for relacion in relaciones_detalle)
         cantidad_solicitada = detalle.cantidad_solicitada or 0
+        desde_stock = detalle.origen == ORIGEN_STOCK_PT
+        if desde_stock:
+            cantidad_asignada = cantidad_solicitada
         estado_cobertura = (
-            "SIN_ASIGNAR" if cantidad_asignada <= 0
+            "DESDE_STOCK" if desde_stock
+            else "SIN_ASIGNAR" if cantidad_asignada <= 0
             else "PARCIAL" if cantidad_asignada < cantidad_solicitada
             else "ASIGNADO"
         )
@@ -421,6 +465,8 @@ def obtener_expediente_pedido(id_proyecto: UUID, db: Session = Depends(get_db)):
             "codigo_producto": detalle.codigo_producto,
             "descripcion": detalle.descripcion,
             "tipo": detalle.tipo,
+            "origen": detalle.origen or "PLANO",
+            "id_articulo": str(detalle.id_articulo) if detalle.id_articulo else None,
             "cantidad_solicitada": cantidad_solicitada,
             "unidad": detalle.unidad,
             "cantidad_asignada": cantidad_asignada,
@@ -458,6 +504,7 @@ def obtener_expediente_pedido(id_proyecto: UUID, db: Session = Depends(get_db)):
 @router.post("/", response_model=ProyectoResponse, status_code=status.HTTP_201_CREATED)
 def crear_proyecto(proyecto_in: ProyectoCreate, db: Session = Depends(get_db)):
     codigo_ref = proyecto_in.codigo_proyecto or proyecto_in.numero_pedido or "PED-001"
+    articulos_stock = validar_lineas_stock(db, proyecto_in.detalles or [])
 
     nuevo_proyecto = Proyecto(
         codigo_proyecto=codigo_ref,
@@ -484,19 +531,21 @@ def crear_proyecto(proyecto_in: ProyectoCreate, db: Session = Depends(get_db)):
 
         if proyecto_in.detalles:
             for item in proyecto_in.detalles:
+                art_stock = articulos_stock.get(item.id_articulo) if item.origen == ORIGEN_STOCK_PT else None
                 detalle_db = PedidoDetalle(
                     pedido_id=nuevo_proyecto.id_proyecto,
-                    codigo_producto=item.codigo_producto,
-                    descripcion=item.descripcion,
+                    codigo_producto=art_stock.codigo_sku if art_stock else item.codigo_producto,
+                    descripcion=art_stock.nombre if art_stock else item.descripcion,
                     tipo=item.tipo or "pieza",
+                    origen=item.origen or "PLANO",
+                    id_articulo=item.id_articulo if art_stock else None,
                     cantidad_solicitada=item.cantidad_solicitada,
-                    unidad=item.unidad or "UND",
+                    unidad=(art_stock.unidad_medida or "UND") if art_stock else (item.unidad or "UND"),
                     cantidad_asignada=0,
                     cantidad_pendiente=item.cantidad_solicitada,
                     prioridad=item.prioridad or "MEDIA",
                     fecha_compromiso=item.fecha_compromiso or proyecto_in.fecha_compromiso,
-                    requisitos_especificos=item.requisitos_especificos,
-                    observaciones=item.observaciones
+                    observaciones=" | ".join(filter(None, [item.requisitos_especificos, item.observaciones])) or None
                 )
                 db.add(detalle_db)
 
@@ -523,6 +572,8 @@ def actualizar_proyecto(id_proyecto: UUID, proyecto_up: ProyectoUpdate, db: Sess
             detail="❌ Bloqueo ISO 9001: No se puede modificar un Pedido Comercial que ya ha sido CONFIRMADO."
         )
 
+    articulos_stock = validar_lineas_stock(db, proyecto_up.detalles or [])
+
     datos_dict = proyecto_up.dict(exclude_unset=True, exclude={"detalles"})
     if proyecto_up.presupuestos_componentes is not None:
         datos_dict["presupuestos_componentes"] = [
@@ -540,19 +591,21 @@ def actualizar_proyecto(id_proyecto: UUID, proyecto_up: ProyectoUpdate, db: Sess
             db.flush()
             
             for item in proyecto_up.detalles:
+                art_stock = articulos_stock.get(item.id_articulo) if item.origen == ORIGEN_STOCK_PT else None
                 nuevo_det = PedidoDetalle(
                     pedido_id=id_proyecto,
-                    codigo_producto=item.codigo_producto,
-                    descripcion=item.descripcion,
+                    codigo_producto=art_stock.codigo_sku if art_stock else item.codigo_producto,
+                    descripcion=art_stock.nombre if art_stock else item.descripcion,
                     tipo=item.tipo or "pieza",
+                    origen=item.origen or "PLANO",
+                    id_articulo=item.id_articulo if art_stock else None,
                     cantidad_solicitada=item.cantidad_solicitada,
-                    unidad=item.unidad or "UND",
+                    unidad=(art_stock.unidad_medida or "UND") if art_stock else (item.unidad or "UND"),
                     cantidad_asignada=0,
                     cantidad_pendiente=item.cantidad_solicitada,
                     prioridad=item.prioridad or "MEDIA",
                     fecha_compromiso=item.fecha_compromiso or proyecto.fecha_compromiso,
-                    requisitos_especificos=item.requisitos_especificos,
-                    observaciones=item.observaciones
+                    observaciones=" | ".join(filter(None, [item.requisitos_especificos, item.observaciones])) or None
                 )
                 db.add(nuevo_det)
 
@@ -570,17 +623,79 @@ def actualizar_proyecto(id_proyecto: UUID, proyecto_up: ProyectoUpdate, db: Sess
         )
 
 
+def _respuesta_confirmado(proyecto: Proyecto, picking: Optional[OrdenPicking]) -> ProyectoResponse:
+    respuesta = ProyectoResponse.model_validate(proyecto)
+    respuesta.picking = PickingResumen.model_validate(picking) if picking else None
+    return respuesta
+
+
 @router.patch("/{id_proyecto}/confirmar", response_model=ProyectoResponse)
-def confirmar_proyecto(id_proyecto: UUID, db: Session = Depends(get_db)):
-    proyecto = db.query(Proyecto).filter(Proyecto.id_proyecto == id_proyecto).first()
+def confirmar_proyecto(
+    id_proyecto: UUID,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requerir_roles(["ADMIN", "VENTAS"])),
+):
+    # Transacción única: bloqueo del pedido, revalidación de saldo con FOR UPDATE ordenado
+    # por id_articulo, creación del picking y confirmación en un solo commit (OT-2026-008).
+    proyecto = (
+        db.query(Proyecto)
+        .filter(Proyecto.id_proyecto == id_proyecto)
+        .with_for_update()
+        .first()
+    )
     if not proyecto:
         raise HTTPException(status_code=404, detail="Pedido comercial no encontrado.")
 
+    if proyecto.confirmado:
+        picking_existente = (
+            db.query(OrdenPicking).filter(OrdenPicking.id_proyecto == id_proyecto).first()
+        )
+        respuesta = _respuesta_confirmado(proyecto, picking_existente)
+        db.rollback()
+        return respuesta
+
     try:
+        lineas_stock = (
+            db.query(PedidoDetalle)
+            .filter(PedidoDetalle.pedido_id == id_proyecto, PedidoDetalle.origen == ORIGEN_STOCK_PT)
+            .order_by(PedidoDetalle.creado_en, PedidoDetalle.detalle_id)
+            .all()
+        )
+        picking = None
+        if lineas_stock:
+            validar_lineas_stock(db, lineas_stock, bloquear=True)
+            picking = crear_picking_para_pedido(
+                db, proyecto, lineas_stock, usuario=usuario.get("email")
+            )
         proyecto.confirmado = True
+        agregar_evento_trazabilidad(
+            db,
+            tipo_entidad="PEDIDO",
+            identificador=proyecto.numero_pedido,
+            accion="PEDIDO_CONFIRMADO",
+            usuario=usuario["email"],
+            area="VENTAS",
+            estado_anterior="BORRADOR",
+            estado_nuevo="CONFIRMADO",
+            motivo=f"id_proyecto={proyecto.id_proyecto}",
+        )
         db.commit()
         db.refresh(proyecto)
-        return proyecto
+        return _respuesta_confirmado(proyecto, picking)
+    except HTTPException:
+        db.rollback()
+        raise
+    except IntegrityError:
+        # Carrera residual: otra confirmación creó el picking (UNIQUE id_proyecto). Respuesta idempotente.
+        db.rollback()
+        proyecto = db.query(Proyecto).filter(Proyecto.id_proyecto == id_proyecto).first()
+        picking = db.query(OrdenPicking).filter(OrdenPicking.id_proyecto == id_proyecto).first()
+        if proyecto and proyecto.confirmado and picking:
+            return _respuesta_confirmado(proyecto, picking)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Error al confirmar pedido: conflicto de integridad en la orden de picking."
+        )
     except SQLAlchemyError as e:
         db.rollback()
         raise HTTPException(
