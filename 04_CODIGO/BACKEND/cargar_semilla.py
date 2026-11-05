@@ -598,6 +598,36 @@ def _crear_inventario(db: Session, centro_almacen: CentroAlmacen) -> Dict[str, A
             "calidad": "LIBERADO",
         },
         {
+            "sku": "PROD-VAL-02",
+            "nombre": "Válvula de compuerta 4 pulgadas ANSI 150",
+            "descripcion": "Producto terminado en bodega, disponible para venta (OT-2026-008).",
+            "categoria": "PRODUCTO_TERMINADO",
+            "sap_tipo": TipoMaterialSAP.FERT,
+            "unidad": "UND",
+            "costo": Decimal("385000"),
+            "stock": 10.0,
+            "minimo": 0.0,
+            "almacen": "BOD-MP-01",
+            "lote": "LOT-VAL02-2026-007",
+            "colada": None,
+            "calidad": "LIBERADO",
+        },
+        {
+            "sku": "PROD-VAL-03",
+            "nombre": "Válvula de bola 2 pulgadas ANSI 300",
+            "descripcion": "Producto terminado en cuarentena: saldo vendible 0 (OT-2026-008).",
+            "categoria": "PRODUCTO_TERMINADO",
+            "sap_tipo": TipoMaterialSAP.FERT,
+            "unidad": "UND",
+            "costo": Decimal("210000"),
+            "stock": 4.0,
+            "minimo": 0.0,
+            "almacen": "BOD-MP-01",
+            "lote": "LOT-VAL03-2026-008",
+            "colada": None,
+            "calidad": "CUARENTENA",
+        },
+        {
             "sku": "SEM-BR-12-01",
             "nombre": "Brida mecanizada en proceso",
             "descripcion": "Semielaborado pendiente de inspección final.",
@@ -641,6 +671,36 @@ def _crear_inventario(db: Session, centro_almacen: CentroAlmacen) -> Dict[str, A
             "lote": "LOT-316L-RECHAZADO-009",
             "colada": "HEAT-316L-RECHAZADO-009",
             "calidad": "RECHAZADO",
+        },
+        {
+            "sku": "PROD-BR-06",
+            "nombre": "Brida forjada 6 pulgadas ANSI 300",
+            "descripcion": "Producto terminado liberado, disponible para venta y picking.",
+            "categoria": "PRODUCTO_TERMINADO",
+            "sap_tipo": TipoMaterialSAP.FERT,
+            "unidad": "UND",
+            "costo": Decimal("132000"),
+            "stock": 8.0,
+            "minimo": 0.0,
+            "almacen": "BOD-MP-01",
+            "lote": "LOT-BR06-2026-011",
+            "colada": "HEAT-A105-55011",
+            "calidad": "LIBERADO",
+        },
+        {
+            "sku": "PROD-BR-08-QM",
+            "nombre": "Brida forjada 8 pulgadas ANSI 600 en cuarentena",
+            "descripcion": "Escenario de producto terminado retenido por inspección de calidad.",
+            "categoria": "PRODUCTO_TERMINADO",
+            "sap_tipo": TipoMaterialSAP.FERT,
+            "unidad": "UND",
+            "costo": Decimal("198000"),
+            "stock": 3.0,
+            "minimo": 0.0,
+            "almacen": "BOD-CUARENTENA-QM",
+            "lote": "LOT-BR08-QM-2026-012",
+            "colada": "HEAT-A105-55012",
+            "calidad": "CUARENTENA",
         },
     )
     catalogos = {}
@@ -1045,6 +1105,8 @@ def _crear_proyectos_y_produccion(
                 "cantidad_pendiente": 0,
                 "fecha_requerida": item["fecha"],
                 "prioridad": "ALTA",
+                "origen": "PLANO",
+                "id_articulo": None,
             },
         )
 
@@ -1627,6 +1689,57 @@ def _crear_calidad_y_mantenimiento(
             )
 
 
+def _crear_pedido_stock_pt(
+    db: Session,
+    maestros: Dict[str, Any],
+    inventario: Dict[str, Any],
+) -> Dict[str, Any]:
+    """OT-2026-008: pedido de ejemplo sin confirmar con una línea servida desde stock PT."""
+    cliente = maestros["clientes"]["800123456-1"]
+    articulo = inventario["articulos"]["PROD-VAL-02"]
+    proyecto = _upsert(
+        db,
+        Proyecto,
+        ("numero_pedido",),
+        {
+            "id_cliente": cliente.id_cliente,
+            "numero_pedido": "PED-2026-STK-001",
+            "codigo_proyecto": "PED-2026-STK-001",
+            "cliente_nombre": cliente.razon_social,
+            "contacto_nombre": "Juan Pérez",
+            "contacto_telefono": "+57 310 555 0101",
+            "contacto_email": "juan.perez@ecopetrol.example",
+            "ubicacion_cliente": "Colombia",
+            "cantidad": 3,
+            "detalle_producto": articulo.nombre,
+            "requisitos_cliente": "Entrega desde stock de producto terminado.",
+            "fecha_compromiso": date(2026, 11, 20),
+            "presupuestos_componentes": [],
+            "confirmado": False,
+        },
+    )
+    detalle = _upsert(
+        db,
+        PedidoDetalle,
+        ("pedido_id", "codigo_producto"),
+        {
+            "pedido_id": proyecto.id_proyecto,
+            "codigo_producto": articulo.codigo_sku,
+            "descripcion": articulo.nombre,
+            "tipo": "PIEZA",
+            "origen": "STOCK_PT",
+            "id_articulo": articulo.id_articulo,
+            "cantidad_solicitada": 3,
+            "unidad": articulo.unidad_medida or "UND",
+            "cantidad_asignada": 0,
+            "cantidad_pendiente": 3,
+            "fecha_requerida": date(2026, 11, 20),
+            "prioridad": "MEDIA",
+        },
+    )
+    return {"proyecto": proyecto, "detalle": detalle}
+
+
 def cargar_semilla_db() -> None:
     print("Iniciando carga idempotente de datos de prueba SGI-ERP...")
     Base.metadata.create_all(bind=engine)
@@ -1637,6 +1750,7 @@ def cargar_semilla_db() -> None:
         planta = _crear_planta(db)
         inventario = _crear_inventario(db, planta["centro_almacen"])
         produccion = _crear_proyectos_y_produccion(db, maestros)
+        _crear_pedido_stock_pt(db, maestros, inventario)
         _crear_compras_almacen(db, maestros, inventario, produccion)
         _crear_calidad_y_mantenimiento(db, maestros, planta, produccion)
 

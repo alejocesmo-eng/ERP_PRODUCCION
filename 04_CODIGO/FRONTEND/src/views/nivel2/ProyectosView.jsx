@@ -1,9 +1,10 @@
 // src/views/nivel2/ProyectosView.jsx
 import React, { useState, useEffect } from 'react';
-import API from '../../services/api';
+import API, { mensajeStockInsuficiente } from '../../services/api';
 import { useProyectos } from '../../context/ProyectosContext';
 import ModalNuevaCotizacion from '../../components/modals/ModalNuevaCotizacion';
 import HistorialTimelineModal from '../../components/modals/HistorialTimelineModal';
+import ModalCatalogoStockPT from '../../components/modals/ModalCatalogoStockPT';
 
 const capitalize = (str) => {
   if (typeof str !== 'string' || !str) return '';
@@ -63,6 +64,7 @@ export default function ProyectosView() {
 
   const [modalNuevoPedidoAbierto, setModalNuevoPedidoAbierto] = useState(false);
   const [modalNuevoCotizacionAbierto, setModalNuevoCotizacionAbierto] = useState(false);
+  const [catalogoPT, setCatalogoPT] = useState({ abierto: false, destino: 'alta' });
   const [modalBomAbierto, setModalBomAbierto] = useState(false);
   const [bomSeleccionado, setBomSeleccionado] = useState(null);
 
@@ -500,6 +502,59 @@ export default function ProyectosView() {
     }));
   };
 
+  // OT-2026-008: agrega una línea desde el catálogo de stock PT (solo pedidos sin confirmar).
+  // La lógica de consulta vive en ModalCatalogoStockPT; aquí solo se arma la fila.
+  const detallesDestinoPT = catalogoPT.destino === 'alta'
+    ? nuevoPedido.detalles
+    : (proyectoSeleccionado?.detalles || []);
+
+  const handleAgregarDesdeStockPT = (linea) => {
+    const esAlta = catalogoPT.destino === 'alta';
+    const actualizar = esAlta ? setNuevoPedido : setProyectoSeleccionado;
+    const indiceExistente = detallesDestinoPT.findIndex(
+      d => d.origen === 'STOCK_PT' && d.id_articulo === linea.id_articulo
+    );
+    if (indiceExistente >= 0) {
+      const cantidadTotal = (Number(detallesDestinoPT[indiceExistente].cantidad_solicitada) || 0) + linea.cantidad;
+      actualizar(prev => ({
+        ...prev,
+        detalles: (prev.detalles || []).map((d, i) => (
+          i === indiceExistente ? { ...d, cantidad_solicitada: cantidadTotal, disponible_max: linea.stock_disponible } : d
+        ))
+      }));
+      return { numeroLinea: indiceExistente + 1, cantidadTotal, consolidada: true };
+    }
+
+    const indiceVacia = detallesDestinoPT.findIndex(
+      d => d.origen !== 'STOCK_PT' && !d.codigo_producto && !d.descripcion
+    );
+    const fechaCabecera = (esAlta ? nuevoPedido.fecha_compromiso : proyectoSeleccionado?.fecha_compromiso) || '';
+    const nuevaFila = {
+      id: indiceVacia >= 0 ? detallesDestinoPT[indiceVacia].id : Date.now(),
+      codigo_producto: linea.codigo_sku,
+      descripcion: linea.nombre,
+      tipo: 'pieza',
+      cantidad_solicitada: linea.cantidad,
+      unidad: linea.unidad_medida,
+      prioridad: 'MEDIA',
+      fecha_compromiso: fechaCabecera,
+      requisitos_especificos: '',
+      observaciones: '',
+      origen: 'STOCK_PT',
+      id_articulo: linea.id_articulo,
+      disponible_max: linea.stock_disponible
+    };
+    if (indiceVacia >= 0) {
+      actualizar(prev => ({
+        ...prev,
+        detalles: (prev.detalles || []).map((d, i) => (i === indiceVacia ? nuevaFila : d))
+      }));
+      return { numeroLinea: indiceVacia + 1, cantidadTotal: linea.cantidad, consolidada: false };
+    }
+    actualizar(prev => ({ ...prev, detalles: [...(prev.detalles || []), nuevaFila] }));
+    return { numeroLinea: detallesDestinoPT.length + 1, cantidadTotal: linea.cantidad, consolidada: false };
+  };
+
   const handleCrearNuevoPedido = async (e) => {
     e.preventDefault();
     setMensaje({ tipo: '', texto: '' });
@@ -522,7 +577,8 @@ export default function ProyectosView() {
         prioridad: d.prioridad || 'MEDIA',
         fecha_compromiso: d.fecha_compromiso ? d.fecha_compromiso : (nuevoPedido.fecha_compromiso || null),
         requisitos_especificos: d.requisitos_especificos ? d.requisitos_especificos.trim() : null,
-        observaciones: d.observaciones ? d.observaciones.trim() : null
+        observaciones: d.observaciones ? d.observaciones.trim() : null,
+        ...(d.origen === 'STOCK_PT' ? { origen: 'STOCK_PT', id_articulo: d.id_articulo } : {})
       }))
     };
 
@@ -545,6 +601,8 @@ export default function ProyectosView() {
             .join(' | ');
         } else if (typeof error.response.data.detail === 'string') {
           msgError = error.response.data.detail;
+        } else {
+          msgError = mensajeStockInsuficiente(error.response.data.detail) || msgError;
         }
       }
       setMensaje({ tipo: 'error', texto: `❌ ${msgError}` });
@@ -581,7 +639,8 @@ export default function ProyectosView() {
         prioridad: d.prioridad || 'MEDIA',
         fecha_compromiso: fechaDetalle,
         requisitos_especificos: d.requisitos_especificos ? d.requisitos_especificos.trim() : null,
-        observaciones: d.observaciones ? d.observaciones.trim() : null
+        observaciones: d.observaciones ? d.observaciones.trim() : null,
+        ...(d.origen === 'STOCK_PT' ? { origen: 'STOCK_PT', id_articulo: d.id_articulo } : {})
       };
     });
 
@@ -624,6 +683,8 @@ export default function ProyectosView() {
             .join(' | ');
         } else if (typeof error.response.data.detail === 'string') {
           msgError = error.response.data.detail;
+        } else {
+          msgError = mensajeStockInsuficiente(error.response.data.detail) || msgError;
         }
       }
       setMensaje({ tipo: 'error', texto: `❌ ${msgError}` });
@@ -642,7 +703,7 @@ export default function ProyectosView() {
     } catch (error) {
       const msgError = typeof error.response?.data?.detail === 'string'
         ? error.response.data.detail
-        : 'Error al confirmar el pedido comercial.';
+        : (mensajeStockInsuficiente(error.response?.data?.detail) || 'Error al confirmar el pedido comercial.');
       setMensaje({ tipo: 'error', texto: `❌ ${msgError}` });
     } finally {
       setLoading(false);
@@ -1561,13 +1622,22 @@ export default function ProyectosView() {
                   <h4 className="font-bold text-slate-800 flex items-center gap-1.5 text-xs">
                     <span>📦</span> Estructuración de PEDIDO_DETALLE (Fechas de Entrega Parcial por Ítem)
                   </h4>
-                  <button
-                    type="button"
-                    onClick={handleAgregarFilaDetalle}
-                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded text-[11px] flex items-center gap-1 shadow-sm transition cursor-pointer"
-                  >
-                    ➕ Agregar Ítem a PEDIDO_DETALLE
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleAgregarFilaDetalle}
+                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded text-[11px] flex items-center gap-1 shadow-sm transition cursor-pointer"
+                    >
+                      ➕ Agregar Ítem a PEDIDO_DETALLE
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCatalogoPT({ abierto: true, destino: 'alta' })}
+                      className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded text-[11px] flex items-center gap-1 shadow-sm transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                    >
+                      <span aria-hidden="true">📦</span> Cargar desde Stock PT
+                    </button>
+                  </div>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -1575,6 +1645,7 @@ export default function ProyectosView() {
                     <thead className="bg-slate-100 text-slate-700 font-bold border-b">
                       <tr>
                         <th className="p-2.5 w-8 text-center">#</th>
+                        <th className="p-2.5 w-24">Origen</th>
                         <th className="p-2.5 w-24">Código Prod.</th>
                         <th className="p-2.5">Descripción del Elemento / Pieza / Servicio *</th>
                         <th className="p-2.5 w-24">Tipo *</th>
@@ -1591,12 +1662,18 @@ export default function ProyectosView() {
                         <tr key={det.id} className="hover:bg-slate-50">
                           <td className="p-2 text-center font-bold text-slate-400">{index + 1}</td>
                           <td className="p-2">
+                            <span className={`inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-extrabold uppercase ${det.origen === 'STOCK_PT' ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-purple-100 text-purple-800 border-purple-300'}`}>
+                              {det.origen === 'STOCK_PT' ? 'STOCK PT' : 'SOBRE PLANO'}
+                            </span>
+                          </td>
+                          <td className="p-2">
                             <input
                               type="text"
                               placeholder="PROD-01"
                               value={det.codigo_producto}
+                              readOnly={det.origen === 'STOCK_PT'}
                               onChange={(e) => handleCambioDetalle(det.id, 'codigo_producto', e.target.value)}
-                              className="w-full p-1.5 border border-slate-300 rounded font-mono font-bold text-blue-700 focus:outline-none"
+                              className={`w-full p-1.5 border border-slate-300 rounded font-mono font-bold focus:outline-none ${det.origen === 'STOCK_PT' ? 'bg-slate-100 text-slate-700 cursor-not-allowed' : 'text-blue-700'}`}
                             />
                           </td>
                           <td className="p-2">
@@ -1605,8 +1682,9 @@ export default function ProyectosView() {
                               required
                               placeholder="Brida Forjada 12 ANSI / Serv. Metrología"
                               value={det.descripcion}
+                              readOnly={det.origen === 'STOCK_PT'}
                               onChange={(e) => handleCambioDetalle(det.id, 'descripcion', e.target.value)}
-                              className="w-full p-1.5 border border-slate-300 rounded font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              className={`w-full p-1.5 border border-slate-300 rounded font-medium focus:outline-none focus:ring-1 focus:ring-blue-500 ${det.origen === 'STOCK_PT' ? 'bg-slate-100 text-slate-700 cursor-not-allowed' : 'text-slate-800'}`}
                             />
                           </td>
                           <td className="p-2">
@@ -1626,6 +1704,7 @@ export default function ProyectosView() {
                             <input
                               type="number"
                               min="1"
+                              max={det.origen === 'STOCK_PT' ? det.disponible_max : undefined}
                               required
                               value={det.cantidad_solicitada === '' ? '' : det.cantidad_solicitada}
                               onFocus={(e) => e.target.select()}
@@ -1640,8 +1719,9 @@ export default function ProyectosView() {
                             <input
                               type="text"
                               value={det.unidad}
+                              readOnly={det.origen === 'STOCK_PT'}
                               onChange={(e) => handleCambioDetalle(det.id, 'unidad', e.target.value)}
-                              className="w-full p-1.5 border border-slate-300 rounded text-center text-slate-700 uppercase"
+                              className={`w-full p-1.5 border border-slate-300 rounded text-center text-slate-700 uppercase ${det.origen === 'STOCK_PT' ? 'bg-slate-100 cursor-not-allowed' : ''}`}
                             />
                           </td>
                           <td className="p-2">
@@ -1883,6 +1963,9 @@ export default function ProyectosView() {
                                 </td>
                                 <td className="px-2 py-1.5 font-mono font-bold text-blue-800">
                                   {detalle.codigo_producto || 'Sin código'}
+                                  <span className={`ml-1 inline-flex items-center rounded border px-2 py-0.5 font-sans text-[11px] font-extrabold uppercase ${detalle.origen === 'STOCK_PT' ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-purple-100 text-purple-800 border-purple-300'}`}>
+                                    {detalle.origen === 'STOCK_PT' ? 'STOCK PT' : 'SOBRE PLANO'}
+                                  </span>
                                 </td>
                                 <td className="max-w-sm px-2 py-1.5 font-semibold text-slate-800">
                                   {detalle.descripcion || 'Sin descripción'}
@@ -2015,13 +2098,22 @@ export default function ProyectosView() {
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <h4 className="font-bold text-slate-700 text-xs">📦 Detalle de Elementos / Piezas y Programación Parcial</h4>
-                  <button
-                    type="button"
-                    onClick={handleAgregarFilaEdicion}
-                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded text-[11px] shadow-sm transition cursor-pointer"
-                  >
-                    ➕ Agregar Ítem a PEDIDO_DETALLE
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleAgregarFilaEdicion}
+                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded text-[11px] shadow-sm transition cursor-pointer"
+                    >
+                      ➕ Agregar Ítem a PEDIDO_DETALLE
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCatalogoPT({ abierto: true, destino: 'edicion' })}
+                      className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded text-[11px] shadow-sm transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                    >
+                      <span aria-hidden="true">📦</span> Cargar desde Stock PT
+                    </button>
+                  </div>
                 </div>
 
                 <div className="border border-slate-200 rounded-lg overflow-hidden text-xs bg-white">
@@ -2029,6 +2121,7 @@ export default function ProyectosView() {
                     <thead className="bg-slate-100 font-bold text-slate-700 border-b">
                       <tr>
                         <th className="p-2 w-8 text-center">#</th>
+                        <th className="p-2 w-24">Origen</th>
                         <th className="p-2 w-24">Código Prod.</th>
                         <th className="p-2">Descripción del Elemento / Pieza *</th>
                         <th className="p-2 w-24">Tipo</th>
@@ -2045,11 +2138,17 @@ export default function ProyectosView() {
                         <tr key={det.id || idx} className="hover:bg-slate-50">
                           <td className="p-2 text-center font-bold text-slate-400">{idx + 1}</td>
                           <td className="p-2">
+                            <span className={`inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-extrabold uppercase ${det.origen === 'STOCK_PT' ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-purple-100 text-purple-800 border-purple-300'}`}>
+                              {det.origen === 'STOCK_PT' ? 'STOCK PT' : 'SOBRE PLANO'}
+                            </span>
+                          </td>
+                          <td className="p-2">
                             <input
                               type="text"
                               value={det.codigo_producto || ''}
+                              readOnly={det.origen === 'STOCK_PT'}
                               onChange={(e) => handleCambioDetalleEdicion(idx, 'codigo_producto', e.target.value)}
-                              className="w-full p-1 border rounded font-mono font-bold text-blue-700"
+                              className={`w-full p-1 border rounded font-mono font-bold ${det.origen === 'STOCK_PT' ? 'bg-slate-100 text-slate-700 cursor-not-allowed' : 'text-blue-700'}`}
                             />
                           </td>
                           <td className="p-2">
@@ -2057,8 +2156,9 @@ export default function ProyectosView() {
                               type="text"
                               required
                               value={det.descripcion || ''}
+                              readOnly={det.origen === 'STOCK_PT'}
                               onChange={(e) => handleCambioDetalleEdicion(idx, 'descripcion', e.target.value)}
-                              className="w-full p-1 border rounded font-medium text-slate-800"
+                              className={`w-full p-1 border rounded font-medium ${det.origen === 'STOCK_PT' ? 'bg-slate-100 text-slate-700 cursor-not-allowed' : 'text-slate-800'}`}
                             />
                           </td>
                           <td className="p-2">
@@ -2078,6 +2178,7 @@ export default function ProyectosView() {
                             <input
                               type="number"
                               min="1"
+                              max={det.origen === 'STOCK_PT' ? det.disponible_max : undefined}
                               required
                               value={det.cantidad_solicitada === '' ? '' : det.cantidad_solicitada}
                               onFocus={(e) => e.target.select()}
@@ -2092,8 +2193,9 @@ export default function ProyectosView() {
                             <input
                               type="text"
                               value={det.unidad || 'UND'}
+                              readOnly={det.origen === 'STOCK_PT'}
                               onChange={(e) => handleCambioDetalleEdicion(idx, 'unidad', e.target.value)}
-                              className="w-full p-1 border rounded text-center uppercase"
+                              className={`w-full p-1 border rounded text-center uppercase ${det.origen === 'STOCK_PT' ? 'bg-slate-100 text-slate-700 cursor-not-allowed' : ''}`}
                             />
                           </td>
                           <td className="p-2">
@@ -2543,6 +2645,17 @@ export default function ProyectosView() {
           }}
         />
       )}
+
+      {/* CATÁLOGO DE STOCK PT (portal; compartido por alta y edición de pedido) */}
+      <ModalCatalogoStockPT
+        abierto={catalogoPT.abierto}
+        modo="pedido"
+        lineasAgregadas={detallesDestinoPT
+          .filter(d => d.origen === 'STOCK_PT')
+          .map(d => ({ id_articulo: d.id_articulo, sku: d.codigo_producto, ubicacion: d.ubicacion, cantidad: d.cantidad_solicitada }))}
+        onAgregar={handleAgregarDesdeStockPT}
+        onCerrar={() => setCatalogoPT(prev => ({ ...prev, abierto: false }))}
+      />
 
       {/* MODAL HISTORIAL Y TRAZABILIDAD */}
       <HistorialTimelineModal
