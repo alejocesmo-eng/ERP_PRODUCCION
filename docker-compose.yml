@@ -7,9 +7,9 @@ services:
     container_name: sgi_postgres_db
     restart: always
     environment:
-      POSTGRES_DB: sgi_db
-      POSTGRES_USER: sgi_admin
-      POSTGRES_PASSWORD: TuPasswordSeguraLocal123
+      POSTGRES_DB: "${POSTGRES_DB:?falta POSTGRES_DB en el .env de la raiz (ver .env.example)}"
+      POSTGRES_USER: "${POSTGRES_USER:?falta POSTGRES_USER en el .env de la raiz (ver .env.example)}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en el .env de la raiz (ver .env.example)}"
     ports:
       - "5432:5432"
     volumes:
@@ -23,7 +23,9 @@ services:
     container_name: sgi_backend_api
     restart: always
     environment:
-      DATABASE_URL: postgresql://sgi_admin:TuPasswordSeguraLocal123@db:5432/sgi_db
+      DATABASE_URL: "postgresql://${POSTGRES_USER:?falta POSTGRES_USER en el .env de la raiz (ver .env.example)}:${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en el .env de la raiz (ver .env.example)}@db:5432/${POSTGRES_DB:?falta POSTGRES_DB en el .env de la raiz (ver .env.example)}"
+      SECRET_KEY: "${SECRET_KEY:?falta SECRET_KEY en el .env de la raiz (ver .env.example)}"
+      JWT_SECRET_KEY_PLANOS: "${JWT_SECRET_KEY_PLANOS:?falta JWT_SECRET_KEY_PLANOS en el .env de la raiz (ver .env.example)}"
     ports:
       - "8000:8000"
     volumes:

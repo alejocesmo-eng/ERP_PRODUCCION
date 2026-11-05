@@ -18,11 +18,3 @@ def get_db():
         yield db
     finally:
         db.close()
-        # app/db/database.py
-import os
-
-# Ajusta "tu_contrasena_real" por la clave real de tu PostgreSQL local
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", 
-    "postgresql://postgres:tu_contrasena_real@localhost:5432/sgi_db"
-)
