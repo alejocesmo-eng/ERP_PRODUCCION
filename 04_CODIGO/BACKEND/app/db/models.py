@@ -17,6 +17,8 @@ from sqlalchemy import (
     Numeric,
     JSON,
     CheckConstraint,
+    UniqueConstraint,
+    Index,
 )
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
@@ -222,6 +224,13 @@ class PosicionCotizacion(Base):
     Detalle de ítem cotizado.
     """
     __tablename__ = "posiciones_cotizacion"
+    __table_args__ = (
+        # Mismo nombre y expresión que 13_MIGRACION_STOCK_PT_PICKING.sql
+        CheckConstraint(
+            "origen IN ('PLANO','STOCK_PT') AND (origen = 'PLANO' OR id_articulo IS NOT NULL)",
+            name="ck_posiciones_cotizacion_origen",
+        ),
+    )
 
     id_posicion = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     id_cotizacion = Column(UUID(as_uuid=True), ForeignKey("cotizaciones.id_cotizacion", ondelete="CASCADE"), nullable=False)
@@ -230,6 +239,8 @@ class PosicionCotizacion(Base):
     cantidad = Column(Integer, nullable=False, default=1)
     precio_unitario = Column(Numeric(14, 4), nullable=False, default=0)
     vinculo_plano_catalogo = Column(String(50), nullable=True)  # Referencia al código de plano vigente
+    origen = Column(String(20), nullable=False, default="PLANO", server_default="PLANO")  # PLANO | STOCK_PT (OT-2026-008)
+    id_articulo = Column(UUID(as_uuid=True), ForeignKey("articulos_inventario.id_articulo"), nullable=True)
 
     id = synonym("id_posicion")
     cotizacion = relationship("Cotizacion", back_populates="posiciones")
@@ -377,6 +388,13 @@ class PedidoDetalle(Base):
     servicio, trabajo, producto o elemento solicitado.
     """
     __tablename__ = "pedido_detalles"
+    __table_args__ = (
+        # Mismo nombre y expresión que 13_MIGRACION_STOCK_PT_PICKING.sql
+        CheckConstraint(
+            "origen IN ('PLANO','STOCK_PT') AND (origen = 'PLANO' OR id_articulo IS NOT NULL)",
+            name="ck_pedido_detalles_origen",
+        ),
+    )
 
     detalle_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     pedido_id = Column(UUID(as_uuid=True), ForeignKey("proyectos.id_proyecto", ondelete="CASCADE"), nullable=False)
@@ -390,6 +408,8 @@ class PedidoDetalle(Base):
     fecha_requerida = Column(Date, nullable=True)
     prioridad = Column(String(20), default="MEDIA")
     observaciones = Column(Text, nullable=True)
+    origen = Column(String(20), nullable=False, default="PLANO", server_default="PLANO")  # PLANO | STOCK_PT (OT-2026-008)
+    id_articulo = Column(UUID(as_uuid=True), ForeignKey("articulos_inventario.id_articulo"), nullable=True, index=True)
     creado_en = Column(DateTime(timezone=True), default=func.now())
 
     # Homologación con identificadores
@@ -418,6 +438,54 @@ class OTDetalle(Base):
 
     pedido_detalle = relationship("PedidoDetalle", back_populates="ot_detalles")
     plano_ot = relationship("Plano", back_populates="ot_detalles")
+
+
+class OrdenPicking(Base):
+    """
+    OT-2026-008: orden de picking generada al confirmar un pedido con líneas de stock PT.
+    Una sola por pedido (UNIQUE id_proyecto) para garantizar idempotencia.
+    """
+    __tablename__ = "ordenes_picking"
+    # La migración 13 declara estas restricciones sin nombre; se usan los que asigna PostgreSQL.
+    __table_args__ = (
+        CheckConstraint(
+            "estado IN ('PENDIENTE','EN_PICKING','DESPACHADO','CANCELADO')",
+            name="ordenes_picking_estado_check",
+        ),
+    )
+
+    id_picking = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    codigo_picking = Column(String(50), unique=True, nullable=False)
+    id_proyecto = Column(UUID(as_uuid=True), ForeignKey("proyectos.id_proyecto", ondelete="RESTRICT"), unique=True, nullable=False)
+    estado = Column(String(20), nullable=False, default="PENDIENTE", server_default="PENDIENTE", index=True)
+    creado_por = Column(String(150), nullable=True)
+    creado_en = Column(DateTime(timezone=True), default=func.now(), server_default=func.now())
+    actualizado_en = Column(DateTime(timezone=True), default=func.now(), server_default=func.now())
+
+    id = synonym("id_picking")
+    detalles = relationship("OrdenPickingDetalle", back_populates="picking", cascade="all, delete-orphan")
+
+
+class OrdenPickingDetalle(Base):
+    __tablename__ = "ordenes_picking_detalle"
+    # La migración 13 declara el CHECK y el UNIQUE sin nombre; se usan los que asigna PostgreSQL.
+    __table_args__ = (
+        CheckConstraint("cantidad > 0", name="ordenes_picking_detalle_cantidad_check"),
+        UniqueConstraint(
+            "id_picking", "detalle_pedido_id",
+            name="ordenes_picking_detalle_id_picking_detalle_pedido_id_key",
+        ),
+        Index("ix_picking_detalle_articulo", "id_articulo"),
+    )
+
+    id_picking_detalle = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id_picking = Column(UUID(as_uuid=True), ForeignKey("ordenes_picking.id_picking", ondelete="CASCADE"), nullable=False)
+    detalle_pedido_id = Column(UUID(as_uuid=True), ForeignKey("pedido_detalles.detalle_id", ondelete="RESTRICT"), nullable=False)
+    id_articulo = Column(UUID(as_uuid=True), ForeignKey("articulos_inventario.id_articulo", ondelete="RESTRICT"), nullable=False)
+    cantidad = Column(Numeric(14, 3), nullable=False)
+
+    id = synonym("id_picking_detalle")
+    picking = relationship("OrdenPicking", back_populates="detalles")
 
 
 class Plano(Base):
