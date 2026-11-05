@@ -103,6 +103,14 @@ class Permiso(Base):
     descripcion = Column(Text, nullable=True)
 
 
+class RolPermiso(Base):
+    """Asignación de permisos a roles (05_BASE_DATOS/15_MIGRACION_ROL_PERMISOS.sql)."""
+    __tablename__ = "rol_permisos"
+
+    id_rol = Column(String(50), ForeignKey("roles.id_rol"), primary_key=True)
+    id_permiso = Column(String(100), ForeignKey("permisos.id_permiso"), primary_key=True)
+
+
 class Usuario(Base):
     __tablename__ = "usuarios"
 
@@ -277,7 +285,7 @@ class EstructuraFinanciera(Base):
         ),
         nullable=False,
     )
-    codigo = Column(String(50), unique=True, nullable=False, index=True)
+    codigo = Column(String(50), unique=True, nullable=False)
     nombre = Column(String(150), nullable=False)
     descripcion = Column(Text, nullable=True)
     cuenta_padre = Column(String(50), ForeignKey("estructura_financiera.codigo"), nullable=True)
