@@ -500,7 +500,7 @@ class Plano(Base):
 
     codigo_op = Column(String(50), nullable=False, default="4007256")
     codigo_plano = Column(String(50), nullable=False)
-    version = Column(String(10), nullable=False, default="V-01")
+    version = Column("revision", String(10), nullable=False, default="V-01")
     dibujante_asignado = Column(String(150), default="Carlos Ruiz")
     unidad_planta = Column(String(100), default="Mecanizados")
     estado_diseno = Column(String(50), default="PLANIFICADA")
