@@ -1,6 +1,7 @@
 import os
 import re
 import shutil
+import unicodedata
 from typing import List, Optional
 from uuid import UUID, uuid4
 from datetime import datetime, date, timedelta, timezone
@@ -24,6 +25,8 @@ SECRET_KEY_PLANOS = os.getenv("JWT_SECRET_KEY_PLANOS")
 if not SECRET_KEY_PLANOS:
     raise RuntimeError("Falta la variable de entorno obligatoria JWT_SECRET_KEY_PLANOS. Cree 04_CODIGO/BACKEND/.env a partir de .env.example.")
 ALGORITHM = "HS256"
+
+ESTADOS_ENTREGA_DISENO = {"LISTA_PARA_LIBERAR", "LIBERADA"}
 
 # tipo -> (columna destino, extensiones admitidas, extensión estandarizada)
 FORMATOS_CAD = {
@@ -64,6 +67,51 @@ def _guardar_archivo_cad(db: Session, plano: Plano, archivo: UploadFile, tipo: s
     return plano
 
 
+def validar_entrega_diseno(db: Session, plano: Plano) -> None:
+    """RN-OP-004: el dibujante solo entrega la OP con plano PDF y BOM radicada."""
+    if not plano.archivo_pdf_url or not plano.archivo_pdf_url.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="RN-OP-004: 🔒 Requiere plano PDF y solicitud de material radicada (falta el plano PDF).",
+        )
+    estados_bom = [
+        item.estado_abastecimiento
+        for item in db.query(BOMListaMateriales).filter(BOMListaMateriales.plano_id == plano.id_plano).all()
+    ]
+    if not estados_bom or "SIN_SOLICITAR" in estados_bom:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="RN-OP-004: 🔒 Requiere plano PDF y solicitud de material radicada (BOM sin solicitar).",
+        )
+
+
+def _como_utc(valor: datetime) -> datetime:
+    return valor.replace(tzinfo=timezone.utc) if valor.tzinfo is None else valor
+
+
+def _detener_cronometro_diseno(plano: Plano, ahora: datetime) -> None:
+    """Cierra el tramo activo: tiempo trabajado = fecha_fin_diseno - fecha_inicio_diseno."""
+    plano.fecha_fin_diseno = ahora
+    if plano.fecha_inicio_diseno:
+        plano.tiempo_total_diseno_minutos = int((ahora - _como_utc(plano.fecha_inicio_diseno)).total_seconds() / 60)
+
+
+def _nombre_base_dibujante(nombre: Optional[str]) -> str:
+    """Normaliza el dibujante: "Ing. Carlós Ruiz - Diseñador" equivale a "carlos ruiz"."""
+    base = unicodedata.normalize("NFD", (nombre or "").split(" - ")[0])
+    base = "".join(c for c in base if unicodedata.category(c) != "Mn")
+    return re.sub(r"^(ing|arq|tec|sr|sra)\.?\s+", "", base.strip(), flags=re.IGNORECASE).strip().lower()
+
+
+def _reanudar_cronometro_diseno(plano: Plano, ahora: datetime) -> None:
+    """Al reanudar, desplaza el inicio efectivo por la duración de la pausa para no contarla."""
+    if plano.fecha_inicio_diseno and plano.fecha_fin_diseno:
+        plano.fecha_inicio_diseno = _como_utc(plano.fecha_inicio_diseno) + (ahora - _como_utc(plano.fecha_fin_diseno))
+    else:
+        plano.fecha_inicio_diseno = ahora
+    plano.fecha_fin_diseno = None
+
+
 # =============================================================================
 # SCHEMAS PYDANTIC
 # =============================================================================
@@ -92,6 +140,10 @@ class PlanoResponse(BaseModel):
     archivo_pdf_url: Optional[str] = None
     archivo_step_url: Optional[str] = None
     archivo_dxf_url: Optional[str] = None
+    fecha_entrega_produccion: Optional[date] = None
+    fecha_inicio_diseno: Optional[datetime] = None
+    fecha_fin_diseno: Optional[datetime] = None
+    tiempo_total_diseno_minutos: Optional[int] = None
     creado_en: datetime
     bom_items: List["BOMItemResponse"] = Field(default_factory=list)
 
@@ -222,6 +274,9 @@ def crear_planos(plano_in: PlanoWriteRequest, db: Session = Depends(get_db)):
                     estado_abastecimiento="SIN_SOLICITAR",
                     **datos_bom,
                 ))
+                db.flush()
+            if plano.estado_diseno in ESTADOS_ENTREGA_DISENO:
+                validar_entrega_diseno(db, plano)
             if plano.estado_diseno == "LIBERADA":
                 validar_gate_calidad(db, plano)
             planos_creados.append(plano)
@@ -257,6 +312,13 @@ def actualizar_plano(
         "dibujante_asignado",
         "unidad_planta",
     }
+    estado_anterior = plano.estado_diseno
+    estado_nuevo = plano_in.estado_diseno
+    if estado_nuevo and estado_nuevo != estado_anterior:
+        if estado_nuevo == "PAUSADA" and estado_anterior != "EN_DISENO":
+            raise HTTPException(status_code=400, detail="Solo se puede pausar una orden EN_DISENO.")
+        if estado_anterior == "PAUSADA" and estado_nuevo not in {"EN_DISENO", "LISTA_PARA_LIBERAR"}:
+            raise HTTPException(status_code=400, detail="Una orden PAUSADA solo puede reanudarse o entregarse.")
     datos_actualizacion = plano_in.dict(exclude_unset=True)
     for campo in campos_editables:
         if campo in datos_actualizacion:
@@ -289,8 +351,29 @@ def actualizar_plano(
                 ))
     try:
         db.flush()
+        if plano.estado_diseno != estado_anterior and plano.estado_diseno in ESTADOS_ENTREGA_DISENO:
+            validar_entrega_diseno(db, plano)
         if plano.estado_diseno == "LIBERADA":
             validar_gate_calidad(db, plano)
+
+        # Cronómetro de diseño: una sola OP EN_DISENO por dibujante; iniciar otra pausa la anterior
+        ahora = datetime.now(timezone.utc)
+        if plano.estado_diseno == "EN_DISENO" and estado_anterior != "EN_DISENO":
+            dibujante = _nombre_base_dibujante(plano.dibujante_asignado)
+            if dibujante:
+                ordenes_activas = db.query(Plano).filter(
+                    Plano.estado_diseno == "EN_DISENO",
+                    Plano.id_plano != plano.id_plano,
+                ).all()
+                for orden_activa in ordenes_activas:
+                    if _nombre_base_dibujante(orden_activa.dibujante_asignado) != dibujante:
+                        continue
+                    _detener_cronometro_diseno(orden_activa, ahora)
+                    orden_activa.estado_diseno = "PAUSADA"
+            if estado_anterior == "PAUSADA" or not plano.fecha_inicio_diseno:
+                _reanudar_cronometro_diseno(plano, ahora)
+        if estado_anterior == "EN_DISENO" and plano.estado_diseno in ESTADOS_ENTREGA_DISENO | {"PAUSADA"}:
+            _detener_cronometro_diseno(plano, ahora)
         db.commit()
         db.refresh(plano)
     except SQLAlchemyError as error:
@@ -364,20 +447,7 @@ def subir_pdf_plano(id_plano: UUID, archivo: UploadFile = File(...), db: Session
     if not plano:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plano no encontrado.")
 
-    if not archivo.filename.lower().endswith('.pdf'):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Formato inválido. Solo PDF.")
-
-    nombre_archivo = f"{plano.codigo_op}_{plano.codigo_plano}_{plano.version}.pdf".replace("/", "_")
-    ruta_fisica = os.path.join(DIRECTORIO_STATIC_PLANOS, nombre_archivo)
-
-    with open(ruta_fisica, "wb") as buffer:
-        shutil.copyfileobj(archivo.file, buffer)
-
-    plano.archivo_pdf_url = f"/static/planos/{nombre_archivo}"
-    db.commit()
-    db.refresh(plano)
-
-    return plano
+    return _guardar_archivo_cad(db, plano, archivo, "pdf")
 
 @router.post("/upload-cad/{id_plano}", response_model=PlanoResponse)
 def subir_cad_plano(id_plano: UUID, archivo: UploadFile = File(...), db: Session = Depends(get_db)):
