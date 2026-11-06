@@ -13,8 +13,10 @@ from sqlalchemy.exc import SQLAlchemyError
 import jwt
 
 from app.db.database import get_db
-from app.db.models import BOMListaMateriales, Plano, Proyecto
+from app.db.models import BOMListaMateriales, EstadoPlanoEnum, Plano, Proyecto
+from app.api.deps import requerir_roles
 from app.api.v1.quality_gate import ESTADOS_BOM_LIBERABLES, validar_gate_calidad
+from app.services.auditoria import agregar_evento_trazabilidad
 
 router = APIRouter()
 
@@ -145,6 +147,10 @@ class PlanoResponse(BaseModel):
     fecha_fin_diseno: Optional[datetime] = None
     tiempo_total_diseno_minutos: Optional[int] = None
     observaciones_tecnicas: Optional[str] = None
+    estado: Optional[EstadoPlanoEnum] = None
+    aprobado_por: Optional[str] = None
+    fecha_aprobacion: Optional[datetime] = None
+    fecha_ultima_revision: Optional[datetime] = None
     creado_en: datetime
     bom_items: List["BOMItemResponse"] = Field(default_factory=list)
 
@@ -382,6 +388,40 @@ def actualizar_plano(
     except SQLAlchemyError as error:
         db.rollback()
         raise HTTPException(status_code=500, detail="No se pudo actualizar el plano.") from error
+    return plano
+
+
+@router.post("/{id_plano}/aprobar", response_model=PlanoResponse)
+def aprobar_plano(
+    id_plano: UUID,
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(requerir_roles(["DISENO"])),
+):
+    """Aprobación de Diseño: condición 3 de la regla de liberación de la OP."""
+    plano = db.query(Plano).filter(Plano.id_plano == id_plano).first()
+    if not plano:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plano no encontrado.")
+
+    estado_anterior = plano.estado.value if hasattr(plano.estado, "value") else plano.estado
+    plano.estado = EstadoPlanoEnum.APROBADO
+    plano.aprobado_por = usuario_actual["email"]
+    plano.fecha_aprobacion = datetime.now(timezone.utc)
+    try:
+        agregar_evento_trazabilidad(
+            db,
+            tipo_entidad="PLANO",
+            identificador=plano.codigo_plano,
+            accion="PLANO_APROBADO",
+            usuario=usuario_actual["email"],
+            area=usuario_actual["rol"],
+            estado_anterior=str(estado_anterior) if estado_anterior else None,
+            estado_nuevo=EstadoPlanoEnum.APROBADO.value,
+        )
+        db.commit()
+        db.refresh(plano)
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="No se pudo aprobar el plano.") from error
     return plano
 
 

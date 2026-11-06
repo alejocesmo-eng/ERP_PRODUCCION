@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 from fastapi import HTTPException
@@ -14,6 +15,7 @@ from app.db.models import (
     Cliente,
     EntregaMaterialOP,
     EstadoOPEnum,
+    EstadoPlanoEnum,
     FichaMetrologia,
     HistorialAccionesDocumento,
     InstrumentoMedicion,
@@ -22,9 +24,12 @@ from app.db.models import (
     OTDetalle,
     OrdenProduccion,
     PedidoDetalle,
+    Permiso,
     Plano,
     Proyecto,
     RegistroTiemposProduccion,
+    Rol,
+    RolPermiso,
     ServicioTerceroOP,
     SolicitudCompra,
 )
@@ -63,9 +68,19 @@ def db():
         FichaMetrologia.__table__,
         MovimientoKardexSAP.__table__,
         HistorialAccionesDocumento.__table__,
+        Rol.__table__,
+        Permiso.__table__,
+        RolPermiso.__table__,
     ]
     Base.metadata.create_all(engine, tables=tablas)
     session = sessionmaker(bind=engine)()
+    # Asignación de la migración 16: DISENO libera OP
+    session.add_all([
+        Rol(id_rol="DISENO", nombre_rol="Diseño"),
+        Permiso(id_permiso="PERM_OP_LIBERAR", modulo="DISENO"),
+        RolPermiso(id_rol="DISENO", id_permiso="PERM_OP_LIBERAR"),
+    ])
+    session.commit()
     try:
         yield session
     finally:
@@ -74,7 +89,7 @@ def db():
         engine.dispose()
 
 
-def crear_expediente(db, con_pdf=True, estado_bom="EN_ALMACEN"):
+def crear_expediente(db, con_pdf=True, estado_bom="EN_ALMACEN", aprobado=False):
     id_proyecto = uuid.uuid4()
     id_plano = uuid.uuid4()
     id_op = uuid.uuid4()
@@ -98,6 +113,10 @@ def crear_expediente(db, con_pdf=True, estado_bom="EN_ALMACEN"):
         unidad_planta="Mecanizados",
         archivo_url="/static/planos/PLN-88-A.pdf" if con_pdf else None,
     )
+    if aprobado:
+        plano.estado = EstadoPlanoEnum.APROBADO
+        plano.aprobado_por = "lider.diseno@hd.com"
+        plano.fecha_aprobacion = datetime.now(timezone.utc)
     op = OrdenProduccion(
         id_op=id_op,
         id_proyecto=id_proyecto,
@@ -181,7 +200,7 @@ def test_liberacion_bloquea_op_si_falla_quality_gate(db, con_pdf, estado_bom):
 
 
 def test_liberacion_actualiza_estado_despues_de_validar_gate(db):
-    crear_expediente(db)
+    crear_expediente(db, aprobado=True)
 
     resultado = liberar_orden_produccion(
         "4001234",

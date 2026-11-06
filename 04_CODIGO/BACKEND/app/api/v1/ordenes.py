@@ -23,13 +23,23 @@ from app.db.models import (
 )
 from app.db.models_calidad import InspeccionCalidad
 from app.db.models_produccion import OperacionOT, RegistroTiempoOperario, SubLoteOperacion
-from app.api.deps import obtener_usuario_actual, requerir_roles
-from app.api.v1.quality_gate import validar_gate_calidad
+from app.api.deps import obtener_usuario_actual, requerir_roles, rol_tiene_permiso
+from app.api.v1.quality_gate import (
+    planos_de_op,
+    planos_por_revisar,
+    validar_gate_calidad,
+    validar_regla_liberacion,
+)
 from app.services.auditoria import agregar_evento_trazabilidad
 
 router = APIRouter()
 
 ROLES_EXPEDIENTE = ["ADMIN", "VENTAS", "DISENO", "ALMACEN", "PRODUCCION", "CALIDAD"]
+ROLES_ACTUALIZAR_OP = ["ADMIN", "PRODUCCION"]
+PERMISO_LIBERAR_OP = "PERM_OP_LIBERAR"
+PERMISO_ADMIN_TOTAL = "PERM_ADMIN_ALL"
+LONGITUD_MINIMA_MOTIVO = 10
+ESTADOS_OP_LIBERADOS = {EstadoOPEnum.LIBERADA, EstadoOPEnum.LIBERADA_PRODUCCION}
 
 
 def _valor_enum(valor):
@@ -333,23 +343,60 @@ def obtener_expediente_op(
     }
 
 
+def autorizar_liberacion(db: Session, usuario_actual: dict, planos: List[Plano], motivo: Optional[str]) -> Optional[str]:
+    """Comprobación común de las rutas que ponen una OP en LIBERADA.
+    PERM_OP_LIBERAR exige la regla de liberación; PERM_ADMIN_ALL la salta solo con motivo.
+    Devuelve el motivo cuando la liberación es una excepción de administrador."""
+    rol = usuario_actual.get("rol")
+    motivo_limpio = (motivo or "").strip()
+    if rol_tiene_permiso(db, rol, PERMISO_ADMIN_TOTAL) and len(motivo_limpio) >= LONGITUD_MINIMA_MOTIVO:
+        return motivo_limpio
+    if rol_tiene_permiso(db, rol, PERMISO_LIBERAR_OP):
+        validar_regla_liberacion(db, planos)
+        return None
+    if rol_tiene_permiso(db, rol, PERMISO_ADMIN_TOTAL):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"{PERMISO_ADMIN_TOTAL} solo libera la OP saltando la regla con un motivo de al menos {LONGITUD_MINIMA_MOTIVO} caracteres.",
+        )
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=f"Liberar la OP requiere el permiso {PERMISO_LIBERAR_OP}.",
+    )
+
+
+def registrar_excepcion_admin(db: Session, usuario_actual: dict, codigo_op: str, estado_anterior, estado_nuevo, motivo: str) -> None:
+    agregar_evento_trazabilidad(
+        db,
+        tipo_entidad="ORDEN_PRODUCCION",
+        identificador=codigo_op,
+        accion="OP_LIBERADA_EXCEPCION_ADMIN",
+        usuario=usuario_actual["email"],
+        area=usuario_actual["rol"],
+        estado_anterior=str(estado_anterior) if estado_anterior is not None else None,
+        estado_nuevo=str(estado_nuevo),
+        motivo=motivo,
+    )
+
+
+class LiberacionOPRequest(BaseModel):
+    motivo: Optional[str] = None
+
+
 @router.patch("/liberar/{codigo_op}")
 def liberar_orden_produccion(
     codigo_op: str,
+    datos: Optional[LiberacionOPRequest] = None,
     db: Session = Depends(get_db),
-    usuario_actual: dict = Depends(requerir_roles(["ADMIN", "DISENO"])),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     op = db.query(OrdenProduccion).filter(OrdenProduccion.codigo_op == codigo_op).first()
     if not op:
         raise HTTPException(status_code=404, detail="No se encontró la Orden de Producción indicada.")
 
-    plano = db.query(Plano).filter(Plano.id_plano == op.id_plano).first() if op.id_plano else (
-        db.query(Plano).filter(
-            Plano.id_proyecto == op.id_proyecto,
-            Plano.codigo_op == op.codigo_op,
-        ).first()
-    )
-    validar_gate_calidad(db, plano)
+    planos = planos_de_op(db, op.id_proyecto, op.codigo_op, op.id_plano)
+    motivo_excepcion = autorizar_liberacion(db, usuario_actual, planos, datos.motivo if datos else None)
+    revisar = planos_por_revisar(planos)
 
     estado_anterior = _valor_enum(op.estado)
     op.estado = EstadoOPEnum.LIBERADA
@@ -365,6 +412,8 @@ def liberar_orden_produccion(
             estado_anterior=str(estado_anterior),
             estado_nuevo=_valor_enum(op.estado),
         )
+        if motivo_excepcion:
+            registrar_excepcion_admin(db, usuario_actual, op.codigo_op, estado_anterior, _valor_enum(op.estado), motivo_excepcion)
         db.commit()
         db.refresh(op)
     except Exception as error:
@@ -377,6 +426,8 @@ def liberar_orden_produccion(
         "codigo_op": op.codigo_op,
         "estado_operativo": _valor_enum(op.estado),
         "liberada_en": _fecha_iso(op.liberada_en),
+        "revisar": bool(revisar),
+        "planos_revisar": revisar,
     }
 
 
@@ -413,6 +464,8 @@ class OrdenProduccionCreate(BaseModel):
     id_plano: Optional[UUID] = None
     cantidad_programada: Optional[int] = 1
     observaciones: Optional[str] = None
+    estado: Optional[str] = EstadoOPEnum.BORRADOR.value
+    motivo: Optional[str] = None
 
 
 class OrdenProduccionUpdate(BaseModel):
@@ -420,6 +473,7 @@ class OrdenProduccionUpdate(BaseModel):
     estado_produccion: Optional[str] = None
     porcentaje_avance: Optional[float] = None
     observaciones: Optional[str] = None
+    motivo: Optional[str] = None
 
 
 class OrdenProduccionVistaResponse(BaseModel):
@@ -453,6 +507,10 @@ class OrdenProduccionVistaResponse(BaseModel):
     
     # Productos y Piezas desglosadas en el Pedido Agrupador
     productos_componentes: List[ItemPedidoCompuesto] = []
+
+    # Marca "revisar": plano con revisión posterior a su aprobación (solo aviso)
+    revisar: bool = False
+    planos_revisar: List[str] = []
 
     class Config:
         from_attributes = True
@@ -558,7 +616,8 @@ def crear_orden_produccion(
     db: Session = Depends(get_db),
     usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
-    """PM-03: Crear y liberar nueva Orden de Producción en Planta."""
+    """PM-03: Crear una Orden de Producción. Por defecto queda en BORRADOR; si se pide un
+    estado liberado, aplica la misma comprobación de liberación que las demás rutas."""
     proj = db.query(Proyecto).filter(Proyecto.id_proyecto == op_in.id_proyecto).first()
     if not proj:
         raise HTTPException(status_code=404, detail="El proyecto/pedido comercial indicado no existe.")
@@ -569,7 +628,21 @@ def crear_orden_produccion(
         plano = db.query(Plano).filter(Plano.id_plano == op_in.id_plano).first()
     if not plano:
         plano = db.query(Plano).filter(Plano.id_proyecto == op_in.id_proyecto).first()
-    validar_gate_calidad(db, plano)
+
+    try:
+        estado_inicial = EstadoOPEnum(op_in.estado or EstadoOPEnum.BORRADOR.value)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=f"Estado de OP no válido: {op_in.estado}.") from error
+
+    # Si el estado pedido es liberado y no cumple la regla, no se crea la OP
+    planos = planos_de_op(db, proj.id_proyecto, op_in.codigo_op, plano.id_plano if plano else None)
+    motivo_excepcion = None
+    revisar = []
+    if estado_inicial in ESTADOS_OP_LIBERADOS:
+        motivo_excepcion = autorizar_liberacion(db, usuario_actual, planos, op_in.motivo)
+        revisar = planos_por_revisar(planos)
+    elif estado_inicial == EstadoOPEnum.LISTA_PARA_LIBERAR:
+        validar_gate_calidad(db, plano)
 
     # Validar si ya existe una OP con ese código
     op_existente = db.query(OrdenProduccion).filter(OrdenProduccion.codigo_op == op_in.codigo_op).first()
@@ -581,9 +654,11 @@ def crear_orden_produccion(
         id_proyecto=proj.id_proyecto,
         id_plano=plano.id_plano if plano else None,
         cantidad_fabricar=op_in.cantidad_programada or proj.cantidad or 1,
-        estado=EstadoOPEnum.LIBERADA_PRODUCCION,
+        estado=estado_inicial,
         reserva_stock_100=True,
-        observaciones=op_in.observaciones or "Liberada a planta para producción",
+        observaciones=op_in.observaciones or (
+            "Liberada a planta para producción" if estado_inicial in ESTADOS_OP_LIBERADOS else "Pendiente de liberación"
+        ),
         porcentaje_avance=0.0
     )
 
@@ -600,6 +675,8 @@ def crear_orden_produccion(
             estado_nuevo=_valor_enum(nueva_op.estado),
             motivo=f"id_proyecto={proj.id_proyecto}; pedido={proj.numero_pedido}",
         )
+        if motivo_excepcion:
+            registrar_excepcion_admin(db, usuario_actual, nueva_op.codigo_op, None, _valor_enum(nueva_op.estado), motivo_excepcion)
         db.commit()
         db.refresh(nueva_op)
     except Exception as e:
@@ -631,7 +708,9 @@ def crear_orden_produccion(
         estado_produccion=nueva_op.estado.value if hasattr(nueva_op.estado, 'value') else str(nueva_op.estado),
         observaciones=nueva_op.observaciones,
         creado_en=nueva_op.creado_en,
-        productos_componentes=componentes
+        productos_componentes=componentes,
+        revisar=bool(revisar),
+        planos_revisar=revisar,
     )
 
 
@@ -640,9 +719,19 @@ def actualizar_estado_produccion(
     id_proyecto: UUID,
     op_up: OrdenProduccionUpdate,
     db: Session = Depends(get_db),
-    usuario_actual: dict = Depends(requerir_roles(["ADMIN", "PRODUCCION"])),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
-    """PM-03: Transición de estados en Planta y registro de porcentaje de avance."""
+    """PM-03: Transición de estados en Planta y registro de porcentaje de avance.
+    Pasar la OP a un estado liberado se autoriza por permiso (autorizar_liberacion);
+    el resto de transiciones sigue reservado a ROLES_ACTUALIZAR_OP."""
+    nuevo_estado = op_up.estado or op_up.estado_produccion
+    libera_op = nuevo_estado in {estado.value for estado in ESTADOS_OP_LIBERADOS}
+    if not libera_op and usuario_actual["rol"] not in ROLES_ACTUALIZAR_OP:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Acceso denegado. Permisos requeridos para rol(es): {ROLES_ACTUALIZAR_OP}",
+        )
+
     op_db = db.query(OrdenProduccion).filter(OrdenProduccion.id_proyecto == id_proyecto).first()
     if not op_db:
         # Intento de búsqueda por id_op
@@ -653,17 +742,18 @@ def actualizar_estado_produccion(
 
     estado_anterior = _valor_enum(op_db.estado)
     avance_anterior = float(op_db.porcentaje_avance or 0)
-    nuevo_estado = op_up.estado or op_up.estado_produccion
+    motivo_excepcion = None
+    revisar = []
     if nuevo_estado:
         try:
             estado_enum = EstadoOPEnum(nuevo_estado)
         except ValueError as error:
             raise HTTPException(status_code=400, detail=f"Estado de OP no válido: {nuevo_estado}.") from error
-        if estado_enum in {
-            EstadoOPEnum.LISTA_PARA_LIBERAR,
-            EstadoOPEnum.LIBERADA,
-            EstadoOPEnum.LIBERADA_PRODUCCION,
-        }:
+        if estado_enum in ESTADOS_OP_LIBERADOS:
+            planos_gate = planos_de_op(db, op_db.id_proyecto, op_db.codigo_op, op_db.id_plano)
+            motivo_excepcion = autorizar_liberacion(db, usuario_actual, planos_gate, op_up.motivo)
+            revisar = planos_por_revisar(planos_gate)
+        elif estado_enum == EstadoOPEnum.LISTA_PARA_LIBERAR:
             plano_gate = db.query(Plano).filter(Plano.id_plano == op_db.id_plano).first() if op_db.id_plano else (
                 db.query(Plano).filter(Plano.id_proyecto == op_db.id_proyecto).first()
             )
@@ -690,6 +780,8 @@ def actualizar_estado_produccion(
                 estado_nuevo=str(estado_nuevo),
                 motivo=op_up.observaciones,
             )
+        if motivo_excepcion:
+            registrar_excepcion_admin(db, usuario_actual, op_db.codigo_op, estado_anterior, estado_nuevo, motivo_excepcion)
         if op_up.porcentaje_avance is not None and float(op_up.porcentaje_avance) != avance_anterior:
             agregar_evento_trazabilidad(
                 db,
@@ -738,5 +830,7 @@ def actualizar_estado_produccion(
         estado_produccion=op_db.estado.value if hasattr(op_db.estado, 'value') else str(op_db.estado),
         observaciones=op_db.observaciones,
         creado_en=op_db.creado_en,
-        productos_componentes=componentes
+        productos_componentes=componentes,
+        revisar=bool(revisar),
+        planos_revisar=revisar,
     )
