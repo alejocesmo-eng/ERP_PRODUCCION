@@ -15,6 +15,7 @@ from app.db.models import (
     EntregaMaterialOP,
     EstadoOPEnum,
     FichaMetrologia,
+    HistorialAccionesDocumento,
     InstrumentoMedicion,
     LoteMaterial,
     MovimientoKardexSAP,
@@ -61,6 +62,7 @@ def db():
         InstrumentoMedicion.__table__,
         FichaMetrologia.__table__,
         MovimientoKardexSAP.__table__,
+        HistorialAccionesDocumento.__table__,
     ]
     Base.metadata.create_all(engine, tables=tablas)
     session = sessionmaker(bind=engine)()
@@ -184,13 +186,16 @@ def test_liberacion_actualiza_estado_despues_de_validar_gate(db):
     resultado = liberar_orden_produccion(
         "4001234",
         db=db,
-        usuario_actual={"rol": "DISENO"},
+        usuario_actual={"email": "diseno@hd.com", "rol": "DISENO"},
     )
 
     op = db.query(OrdenProduccion).filter_by(codigo_op="4001234").one()
     assert resultado["estado_operativo"] == "LIBERADA"
     assert op.estado.value == "LIBERADA"
     assert op.liberada_en is not None
+    evento = db.query(HistorialAccionesDocumento).filter_by(identificador_documento="4001234").one()
+    assert evento.accion == "OP_LIBERADA"
+    assert evento.usuario_responsable == "diseno@hd.com"
 
 
 def test_expediente_no_expone_otra_op_del_mismo_pedido(db):

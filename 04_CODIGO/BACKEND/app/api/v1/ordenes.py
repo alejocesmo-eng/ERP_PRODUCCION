@@ -25,6 +25,7 @@ from app.db.models_calidad import InspeccionCalidad
 from app.db.models_produccion import OperacionOT, RegistroTiempoOperario, SubLoteOperacion
 from app.api.deps import obtener_usuario_actual, requerir_roles
 from app.api.v1.quality_gate import validar_gate_calidad
+from app.services.auditoria import agregar_evento_trazabilidad
 
 router = APIRouter()
 
@@ -349,9 +350,20 @@ def liberar_orden_produccion(
     )
     validar_gate_calidad(db, plano)
 
+    estado_anterior = _valor_enum(op.estado)
     op.estado = EstadoOPEnum.LIBERADA
     op.liberada_en = datetime.now().astimezone()
     try:
+        agregar_evento_trazabilidad(
+            db,
+            tipo_entidad="ORDEN_PRODUCCION",
+            identificador=op.codigo_op,
+            accion="OP_LIBERADA",
+            usuario=usuario_actual["email"],
+            area=usuario_actual["rol"],
+            estado_anterior=str(estado_anterior),
+            estado_nuevo=_valor_enum(op.estado),
+        )
         db.commit()
         db.refresh(op)
     except Exception as error:
@@ -542,7 +554,8 @@ def listar_ordenes_produccion(
 @router.post("/", response_model=OrdenProduccionVistaResponse, status_code=status.HTTP_201_CREATED)
 def crear_orden_produccion(
     op_in: OrdenProduccionCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     """PM-03: Crear y liberar nueva Orden de Producción en Planta."""
     proj = db.query(Proyecto).filter(Proyecto.id_proyecto == op_in.id_proyecto).first()
@@ -575,6 +588,17 @@ def crear_orden_produccion(
 
     try:
         db.add(nueva_op)
+        db.flush()
+        agregar_evento_trazabilidad(
+            db,
+            tipo_entidad="ORDEN_PRODUCCION",
+            identificador=nueva_op.codigo_op,
+            accion="OP_CREADA",
+            usuario=usuario_actual["email"],
+            area=usuario_actual["rol"],
+            estado_nuevo=_valor_enum(nueva_op.estado),
+            motivo=f"id_proyecto={proj.id_proyecto}; pedido={proj.numero_pedido}",
+        )
         db.commit()
         db.refresh(nueva_op)
     except Exception as e:
@@ -614,7 +638,8 @@ def crear_orden_produccion(
 def actualizar_estado_produccion(
     id_proyecto: UUID,
     op_up: OrdenProduccionUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(requerir_roles(["ADMIN", "PRODUCCION"])),
 ):
     """PM-03: Transición de estados en Planta y registro de porcentaje de avance."""
     op_db = db.query(OrdenProduccion).filter(OrdenProduccion.id_proyecto == id_proyecto).first()
@@ -625,6 +650,8 @@ def actualizar_estado_produccion(
     if not op_db:
         raise HTTPException(status_code=404, detail="Orden de Producción no encontrada.")
 
+    estado_anterior = _valor_enum(op_db.estado)
+    avance_anterior = float(op_db.porcentaje_avance or 0)
     nuevo_estado = op_up.estado or op_up.estado_produccion
     if nuevo_estado:
         try:
@@ -649,6 +676,31 @@ def actualizar_estado_produccion(
         op_db.porcentaje_avance = op_up.porcentaje_avance
 
     try:
+        estado_nuevo = _valor_enum(op_db.estado)
+        if estado_nuevo != estado_anterior:
+            agregar_evento_trazabilidad(
+                db,
+                tipo_entidad="ORDEN_PRODUCCION",
+                identificador=op_db.codigo_op,
+                accion="OP_ESTADO_ACTUALIZADO",
+                usuario=usuario_actual["email"],
+                area=usuario_actual["rol"],
+                estado_anterior=str(estado_anterior),
+                estado_nuevo=str(estado_nuevo),
+                motivo=op_up.observaciones,
+            )
+        if op_up.porcentaje_avance is not None and float(op_up.porcentaje_avance) != avance_anterior:
+            agregar_evento_trazabilidad(
+                db,
+                tipo_entidad="ORDEN_PRODUCCION",
+                identificador=op_db.codigo_op,
+                accion="OP_AVANCE_ACTUALIZADO",
+                usuario=usuario_actual["email"],
+                area=usuario_actual["rol"],
+                estado_anterior=str(avance_anterior),
+                estado_nuevo=str(float(op_up.porcentaje_avance)),
+                motivo=op_up.observaciones,
+            )
         db.commit()
         db.refresh(op_db)
     except Exception as e:
