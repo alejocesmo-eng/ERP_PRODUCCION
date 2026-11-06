@@ -183,6 +183,7 @@ CREATE TABLE IF NOT EXISTS planos (
     estado VARCHAR(50) DEFAULT 'BORRADOR',
     aprobado_por VARCHAR(100),
     fecha_aprobacion TIMESTAMP WITH TIME ZONE,
+    fecha_ultima_revision TIMESTAMP WITH TIME ZONE,
     creado_por UUID REFERENCES usuarios(id_usuario),
     creado_en TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     actualizado_en TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP

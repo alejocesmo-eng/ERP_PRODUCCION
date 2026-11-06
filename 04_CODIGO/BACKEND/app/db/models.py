@@ -534,6 +534,7 @@ class Plano(Base):
     estado = Column(Enum(EstadoPlanoEnum), default=EstadoPlanoEnum.BORRADOR)
     aprobado_por = Column(String(100), nullable=True)
     fecha_aprobacion = Column(DateTime(timezone=True), nullable=True)
+    fecha_ultima_revision = Column(DateTime(timezone=True), nullable=True)
     creado_por = Column(UUID(as_uuid=True), ForeignKey("usuarios.id_usuario"), nullable=True)
     creado_en = Column(DateTime(timezone=True), default=func.now())
     actualizado_en = Column(DateTime(timezone=True), default=func.now(), onupdate=func.now())
