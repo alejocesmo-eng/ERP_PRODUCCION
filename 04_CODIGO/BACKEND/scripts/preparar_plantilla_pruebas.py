@@ -6,8 +6,9 @@ tras un cambio de esquema):
 2. Aplica el esquema (create_all) y carga la semilla con cargar_semilla.cargar_semilla_db().
 3. Ejecuta las secciones 1 a 3 de 05_BASE_DATOS/02_DATOS_INICIALES.sql (roles, permisos
    y rol_permisos). Las secciones 4 en adelante no encajan con el esquema de los modelos.
-4. Verifica las asignaciones de permisos clave.
-5. Marca la base como plantilla (IS_TEMPLATE true).
+4. Aplica 05_BASE_DATOS/16_MIGRACION_PERMISOS_LIBERACION_ENTREGA_PARCIAL.sql.
+5. Verifica las asignaciones de permisos clave.
+6. Marca la base como plantilla (IS_TEMPLATE true).
 
 Uso, desde 04_CODIGO/BACKEND:
     python -m scripts.preparar_plantilla_pruebas
@@ -29,7 +30,9 @@ from scripts._pg_pruebas import (
     url_base,
 )
 
-RUTA_DATOS_INICIALES = Path(__file__).resolve().parents[3] / "05_BASE_DATOS" / "02_DATOS_INICIALES.sql"
+RUTA_BASE_DATOS = Path(__file__).resolve().parents[3] / "05_BASE_DATOS"
+RUTA_DATOS_INICIALES = RUTA_BASE_DATOS / "02_DATOS_INICIALES.sql"
+RUTA_MIGRACION_PERMISOS = RUTA_BASE_DATOS / "16_MIGRACION_PERMISOS_LIBERACION_ENTREGA_PARCIAL.sql"
 MARCA_FIN_PERMISOS = "-- 4. USUARIOS BASE DE PRUEBA"
 
 VERIFICACIONES = (
@@ -83,6 +86,8 @@ def _cargar_permisos_y_verificar() -> bool:
         cur = conexion.cursor()
         cur.execute(_sql_permisos())
         print("Secciones 1 a 3 de 02_DATOS_INICIALES.sql aplicadas (roles, permisos y rol_permisos).")
+        cur.execute(RUTA_MIGRACION_PERMISOS.read_text(encoding="utf-8-sig"))
+        print(f"{RUTA_MIGRACION_PERMISOS.name} aplicada.")
         correcto = True
         for descripcion, rol, permiso, esperado in VERIFICACIONES:
             cur.execute(
