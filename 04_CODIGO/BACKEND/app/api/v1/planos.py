@@ -19,7 +19,9 @@ router = APIRouter()
 DIRECTORIO_STATIC_PLANOS = "static/planos"
 os.makedirs(DIRECTORIO_STATIC_PLANOS, exist_ok=True)
 
-SECRET_KEY_PLANOS = os.getenv("JWT_SECRET_KEY_PLANOS", "SGI_ERP_SECRET_KEY_TEMPORAL_PLANOS_2026")
+SECRET_KEY_PLANOS = os.getenv("JWT_SECRET_KEY_PLANOS")
+if not SECRET_KEY_PLANOS:
+    raise RuntimeError("Falta la variable de entorno obligatoria JWT_SECRET_KEY_PLANOS. Cree 04_CODIGO/BACKEND/.env a partir de .env.example.")
 ALGORITHM = "HS256"
 
 
