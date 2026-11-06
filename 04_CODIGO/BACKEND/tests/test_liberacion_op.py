@@ -132,6 +132,11 @@ def estado_op(sesion, codigo_op):
     return op.estado if op else None
 
 
+def reserva_stock(sesion, codigo_op):
+    sesion.expire_all()
+    return sesion.query(OrdenProduccion).filter_by(codigo_op=codigo_op).one().reserva_stock_100
+
+
 def eventos(sesion, identificador, accion):
     sesion.expire_all()
     return sesion.query(HistorialAccionesDocumento).filter_by(
@@ -221,7 +226,38 @@ def test_post_sin_estado_crea_la_op_en_borrador_sin_liberarla(ctx):
     assert respuesta.status_code == 201, respuesta.text
     assert respuesta.json()["estado_produccion"] == EstadoOPEnum.BORRADOR.value
     assert estado_op(sesion, plano.codigo_op) == EstadoOPEnum.BORRADOR
+    assert reserva_stock(sesion, plano.codigo_op) is False
     assert eventos(sesion, plano.codigo_op, "OP_LIBERADA_EXCEPCION_ADMIN") == []
+
+
+def test_op_creada_en_borrador_activa_la_reserva_al_liberarla(ctx):
+    client, sesion = ctx
+    proyecto, plano = crear_plano(sesion)
+    cuerpo = {"codigo_op": plano.codigo_op, "id_proyecto": str(proyecto.id_proyecto), "id_plano": str(plano.id_plano)}
+    assert client.post("/api/v1/ordenes/", json=cuerpo, headers=token("DISENO")).status_code == 201
+    assert reserva_stock(sesion, plano.codigo_op) is False
+
+    respuesta = client.patch(f"/api/v1/ordenes/liberar/{plano.codigo_op}", headers=token("DISENO"))
+
+    assert respuesta.status_code == 200, respuesta.text
+    assert reserva_stock(sesion, plano.codigo_op) is True
+
+
+@pytest.mark.parametrize("ruta", ["liberar", "patch", "post"])
+def test_liberacion_activa_reserva_stock_100_en_las_tres_rutas(ctx, ruta):
+    client, sesion = ctx
+    if ruta == "post":
+        proyecto, plano = crear_plano(sesion)
+        respuesta = crear_post(client, proyecto, plano, "DISENO")
+        codigo_op = plano.codigo_op
+    else:
+        op = crear_op(sesion)
+        assert reserva_stock(sesion, op.codigo_op) is False
+        respuesta = (liberar if ruta == "liberar" else liberar_patch)(client, op, "DISENO")
+        codigo_op = op.codigo_op
+
+    assert respuesta.status_code in (200, 201), respuesta.text
+    assert reserva_stock(sesion, codigo_op) is True
 
 
 def test_post_no_crea_la_op_si_no_cumple_la_regla(ctx):
@@ -276,6 +312,7 @@ def test_admin_con_motivo_libera_saltando_la_regla_y_audita(ctx, ruta):
 
     assert respuesta.status_code in (200, 201), respuesta.text
     assert estado_op(sesion, codigo_op) == esperado
+    assert reserva_stock(sesion, codigo_op) is True
     [evento] = eventos(sesion, codigo_op, "OP_LIBERADA_EXCEPCION_ADMIN")
     assert evento.motivo_observacion == motivo
     assert evento.usuario_responsable == "admin@prueba.test"

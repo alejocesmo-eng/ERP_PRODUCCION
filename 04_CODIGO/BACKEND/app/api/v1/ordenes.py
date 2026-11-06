@@ -400,6 +400,7 @@ def liberar_orden_produccion(
 
     estado_anterior = _valor_enum(op.estado)
     op.estado = EstadoOPEnum.LIBERADA
+    op.reserva_stock_100 = True
     op.liberada_en = datetime.now().astimezone()
     try:
         agregar_evento_trazabilidad(
@@ -655,7 +656,8 @@ def crear_orden_produccion(
         id_plano=plano.id_plano if plano else None,
         cantidad_fabricar=op_in.cantidad_programada or proj.cantidad or 1,
         estado=estado_inicial,
-        reserva_stock_100=True,
+        # Indicador RN-OP-004 (chk_rn_op_004): solo una OP liberada queda con reserva al 100%
+        reserva_stock_100=estado_inicial in ESTADOS_OP_LIBERADOS,
         observaciones=op_in.observaciones or (
             "Liberada a planta para producción" if estado_inicial in ESTADOS_OP_LIBERADOS else "Pendiente de liberación"
         ),
@@ -753,6 +755,7 @@ def actualizar_estado_produccion(
             planos_gate = planos_de_op(db, op_db.id_proyecto, op_db.codigo_op, op_db.id_plano)
             motivo_excepcion = autorizar_liberacion(db, usuario_actual, planos_gate, op_up.motivo)
             revisar = planos_por_revisar(planos_gate)
+            op_db.reserva_stock_100 = True
         elif estado_enum == EstadoOPEnum.LISTA_PARA_LIBERAR:
             plano_gate = db.query(Plano).filter(Plano.id_plano == op_db.id_plano).first() if op_db.id_plano else (
                 db.query(Plano).filter(Plano.id_proyecto == op_db.id_proyecto).first()
