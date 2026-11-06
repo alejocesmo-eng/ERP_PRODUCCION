@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 from typing import List, Optional
 from uuid import UUID, uuid4
@@ -23,6 +24,44 @@ SECRET_KEY_PLANOS = os.getenv("JWT_SECRET_KEY_PLANOS")
 if not SECRET_KEY_PLANOS:
     raise RuntimeError("Falta la variable de entorno obligatoria JWT_SECRET_KEY_PLANOS. Cree 04_CODIGO/BACKEND/.env a partir de .env.example.")
 ALGORITHM = "HS256"
+
+# tipo -> (columna destino, extensiones admitidas, extensión estandarizada)
+FORMATOS_CAD = {
+    "pdf": ("archivo_pdf_url", (".pdf",), ".pdf"),
+    "step": ("archivo_step_url", (".step", ".stp"), ".step"),
+    "dxf": ("archivo_dxf_url", (".dxf",), ".dxf"),
+}
+
+
+def _guardar_archivo_cad(db: Session, plano: Plano, archivo: UploadFile, tipo: str) -> Plano:
+    """Persiste el archivo CAD con prefijo OP_PLANO_VERSION y actualiza su columna."""
+    if tipo not in FORMATOS_CAD:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tipo CAD inválido. Use pdf, step o dxf.")
+    # Inmutabilidad post-liberación: el paquete técnico liberado queda congelado
+    if plano.estado_diseno == "LIBERADA":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="La OP está LIBERADA: los archivos CAD son de solo consulta.",
+        )
+
+    campo, extensiones, ext_final = FORMATOS_CAD[tipo]
+    if not (archivo.filename or "").lower().endswith(extensiones):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Formato inválido para {tipo.upper()}. Extensiones admitidas: {', '.join(extensiones)}.",
+        )
+
+    prefijo = f"{plano.codigo_op}_{plano.codigo_plano}_{plano.version}"
+    nombre_archivo = re.sub(r"[^A-Za-z0-9._-]", "_", prefijo) + ext_final
+    ruta_fisica = os.path.join(DIRECTORIO_STATIC_PLANOS, nombre_archivo)
+
+    with open(ruta_fisica, "wb") as buffer:
+        shutil.copyfileobj(archivo.file, buffer)
+
+    setattr(plano, campo, f"/static/planos/{nombre_archivo}")
+    db.commit()
+    db.refresh(plano)
+    return plano
 
 
 # =============================================================================
@@ -310,7 +349,13 @@ def servir_plano_pdf_seguro(token: str, db: Session = Depends(get_db)):
     if not os.path.exists(ruta_fisica):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="El archivo físico PDF no existe en el almacenamiento.")
 
-    return FileResponse(ruta_fisica, media_type="application/pdf", filename=nombre_archivo)
+    # inline: el visor modal (iframe) muestra el PDF en lugar de forzar la descarga
+    return FileResponse(
+        ruta_fisica,
+        media_type="application/pdf",
+        filename=nombre_archivo,
+        content_disposition_type="inline",
+    )
 
 
 @router.post("/upload-pdf/{id_plano}", response_model=PlanoResponse)
@@ -340,27 +385,29 @@ def subir_cad_plano(id_plano: UUID, archivo: UploadFile = File(...), db: Session
     if not plano:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plano no encontrado.")
 
-    ext = archivo.filename.lower()
+    ext = (archivo.filename or "").lower()
     if ext.endswith('.step') or ext.endswith('.stp'):
-        campo = "archivo_step_url"
-        ext_final = ".step"
+        tipo = "step"
     elif ext.endswith('.dxf'):
-        campo = "archivo_dxf_url"
-        ext_final = ".dxf"
+        tipo = "dxf"
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Formato inválido. Solo .step, .stp o .dxf.")
 
-    nombre_archivo = f"{plano.codigo_op}_{plano.codigo_plano}_{plano.version}{ext_final}".replace("/", "_")
-    ruta_fisica = os.path.join(DIRECTORIO_STATIC_PLANOS, nombre_archivo)
+    return _guardar_archivo_cad(db, plano, archivo, tipo)
 
-    with open(ruta_fisica, "wb") as buffer:
-        shutil.copyfileobj(archivo.file, buffer)
+@router.post("/upload-cad/{id_plano}/{tipo}", response_model=PlanoResponse)
+def subir_archivo_cad_por_tipo(
+    id_plano: UUID,
+    tipo: str,
+    archivo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """Carga multiformato: tipo = pdf | step | dxf (.pdf, .step/.stp, .dxf)."""
+    plano = db.query(Plano).filter(Plano.id_plano == id_plano).first()
+    if not plano:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plano no encontrado.")
 
-    setattr(plano, campo, f"/static/planos/{nombre_archivo}")
-    db.commit()
-    db.refresh(plano)
-
-    return plano
+    return _guardar_archivo_cad(db, plano, archivo, tipo.lower())
 
 @router.get("/descargar-cad/{id_plano}/{tipo}")
 def descargar_cad_plano(id_plano: UUID, tipo: str, db: Session = Depends(get_db)):
@@ -371,6 +418,9 @@ def descargar_cad_plano(id_plano: UUID, tipo: str, db: Session = Depends(get_db)
     plano = db.query(Plano).filter(Plano.id_plano == id_plano).first()
     if not plano:
         raise HTTPException(status_code=404, detail="Plano no encontrado.")
+
+    if tipo not in {"step", "dxf"}:
+        raise HTTPException(status_code=400, detail="Tipo de descarga inválido. Use step o dxf.")
 
     campo = "archivo_step_url" if tipo == "step" else "archivo_dxf_url"
     url = getattr(plano, campo)
@@ -384,4 +434,4 @@ def descargar_cad_plano(id_plano: UUID, tipo: str, db: Session = Depends(get_db)
     if not os.path.exists(ruta_fisica):
         raise HTTPException(status_code=404, detail="Archivo físico no encontrado.")
 
-    return FileResponse(ruta_fisica)
+    return FileResponse(ruta_fisica, filename=nombre_archivo)
