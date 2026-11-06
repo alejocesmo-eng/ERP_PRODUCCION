@@ -186,3 +186,15 @@ def test_rechaza_transiciones_invalidas_de_pausa(db, estado_actual, estado_nuevo
         actualizar_plano(plano.id_plano, PlanoUpdateRequest(estado_diseno=estado_nuevo), db)
 
     assert error.value.status_code == 400
+
+
+def test_observaciones_tecnicas_se_guardan_sin_alterar_estado_ni_cronometro(db):
+    inicio = datetime.now(timezone.utc) - timedelta(minutes=15)
+    plano = crear_plano_dibujante(db, "EN_DISENO", fecha_inicio_diseno=inicio)
+    nota = "Dejar sobremedida de 0.3 mm para rectificado; tolerancia h7 en Ø 50."
+
+    actualizado = actualizar_plano(plano.id_plano, PlanoUpdateRequest(observaciones_tecnicas=nota), db)
+
+    assert actualizado.observaciones_tecnicas == nota
+    assert actualizado.estado_diseno == "EN_DISENO"
+    assert actualizado.fecha_inicio_diseno.replace(tzinfo=timezone.utc) == inicio

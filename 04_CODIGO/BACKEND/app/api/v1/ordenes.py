@@ -151,6 +151,7 @@ def obtener_expediente_op(
             "unidad_planta": plano.unidad_planta,
             "material_requerido": plano.material_requerido,
             "archivo_url": plano.archivo_url,
+            "observaciones_tecnicas": plano.observaciones_tecnicas,
             "fecha_entrega_produccion": _fecha_iso(plano.fecha_entrega_produccion),
             "piezas": piezas_por_plano.get(plano.id_plano, []),
             "resumen_bom": bom_por_plano.get(plano.id_plano, []),

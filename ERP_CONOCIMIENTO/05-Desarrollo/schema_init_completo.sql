@@ -170,6 +170,7 @@ CREATE TABLE IF NOT EXISTS planos (
     estado_diseno VARCHAR(50) DEFAULT 'PLANIFICADA',
     causa_espera TEXT,
     material_requerido TEXT,
+    observaciones_tecnicas TEXT,
     insumos_opcionales TEXT,
     tiempo_estimado_valor INTEGER DEFAULT 4,
     tiempo_estimado_unidad VARCHAR(20) DEFAULT 'HORAS',

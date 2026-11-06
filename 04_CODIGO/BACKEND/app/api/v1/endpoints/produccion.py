@@ -411,6 +411,7 @@ def listar_sublotes(
             "secuencia_paso": operacion.secuencia_paso,
             "archivo_url": plano.archivo_url if plano else None,
             "instrucciones": plano.causa_espera if plano else None,
+            "observaciones_tecnicas": plano.observaciones_tecnicas if plano else None,
             "operario_id": sublote.operario_id,
             "operario_nombre": sublote.operario_nombre,
             "maquina_codigo": sublote.maquina_codigo,

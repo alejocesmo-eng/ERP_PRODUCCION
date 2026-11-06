@@ -144,6 +144,7 @@ class PlanoResponse(BaseModel):
     fecha_inicio_diseno: Optional[datetime] = None
     fecha_fin_diseno: Optional[datetime] = None
     tiempo_total_diseno_minutos: Optional[int] = None
+    observaciones_tecnicas: Optional[str] = None
     creado_en: datetime
     bom_items: List["BOMItemResponse"] = Field(default_factory=list)
 
@@ -189,6 +190,7 @@ class PlanoUpdateRequest(BaseModel):
     version: Optional[str] = None
     dibujante_asignado: Optional[str] = None
     unidad_planta: Optional[str] = None
+    observaciones_tecnicas: Optional[str] = None
     piezas: Optional[List[PiezaPlanoWrite]] = None
 
 
@@ -311,6 +313,7 @@ def actualizar_plano(
         "version",
         "dibujante_asignado",
         "unidad_planta",
+        "observaciones_tecnicas",
     }
     estado_anterior = plano.estado_diseno
     estado_nuevo = plano_in.estado_diseno

@@ -526,6 +526,8 @@ class Plano(Base):
     archivo_pdf_url = Column(String(255), nullable=True)
     archivo_step_url = Column(String(255), nullable=True)
     archivo_dxf_url = Column(String(255), nullable=True)
+    # Instrucción técnica de Ingeniería que acompaña la OP hasta planta (tolerancias, sobremedidas, notas a compras/taller)
+    observaciones_tecnicas = Column(Text, nullable=True)
     archivo_url = synonym("archivo_pdf_url")
     revision = synonym("version")
 
