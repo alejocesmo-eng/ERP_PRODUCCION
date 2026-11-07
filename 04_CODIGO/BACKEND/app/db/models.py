@@ -4,8 +4,10 @@ import enum
 from datetime import datetime, date
 
 from sqlalchemy import (
-    Column, 
-    String, 
+    BigInteger,
+    CHAR,
+    Column,
+    String,
     Boolean, 
     DateTime, 
     Integer, 
@@ -19,6 +21,7 @@ from sqlalchemy import (
     CheckConstraint,
     UniqueConstraint,
     Index,
+    text,
 )
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
@@ -378,7 +381,8 @@ class Proyecto(Base):
 
     cliente = relationship("Cliente", back_populates="proyectos")
     detalles = relationship("PedidoDetalle", back_populates="proyecto", cascade="all, delete-orphan")
-    planos = relationship("Plano", back_populates="proyecto", cascade="all, delete-orphan")
+    # Sin delete-orphan: el plano pertenece al producto y sobrevive al proyecto (ON DELETE SET NULL)
+    planos = relationship("Plano", back_populates="proyecto")
     ordenes_produccion = relationship("OrdenProduccion", back_populates="proyecto", cascade="all, delete-orphan")
 
 
@@ -399,6 +403,7 @@ class PedidoDetalle(Base):
     detalle_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     pedido_id = Column(UUID(as_uuid=True), ForeignKey("proyectos.id_proyecto", ondelete="CASCADE"), nullable=False)
     codigo_producto = Column(String(50), nullable=True)
+    id_producto = Column(UUID(as_uuid=True), ForeignKey("productos.id_producto", name="fk_pedido_detalles_id_producto", ondelete="RESTRICT"), nullable=True, index=True)
     descripcion = Column(String(255), nullable=False)
     tipo = Column(String(50), default="PIEZA")
     cantidad_solicitada = Column(Integer, nullable=False, default=1)
@@ -495,10 +500,12 @@ class Plano(Base):
     __tablename__ = "planos"
 
     id_plano = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    id_proyecto = Column(UUID(as_uuid=True), ForeignKey("proyectos.id_proyecto", ondelete="CASCADE"), nullable=False)
+    # El plano pertenece al producto; el proyecto queda como referencia de uso (migración 18)
+    id_proyecto = Column(UUID(as_uuid=True), ForeignKey("proyectos.id_proyecto", name="fk_planos_id_proyecto", ondelete="SET NULL"), nullable=True)
+    id_producto = Column(UUID(as_uuid=True), ForeignKey("productos.id_producto", name="fk_planos_id_producto", ondelete="RESTRICT"), nullable=True, index=True)
     id_mantenimiento = Column(Integer, ForeignKey("mantenimientos_maquinas.id_mantenimiento", ondelete="SET NULL"), nullable=True)
 
-    codigo_op = Column(String(50), nullable=False, default="4007256")
+    codigo_op = Column(String(50), nullable=True)
     codigo_plano = Column(String(50), nullable=False)
     version = Column("revision", String(10), nullable=False, default="V-01")
     dibujante_asignado = Column(String(150), default="Carlos Ruiz")
@@ -523,6 +530,7 @@ class Plano(Base):
     fecha_fin_diseno = Column(DateTime(timezone=True), nullable=True)
     tiempo_total_diseno_minutos = Column(Integer, nullable=True)
 
+    # Columna canónica del PDF (migración 19); archivo_url se mantiene solo por compatibilidad de lectura
     archivo_pdf_url = Column(String(255), nullable=True)
     archivo_step_url = Column(String(255), nullable=True)
     archivo_dxf_url = Column(String(255), nullable=True)
@@ -548,6 +556,42 @@ class Plano(Base):
     ot_detalles = relationship("OTDetalle", back_populates="plano_ot", cascade="all, delete-orphan")
     bom_items = relationship("BOMListaMateriales", back_populates="plano", cascade="all, delete-orphan")
     ordenes_produccion = relationship("OrdenProduccion", back_populates="plano")
+    archivos = relationship("PlanoArchivo", back_populates="plano", cascade="all, delete-orphan", passive_deletes=True)
+
+
+class PlanoArchivo(Base):
+    """
+    Archivos por plano (PDF, STEP, DXF) con hash y tamaño (19_MIGRACION_PLANOS_ARCHIVOS.sql).
+    Histórico completo; un solo archivo vigente por plano y tipo.
+    """
+    __tablename__ = "planos_archivos"
+    __table_args__ = (
+        CheckConstraint("tipo IN ('PDF', 'STEP', 'DXF')", name="ck_planos_archivos_tipo"),
+        CheckConstraint("tamano_bytes > 0", name="ck_planos_archivos_tamano"),
+        # Expresión regular de PostgreSQL: SQLite (pruebas en memoria) no admite el operador ~
+        CheckConstraint("sha256 ~ '^[0-9a-f]{64}$'", name="ck_planos_archivos_sha256").ddl_if(dialect="postgresql"),
+        Index("ix_planos_archivos_id_plano", "id_plano"),
+        Index(
+            "ux_planos_archivos_vigente", "id_plano", "tipo",
+            unique=True,
+            postgresql_where=text("vigente"),
+            sqlite_where=text("vigente"),
+        ),
+    )
+
+    id_archivo = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id_plano = Column(UUID(as_uuid=True), ForeignKey("planos.id_plano", ondelete="CASCADE"), nullable=False)
+    tipo = Column(String(10), nullable=False)
+    ruta = Column(String(500), nullable=False)
+    nombre_original = Column(String(255), nullable=False)
+    tamano_bytes = Column(BigInteger, nullable=False)
+    sha256 = Column(CHAR(64), nullable=False)
+    revision = Column(String(10), nullable=True)
+    vigente = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    subido_por = Column(String(100), nullable=True)
+    subido_en = Column(DateTime(timezone=True), nullable=False, default=func.now(), server_default=func.now())
+
+    plano = relationship("Plano", back_populates="archivos")
 
 
 class BOMListaMateriales(Base):
@@ -576,6 +620,7 @@ class OrdenProduccion(Base):
     id_op = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     id_proyecto = Column(UUID(as_uuid=True), ForeignKey("proyectos.id_proyecto", ondelete="CASCADE"), nullable=False)
     id_plano = Column(UUID(as_uuid=True), ForeignKey("planos.id_plano"), nullable=True)
+    id_producto = Column(UUID(as_uuid=True), ForeignKey("productos.id_producto", name="fk_ordenes_produccion_id_producto", ondelete="RESTRICT"), nullable=True, index=True)
     id_mantenimiento = Column(Integer, ForeignKey("mantenimientos_maquinas.id_mantenimiento", ondelete="SET NULL"), nullable=True)
     codigo_op = Column(String(50), unique=True, nullable=False)
     cantidad_fabricar = Column(Integer, default=1, nullable=False)
@@ -829,6 +874,31 @@ class ArticuloInventario(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+
+
+class Producto(Base):
+    """
+    Catálogo de productos con código RN (18_MIGRACION_PRODUCTOS_RN.sql).
+    Un producto agrupa los planos de sus piezas (1:N); la OP y la línea de pedido lo referencian.
+    """
+    __tablename__ = "productos"
+    __table_args__ = (
+        UniqueConstraint("codigo_rn", name="uq_productos_codigo_rn"),
+        # Expresión regular de PostgreSQL: SQLite (pruebas en memoria) no admite el operador ~
+        CheckConstraint("codigo_rn ~ '^RN-[0-9]{3}-[0-9]{3}-[0-9]{6}$'", name="ck_productos_codigo_rn").ddl_if(dialect="postgresql"),
+        CheckConstraint("estado IN ('ACTIVO', 'OBSOLETO')", name="ck_productos_estado"),
+    )
+
+    id_producto = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    codigo_rn = Column(String(17), nullable=False)
+    codigo_anterior = Column(String(50), nullable=True, index=True)
+    descripcion = Column(String(255), nullable=False)
+    familia = Column(String(100), nullable=True)
+    subfamilia = Column(String(100), nullable=True)
+    estado = Column(String(20), nullable=False, default="ACTIVO", server_default="ACTIVO")
+    id_articulo = Column(UUID(as_uuid=True), ForeignKey("articulos_inventario.id_articulo", ondelete="SET NULL"), nullable=True)
+    creado_en = Column(DateTime(timezone=True), nullable=False, default=func.now(), server_default=func.now())
+    actualizado_en = Column(DateTime(timezone=True), nullable=False, default=func.now(), onupdate=func.now(), server_default=func.now())
 
 
 class LoteMaterial(Base):

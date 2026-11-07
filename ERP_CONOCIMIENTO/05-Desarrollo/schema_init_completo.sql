@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS pedido_detalles (
     detalle_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     pedido_id UUID NOT NULL REFERENCES proyectos(id_proyecto) ON DELETE CASCADE,
     codigo_producto VARCHAR(50),
+    id_producto UUID,
     descripcion VARCHAR(255) NOT NULL,
     tipo VARCHAR(50) DEFAULT 'PIEZA',
     cantidad_solicitada INTEGER NOT NULL DEFAULT 1,
@@ -160,9 +161,10 @@ CREATE TABLE IF NOT EXISTS mantenimientos_piezas_det (
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS planos (
     id_plano UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    id_proyecto UUID NOT NULL REFERENCES proyectos(id_proyecto) ON DELETE CASCADE,
+    id_proyecto UUID CONSTRAINT fk_planos_id_proyecto REFERENCES proyectos(id_proyecto) ON DELETE SET NULL,
+    id_producto UUID,
     id_mantenimiento INTEGER REFERENCES mantenimientos_maquinas(id_mantenimiento) ON DELETE SET NULL,
-    codigo_op VARCHAR(50) NOT NULL DEFAULT '4007256',
+    codigo_op VARCHAR(50),
     codigo_plano VARCHAR(50) NOT NULL,
     revision VARCHAR(10) NOT NULL DEFAULT 'REV-01',
     dibujante_asignado VARCHAR(150) DEFAULT 'Carlos Ruiz',
@@ -179,7 +181,8 @@ CREATE TABLE IF NOT EXISTS planos (
     fecha_inicio_programada DATE,
     fecha_entrega_cliente DATE,
     fecha_entrega_produccion DATE,
-    archivo_url VARCHAR(255),
+    archivo_url VARCHAR(255), -- compatibilidad de lectura; la columna canónica del PDF es archivo_pdf_url
+    archivo_pdf_url VARCHAR(255),
     estado VARCHAR(50) DEFAULT 'BORRADOR',
     aprobado_por VARCHAR(100),
     fecha_aprobacion TIMESTAMP WITH TIME ZONE,
@@ -188,6 +191,23 @@ CREATE TABLE IF NOT EXISTS planos (
     creado_en TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     actualizado_en TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Archivos por plano con hash y tamaño (migración 19). Un solo archivo vigente por plano y tipo.
+CREATE TABLE IF NOT EXISTS planos_archivos (
+    id_archivo UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id_plano UUID NOT NULL REFERENCES planos(id_plano) ON DELETE CASCADE,
+    tipo VARCHAR(10) NOT NULL CONSTRAINT ck_planos_archivos_tipo CHECK (tipo IN ('PDF', 'STEP', 'DXF')),
+    ruta VARCHAR(500) NOT NULL,
+    nombre_original VARCHAR(255) NOT NULL,
+    tamano_bytes BIGINT NOT NULL CONSTRAINT ck_planos_archivos_tamano CHECK (tamano_bytes > 0),
+    sha256 CHAR(64) NOT NULL CONSTRAINT ck_planos_archivos_sha256 CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+    revision VARCHAR(10),
+    vigente BOOLEAN NOT NULL DEFAULT TRUE,
+    subido_por VARCHAR(100),
+    subido_en TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS ix_planos_archivos_id_plano ON planos_archivos (id_plano);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_planos_archivos_vigente ON planos_archivos (id_plano, tipo) WHERE vigente;
 
 CREATE TABLE IF NOT EXISTS ot_detalles (
     ot_detalle_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -213,6 +233,7 @@ CREATE TABLE IF NOT EXISTS ordenes_produccion (
     id_op UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     id_proyecto UUID NOT NULL REFERENCES proyectos(id_proyecto) ON DELETE CASCADE,
     id_plano UUID REFERENCES planos(id_plano),
+    id_producto UUID,
     id_mantenimiento INTEGER REFERENCES mantenimientos_maquinas(id_mantenimiento) ON DELETE SET NULL,
     codigo_op VARCHAR(50) UNIQUE NOT NULL,
     cantidad_fabricar INTEGER DEFAULT 1 NOT NULL,
@@ -242,6 +263,41 @@ CREATE TABLE IF NOT EXISTS articulos_inventario (
     ubicacion VARCHAR(100),
     creado_en TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Catálogo de productos con código RN (migración 18). Un producto agrupa los planos de sus piezas.
+CREATE TABLE IF NOT EXISTS productos (
+    id_producto UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    codigo_rn VARCHAR(17) NOT NULL CONSTRAINT uq_productos_codigo_rn UNIQUE
+        CONSTRAINT ck_productos_codigo_rn CHECK (codigo_rn ~ '^RN-[0-9]{3}-[0-9]{3}-[0-9]{6}$'),
+    codigo_anterior VARCHAR(50),
+    descripcion VARCHAR(255) NOT NULL,
+    familia VARCHAR(100),
+    subfamilia VARCHAR(100),
+    estado VARCHAR(20) NOT NULL DEFAULT 'ACTIVO' CONSTRAINT ck_productos_estado CHECK (estado IN ('ACTIVO', 'OBSOLETO')),
+    id_articulo UUID REFERENCES articulos_inventario(id_articulo) ON DELETE SET NULL,
+    creado_en TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    actualizado_en TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS ix_productos_codigo_anterior ON productos (codigo_anterior);
+
+DO $$ BEGIN
+    ALTER TABLE planos ADD CONSTRAINT fk_planos_id_producto
+        FOREIGN KEY (id_producto) REFERENCES productos(id_producto) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+DO $$ BEGIN
+    ALTER TABLE ordenes_produccion ADD CONSTRAINT fk_ordenes_produccion_id_producto
+        FOREIGN KEY (id_producto) REFERENCES productos(id_producto) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+DO $$ BEGIN
+    ALTER TABLE pedido_detalles ADD CONSTRAINT fk_pedido_detalles_id_producto
+        FOREIGN KEY (id_producto) REFERENCES productos(id_producto) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+CREATE INDEX IF NOT EXISTS ix_planos_id_producto ON planos (id_producto);
+CREATE INDEX IF NOT EXISTS ix_ordenes_produccion_id_producto ON ordenes_produccion (id_producto);
+CREATE INDEX IF NOT EXISTS ix_pedido_detalles_id_producto ON pedido_detalles (id_producto);
 
 CREATE TABLE IF NOT EXISTS lotes_material (
     id SERIAL PRIMARY KEY,
