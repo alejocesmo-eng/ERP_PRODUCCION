@@ -2,6 +2,8 @@ import pytest
 from fastapi.testclient import TestClient
 from app.main import app
 
+pytestmark = pytest.mark.pg
+
 client = TestClient(app)
 
 # 1. PRUEBA RN-OP-001 / RN-VT-001: Bloqueo de creación de proyectos duplicados o con datos incompletos

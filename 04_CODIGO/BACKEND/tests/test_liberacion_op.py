@@ -37,10 +37,7 @@ from app.db.models import (
 
 URL_PG = os.environ.get("SGI_TEST_PG_URL")
 
-pytestmark = pytest.mark.skipif(
-    not URL_PG or not URL_PG.startswith("postgresql"),
-    reason="Requiere SGI_TEST_PG_URL apuntando a una copia sgi_test_* (scripts.crear_copia_pruebas).",
-)
+pytestmark = pytest.mark.pg
 
 
 @pytest.fixture

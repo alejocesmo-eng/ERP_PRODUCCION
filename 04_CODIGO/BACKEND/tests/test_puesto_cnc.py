@@ -24,6 +24,8 @@ from app.db.models import (
     EstadoOPEnum
 )
 
+pytestmark = pytest.mark.pg
+
 
 @pytest.fixture(scope="function")
 def db_session():
