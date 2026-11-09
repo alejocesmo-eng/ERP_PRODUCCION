@@ -31,11 +31,17 @@ INSERT INTO rol_permisos (id_rol, id_permiso) VALUES
 ON CONFLICT DO NOTHING;
 
 -- 4. USUARIOS BASE DE PRUEBA
+-- Sin claves en el repositorio (ni en texto plano ni como hash). password_hash queda con el
+-- marcador '!SIN_CLAVE', que bcrypt rechaza: la cuenta no inicia sesión hasta que se le
+-- asigne una clave. Genere el hash bcrypt fuera del repositorio (app.core.security.
+-- get_password_hash) y aplíquelo con:
+--   UPDATE usuarios SET password_hash = '<hash bcrypt>' WHERE email = '<correo>';
+-- En sgi_sandbox los usuarios de demostración los crea scripts.preparar_sandbox --usuarios-demo.
 INSERT INTO usuarios (email, password_hash, nombre_completo, id_rol) VALUES
-('admin@hd.com', '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', 'Administrador del Sistema', 'ADMIN'),
-('ventas@hd.com', 'admin123', 'Laura Gómez - Comercial', 'VENTAS'),
-('diseno@hd.com', 'admin123', 'Carlos Ruiz - Lider Ingeniería', 'DISENO'),
-('calidad@hd.com', 'admin123', 'Ing. Roberto Silva - Calidad', 'CALIDAD')
+('admin@hd.com', '!SIN_CLAVE', 'Administrador del Sistema', 'ADMIN'),
+('ventas@hd.com', '!SIN_CLAVE', 'Laura Gómez - Comercial', 'VENTAS'),
+('diseno@hd.com', '!SIN_CLAVE', 'Carlos Ruiz - Lider Ingeniería', 'DISENO'),
+('calidad@hd.com', '!SIN_CLAVE', 'Ing. Roberto Silva - Calidad', 'CALIDAD')
 ON CONFLICT (email) DO NOTHING;
 
 -- 5. CATÁLOGOS BASE DE MAQUINARIA Y EMPLEADOS
