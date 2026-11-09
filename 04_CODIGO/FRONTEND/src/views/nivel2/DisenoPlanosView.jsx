@@ -730,6 +730,98 @@ export default function DisenoPlanosView() {
     }
   };
 
+  // IMPORTACIÓN CSV DEL LEVANTAMIENTO: mismas columnas que la carga rápida.
+  // Encabezado obligatorio: codigo;descripcion;accion;cantidad;material;cotizado (";" o ",").
+  // Las piezas se agregan a la lista y se guardan con el botón del levantamiento (carga-masiva).
+  const ACCIONES_LEVANTAMIENTO = ['FABRICAR_NUEVA', 'RECTIFICAR_RECUPERAR', 'COMPRA_DIRECTA_BOM'];
+
+  const dividirLineaCSV = (linea, separador) => {
+    const campos = [];
+    let actual = '';
+    let entreComillas = false;
+    for (let i = 0; i < linea.length; i += 1) {
+      const caracter = linea[i];
+      if (caracter === '"') {
+        if (entreComillas && linea[i + 1] === '"') {
+          actual += '"';
+          i += 1;
+        } else {
+          entreComillas = !entreComillas;
+        }
+      } else if (caracter === separador && !entreComillas) {
+        campos.push(actual.trim());
+        actual = '';
+      } else {
+        actual += caracter;
+      }
+    }
+    campos.push(actual.trim());
+    return campos;
+  };
+
+  const handleImportarArchivoCSV = async (e) => {
+    const archivo = e.target.files?.[0];
+    e.target.value = '';
+    if (!archivo) return;
+    setMensaje({ tipo: '', texto: '' });
+
+    const lineas = (await archivo.text()).replace(/^\uFEFF/, '').split(/\r?\n/).filter(linea => linea.trim());
+    if (lineas.length < 2) {
+      setMensaje({ tipo: 'error', texto: '⚠️ El CSV no tiene filas de piezas: incluya el encabezado y al menos una fila.' });
+      return;
+    }
+    const separador = (lineas[0].match(/;/g) || []).length >= (lineas[0].match(/,/g) || []).length ? ';' : ',';
+    const normalizar = (texto) => texto.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    const encabezado = dividirLineaCSV(lineas[0], separador).map(normalizar);
+    const columna = (nombre) => encabezado.indexOf(nombre);
+    if (columna('codigo') < 0 || columna('descripcion') < 0) {
+      setMensaje({
+        tipo: 'error',
+        texto: '⚠️ El encabezado del CSV debe incluir al menos las columnas "codigo" y "descripcion" (opcionales: accion, cantidad, material, cotizado).'
+      });
+      return;
+    }
+
+    const nuevas = [];
+    const descartadas = [];
+    lineas.slice(1).forEach((linea, indice) => {
+      const campos = dividirLineaCSV(linea, separador);
+      const valor = (nombre) => (columna(nombre) >= 0 ? campos[columna(nombre)] || '' : '');
+      const accion = (valor('accion') || 'FABRICAR_NUEVA').toUpperCase();
+      const cantidad = parseInt(valor('cantidad') || '1', 10);
+      const cotizado = parseFloat((valor('cotizado') || '0').replace(',', '.'));
+      if (!valor('codigo') || !valor('descripcion') || !ACCIONES_LEVANTAMIENTO.includes(accion)
+        || !(cantidad > 0) || Number.isNaN(cotizado)) {
+        descartadas.push(indice + 2);
+        return;
+      }
+      nuevas.push({
+        codigo: valor('codigo'),
+        descripcion: valor('descripcion'),
+        accion,
+        cantidad,
+        material: valor('material') || 'AISI 1045',
+        cotizado,
+        autorizado: false
+      });
+    });
+
+    if (nuevas.length) {
+      setPiezasLevantamiento(prev => [
+        ...prev,
+        ...nuevas.map((pieza, indice) => ({ ...pieza, posicion: prev.length + indice + 1 }))
+      ]);
+    }
+    setMensaje({
+      tipo: nuevas.length ? 'exito' : 'error',
+      texto: `📥 ${nuevas.length} piezas importadas de ${archivo.name}.`
+        + (descartadas.length
+          ? ` Filas descartadas (${descartadas.length}): ${descartadas.join(', ')} — requieren código, descripción, cantidad > 0 y acción ${ACCIONES_LEVANTAMIENTO.join(' / ')}.`
+          : '')
+        + (nuevas.length ? ' Guarde el levantamiento para registrarlas.' : '')
+    });
+  };
+
   const handleAgregarPiezaLevantamiento = () => {
     if (!nuevaPiezaTemp.codigo || !nuevaPiezaTemp.descripcion) return;
 
