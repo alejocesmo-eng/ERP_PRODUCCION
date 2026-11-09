@@ -46,6 +46,9 @@ export default function DisenoPlanosView() {
   const [historialPlano, setHistorialPlano] = useState({ eventos: [], cargando: false, error: '' });
   const [justificacionRevision, setJustificacionRevision] = useState('');
   const [registrandoRevision, setRegistrandoRevision] = useState(false);
+  // Archivos elegidos para piezas de un plano aún no creado: { [id de pieza]: { PDF, STEP, DXF } }.
+  // Se suben con /upload-cad cuando POST /planos/ devuelve el id del plano.
+  const [archivosPendientes, setArchivosPendientes] = useState({});
 
   const [mantenimientoSeleccionado, setMantenimientoSeleccionado] = useState(null);
   const [piezasLevantamiento, setPiezasLevantamiento] = useState([]);
@@ -606,6 +609,7 @@ export default function DisenoPlanosView() {
       justificacion: ''
     });
 
+    setArchivosPendientes({});
     setModalNuevoPlanoAbierto(true);
   };
 
@@ -700,6 +704,7 @@ export default function DisenoPlanosView() {
       fecha_entrega_produccion: pedido.fecha_compromiso || '',
       piezas: piezasIniciales
     });
+    setArchivosPendientes({});
     setModalNuevoPlanoAbierto(true);
   };
 
@@ -951,9 +956,10 @@ export default function DisenoPlanosView() {
         handleCambioPieza(piezaId, campoMapeado, res.data[campoRespuesta]);
         setMensaje({ tipo: 'exito', texto: `✅ Archivo CAD ${tipoFormato} [${file.name}] adjunto exitosamente al plano.` });
       } else {
-        const urlTemp = `/static/planos/${file.name}`;
-        handleCambioPieza(piezaId, campoMapeado, urlTemp);
-        setMensaje({ tipo: 'exito', texto: `📄 Archivo ${tipoFormato} [${file.name}] vinculado temporalmente. Guarde la OP.` });
+        // Plano aún no creado: el archivo se sube (con hash e historial) al guardar la OP
+        setArchivosPendientes(prev => ({ ...prev, [piezaId]: { ...(prev[piezaId] || {}), [tipoFormato]: file } }));
+        handleCambioPieza(piezaId, campoMapeado, `/static/planos/${file.name}`);
+        setMensaje({ tipo: 'exito', texto: `📄 Archivo ${tipoFormato} [${file.name}] listo: se subirá al guardar la OP.` });
       }
     } catch (err) {
       setMensaje({ tipo: 'error', texto: mensajeError(err, `Error al subir el archivo ${tipoFormato} al servidor backend.`) });
@@ -1001,6 +1007,43 @@ export default function DisenoPlanosView() {
     }
   };
 
+  // POST /planos/ no recibe las rutas locales de archivos aún no subidos (daría 422)
+  const CAMPOS_ARCHIVO_PIEZA = ['archivo_url', 'archivo_pdf_url', 'archivo_step_url', 'archivo_dxf_url'];
+  const piezaSinArchivos = (pieza) => Object.fromEntries(
+    Object.entries(pieza).filter(([campo]) => !CAMPOS_ARCHIVO_PIEZA.includes(campo))
+  );
+
+  // Sube los archivos pendientes de cada pieza al plano que POST /planos/ creó para ella
+  // (misma posición en la respuesta). Devuelve los errores para informarlos.
+  const subirArchivosPendientes = async (piezasCreadas, planosCreados) => {
+    const errores = [];
+    for (const [indice, pieza] of piezasCreadas.entries()) {
+      const plano = planosCreados?.[indice];
+      const pendientes = archivosPendientes[pieza.id] || {};
+      for (const [tipo, archivo] of Object.entries(pendientes)) {
+        if (!plano?.id_plano) {
+          errores.push(`${tipo} ${archivo.name}: no se recibió el plano creado`);
+          continue;
+        }
+        const formData = new FormData();
+        formData.append('archivo', archivo);
+        try {
+          await API.post(`/planos/upload-cad/${plano.id_plano}/${tipo.toLowerCase()}`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+          });
+        } catch (error) {
+          errores.push(`${tipo} ${archivo.name}: ${mensajeError(error, 'no se pudo subir')}`);
+        }
+      }
+    }
+    setArchivosPendientes(prev => {
+      const restantes = { ...prev };
+      piezasCreadas.forEach(pieza => delete restantes[pieza.id]);
+      return restantes;
+    });
+    return errores;
+  };
+
   const handleCrearOrdenPorItem = async (pieza) => {
     setMensaje({ tipo: '', texto: '' });
 
@@ -1036,14 +1079,16 @@ export default function DisenoPlanosView() {
         codigo_op: pieza.codigo_op || nuevoPlano.codigo_op,
         unidad_planta: pieza.unidad_planta || nuevoPlano.unidad_planta,
         fecha_entrega_produccion: pieza.fecha_compromiso || nuevoPlano.fecha_entrega_produccion,
-        piezas: [piezaPayload]
+        piezas: [piezaSinArchivos(piezaPayload)]
       };
 
-      await API.post('/planos/', payload);
+      const respuesta = await API.post('/planos/', payload);
+      const erroresArchivos = await subirArchivosPendientes([pieza], respuesta.data);
 
-      setMensaje({ 
-        tipo: 'exito', 
-        texto: `✅ Orden de Producción OP-${pieza.codigo_op} [${pieza.detalle_pieza}] creada independientemente en Estado [${nuevoPlano.estado_diseno}].` 
+      setMensaje({
+        tipo: erroresArchivos.length ? 'error' : 'exito',
+        texto: `✅ Orden de Producción OP-${pieza.codigo_op} [${pieza.detalle_pieza}] creada independientemente en Estado [${nuevoPlano.estado_diseno}].`
+          + (erroresArchivos.length ? ` ⚠️ Archivos sin subir: ${erroresArchivos.join(' · ')}` : '')
       });
 
       setPiezasProcesadas(prev => Array.from(new Set([...prev, pieza.id])));
@@ -1094,6 +1139,7 @@ export default function DisenoPlanosView() {
         return;
       }
       const { version_original, justificacion, ...datosPlano } = nuevoPlano;
+      let erroresArchivos = [];
       const payload = {
         ...datosPlano,
         piezas: piezasOp.map(({ id, cantidad_pendiente, cantidad_solicitada, ...resto }) => resto)
@@ -1116,12 +1162,15 @@ export default function DisenoPlanosView() {
         }
         await API.patch(`/planos/${nuevoPlano.id_plano}`, payload);
       } else {
-        await API.post('/planos/', payload);
+        payload.piezas = payload.piezas.map(piezaSinArchivos);
+        const respuesta = await API.post('/planos/', payload);
+        erroresArchivos = await subirArchivosPendientes(piezasOp, respuesta.data);
       }
 
-      setMensaje({ 
-        tipo: 'exito', 
-        texto: `✅ Cambios de la Orden OP-${nuevoPlano.codigo_op} guardados en Estado [${nuevoPlano.estado_diseno}].` 
+      setMensaje({
+        tipo: erroresArchivos.length ? 'error' : 'exito',
+        texto: `✅ Cambios de la Orden OP-${nuevoPlano.codigo_op} guardados en Estado [${nuevoPlano.estado_diseno}].`
+          + (erroresArchivos.length ? ` ⚠️ Archivos sin subir: ${erroresArchivos.join(' · ')}` : '')
       });
       setModalNuevoPlanoAbierto(false);
       

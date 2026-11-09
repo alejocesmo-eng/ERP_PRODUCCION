@@ -5,6 +5,7 @@ POST /planos/: creación de planos con y sin piezas.
 SQLite en memoria con override de get_db, tokens ficticios y una aplicación FastAPI
 mínima con el router de planos (no se importa app.main) para no tocar ninguna base real.
 """
+import hashlib
 import uuid
 from datetime import timedelta
 
@@ -18,7 +19,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.v1 import planos as planos_api
 from app.core.security import create_access_token
 from app.db.database import Base, get_db
-from app.db.models import BOMListaMateriales, Plano, PlanoHistorial, Proyecto
+from app.db.models import BOMListaMateriales, Plano, PlanoArchivo, PlanoHistorial, Proyecto
 
 
 @pytest.fixture
@@ -124,3 +125,97 @@ def test_con_piezas_crea_un_plano_por_pieza(ctx):
 
     assert respuesta.status_code == 201, respuesta.text
     assert [(p.codigo_plano, p.version) for p in leer_planos(Sesion)] == [("PLN-CR-A", "V-02"), ("PLN-CR-B", "V-01")]
+
+
+# --- Archivos referenciados por ruta: hash, planos_archivos e historial ---
+
+def tablas(Sesion):
+    s = Sesion()
+    try:
+        return s.query(Plano).count(), s.query(PlanoArchivo).all(), s.query(PlanoHistorial).order_by(PlanoHistorial.fecha).all()
+    finally:
+        s.close()
+
+
+def test_archivos_de_las_piezas_se_registran_con_hash_y_evento(ctx):
+    client, Sesion, directorio = ctx
+    proyecto = crear_proyecto(Sesion)
+    (directorio / "PLN-CR-A.pdf").write_bytes(b"%PDF plano A")
+    (directorio / "PLN-CR-A.step").write_bytes(b"ISO-10303 modelo A")
+
+    respuesta = crear(
+        client, proyecto,
+        piezas=[{
+            "codigo_plano": "PLN-CR-A",
+            "archivo_pdf_url": "/static/planos/PLN-CR-A.pdf",
+            "archivo_step_url": "/static/planos/PLN-CR-A.step",
+        }],
+    )
+
+    assert respuesta.status_code == 201, respuesta.text
+    [plano] = respuesta.json()
+    assert plano["archivo_pdf_url"] == "/static/planos/PLN-CR-A.pdf"
+    assert plano["archivo_step_url"] == "/static/planos/PLN-CR-A.step"
+    _, archivos, eventos = tablas(Sesion)
+    por_tipo = {a.tipo: a for a in archivos}
+    assert set(por_tipo) == {"PDF", "STEP"}
+    assert por_tipo["PDF"].sha256 == hashlib.sha256(b"%PDF plano A").hexdigest()
+    assert por_tipo["PDF"].tamano_bytes == len(b"%PDF plano A")
+    assert all(a.vigente and a.subido_por == "diseno@prueba.test" for a in archivos)
+    assert eventos[0].tipo_evento == "CREACION"
+    cargas = {e.tipo_archivo: e for e in eventos[1:]}
+    assert {e.tipo_evento for e in eventos[1:]} == {"CARGA_ARCHIVO"}
+    assert cargas["STEP"].sha256 == hashlib.sha256(b"ISO-10303 modelo A").hexdigest()
+    assert cargas["PDF"].justificacion is None
+
+
+def test_archivo_de_la_cabecera_sin_piezas_se_registra(ctx):
+    client, Sesion, directorio = ctx
+    proyecto = crear_proyecto(Sesion)
+    (directorio / "corte.dxf").write_bytes(b"0 SECTION")
+
+    respuesta = crear(client, proyecto, codigo_plano="PLN-CR-DXF", archivo_dxf_url="/static/planos/corte.dxf")
+
+    assert respuesta.status_code == 201, respuesta.text
+    _, [archivo], eventos = tablas(Sesion)
+    assert (archivo.tipo, archivo.sha256) == ("DXF", hashlib.sha256(b"0 SECTION").hexdigest())
+    assert [e.tipo_evento for e in eventos] == ["CREACION", "CARGA_ARCHIVO"]
+
+
+@pytest.mark.parametrize(
+    "ruta",
+    ["/static/planos/no_existe.pdf", "../../fuera_del_almacenamiento.pdf"],
+    ids=["inexistente", "ruta_fuera_del_almacenamiento"],
+)
+def test_archivo_que_no_esta_en_el_almacenamiento_da_422_sin_crear_nada(ctx, ruta):
+    client, Sesion, directorio = ctx
+    proyecto = crear_proyecto(Sesion)
+    (directorio.parent / "fuera_del_almacenamiento.pdf").write_bytes(b"%PDF fuera")
+
+    respuesta = crear(client, proyecto, piezas=[{"codigo_plano": "PLN-CR-X", "archivo_pdf_url": ruta}])
+
+    assert respuesta.status_code == 422
+    assert "upload-cad" in respuesta.json()["detail"]
+    assert tablas(Sesion) == (0, [], [])
+
+
+def test_archivo_con_extension_de_otro_tipo_da_400(ctx):
+    client, Sesion, directorio = ctx
+    proyecto = crear_proyecto(Sesion)
+    (directorio / "plano.pdf").write_bytes(b"%PDF")
+
+    respuesta = crear(client, proyecto, piezas=[{"codigo_plano": "PLN-CR-X", "archivo_step_url": "/static/planos/plano.pdf"}])
+
+    assert respuesta.status_code == 400
+    assert tablas(Sesion) == (0, [], [])
+
+
+def test_archivo_vacio_da_400(ctx):
+    client, Sesion, directorio = ctx
+    proyecto = crear_proyecto(Sesion)
+    (directorio / "vacio.pdf").write_bytes(b"")
+
+    respuesta = crear(client, proyecto, piezas=[{"codigo_plano": "PLN-CR-X", "archivo_pdf_url": "/static/planos/vacio.pdf"}])
+
+    assert respuesta.status_code == 400
+    assert tablas(Sesion) == (0, [], [])

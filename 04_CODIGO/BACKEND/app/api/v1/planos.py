@@ -20,6 +20,7 @@ from app.api.v1.quality_gate import (
     ESTADOS_BOM_LIBERABLES,
     revision_posterior_a_aprobacion,
     ruta_fisica_archivo,
+    sha256_de_archivo,
     validar_entrega_diseno,
     validar_liberacion_op,
 )
@@ -160,6 +161,37 @@ def _guardar_archivo_cad(
         raise HTTPException(status_code=500, detail="No se pudo registrar el archivo del plano.") from error
     db.refresh(plano)
     return plano
+
+
+def _archivo_almacenado(tipo: str, url: str) -> dict:
+    """Archivo que POST /planos/ referencia por ruta: debe estar ya en el almacenamiento de
+    planos con la extensión del tipo. Devuelve ruta, nombre, tamaño y sha256 calculados del
+    archivo en disco para registrarlo como vigente en planos_archivos."""
+    _, extensiones, _ = FORMATOS_CAD[tipo]
+    nombre = os.path.basename(url or "")
+    if not nombre.lower().endswith(extensiones):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Formato inválido para {tipo.upper()}. Extensiones admitidas: {', '.join(extensiones)}.",
+        )
+    ruta_fisica = ruta_fisica_archivo(url)
+    if not os.path.isfile(ruta_fisica):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"El archivo {tipo.upper()} '{nombre}' no existe en el almacenamiento de planos: "
+                f"súbalo con POST /planos/upload-cad/{{id_plano}}/{tipo} después de crear el plano."
+            ),
+        )
+    tamano_bytes = os.path.getsize(ruta_fisica)
+    if tamano_bytes == 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"El archivo {tipo.upper()} '{nombre}' está vacío.")
+    return {
+        "ruta": f"/static/planos/{nombre}",
+        "nombre": nombre,
+        "tamano_bytes": tamano_bytes,
+        "sha256": sha256_de_archivo(ruta_fisica),
+    }
 
 
 def _como_utc(valor: datetime) -> datetime:
@@ -352,9 +384,19 @@ def crear_planos(
             archivo_dxf_url=plano_in.archivo_dxf_url,
         )
     ]
+    # Archivos referenciados por ruta: se validan todos antes de escribir y se registran con
+    # sha256 y tamaño en planos_archivos y en el historial, igual que una primera carga
+    archivos_por_pieza = [
+        {
+            tipo: _archivo_almacenado(tipo, url)
+            for tipo, (campo, _, _) in FORMATOS_CAD.items()
+            if (url := getattr(pieza, campo) or getattr(plano_in, campo))
+        }
+        for pieza in piezas
+    ]
     planos_creados = []
     try:
-        for pieza in piezas:
+        for pieza, archivos in zip(piezas, archivos_por_pieza):
             plano = Plano(
                 id_proyecto=proyecto.id_proyecto,
                 codigo_op=plano_in.codigo_op,
@@ -365,13 +407,28 @@ def crear_planos(
                 estado_diseno=plano_in.estado_diseno or "PLANIFICADA",
                 causa_espera=plano_in.causa_espera,
                 material_requerido=pieza.material_requerido or plano_in.material_requerido,
-                archivo_pdf_url=pieza.archivo_pdf_url or plano_in.archivo_pdf_url,
-                archivo_step_url=pieza.archivo_step_url or plano_in.archivo_step_url,
-                archivo_dxf_url=pieza.archivo_dxf_url or plano_in.archivo_dxf_url,
             )
             db.add(plano)
             db.flush()
             registrar_evento_plano(db, plano, "CREACION", usuario_actual["email"])
+            for tipo, archivo in archivos.items():
+                db.add(PlanoArchivo(
+                    id_plano=plano.id_plano,
+                    tipo=tipo.upper(),
+                    ruta=archivo["ruta"],
+                    nombre_original=archivo["nombre"][:255],
+                    tamano_bytes=archivo["tamano_bytes"],
+                    sha256=archivo["sha256"],
+                    revision=plano.version,
+                    vigente=True,
+                    subido_por=usuario_actual["email"],
+                ))
+                setattr(plano, FORMATOS_CAD[tipo][0], archivo["ruta"])
+                registrar_evento_plano(
+                    db, plano, "CARGA_ARCHIVO", usuario_actual["email"],
+                    tipo_archivo=tipo.upper(), sha256=archivo["sha256"],
+                )
+            db.flush()
             datos_bom = _datos_pieza(plano_in, pieza)
             if datos_bom["codigo_material"]:
                 db.add(BOMListaMateriales(
