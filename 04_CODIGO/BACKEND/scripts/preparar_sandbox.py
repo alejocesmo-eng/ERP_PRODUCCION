@@ -8,6 +8,10 @@ Prepara la base local sgi_sandbox para pruebas manuales de la aplicacion:
    Todas son idempotentes.
 3. Verifica el trigger del historial de planos, las extensiones pg_trgm y unaccent y la
    funcion sgi_normalizar.
+4. Datos de demostracion: crea los usuarios de prueba que falten (uno por rol, con los
+   correos de los botones "Acceso de Pruebas (Dev Mode)" del login) y sus roles. Los que
+   ya existen no se tocan. La clave de demostracion sale de SGI_SANDBOX_DEMO_PASSWORD y se
+   guarda con bcrypt; sin esa variable se omite este paso.
 
 Credenciales solo por variables de entorno, como el resto de scripts (ADR-005):
 SGI_TEST_PG_ADMIN_URL (sin clave) y PGPASSWORD. El script no imprime ni guarda credenciales.
@@ -18,12 +22,16 @@ de pedir confirmacion escribiendo su nombre.
 Uso, desde 04_CODIGO/BACKEND:
     python -m scripts.preparar_sandbox
     python -m scripts.preparar_sandbox --regenerar
+    python -m scripts.preparar_sandbox --usuarios-demo   # solo usuarios que falten
 """
 import argparse
+import os
 import re
 import sys
+import uuid
 from pathlib import Path
 
+import bcrypt
 from psycopg2 import errors, sql
 
 from scripts._pg_pruebas import (
@@ -51,6 +59,38 @@ VERIFICACIONES = (
     ("Extension unaccent (migracion 22)", "SELECT 1 FROM pg_extension WHERE extname = 'unaccent'"),
     ("Funcion sgi_normalizar (migracion 22)", "SELECT 1 FROM pg_proc WHERE proname = 'sgi_normalizar'"),
 )
+
+
+VARIABLE_CLAVE_DEMO = "SGI_SANDBOX_DEMO_PASSWORD"
+# Roles que usan los usuarios de demostracion (se crean solo si faltan; FK usuarios.id_rol)
+ROLES_DEMO = (
+    ("ADMIN", "Administrador General"),
+    ("JEFE_ING", "Jefe de Ingeniería"),
+    ("DISENO", "Dibujante"),
+    ("VENTAS", "Ventas"),
+    ("PRODUCCION", "Líder de Producción"),
+    ("ALMACEN", "Almacén y Compras"),
+    ("CALIDAD", "Calidad"),
+)
+# Mismos correos que cargar_semilla.py y los botones de Dev Mode de LoginView.jsx
+USUARIOS_DEMO = (
+    ("admin@sgi.com", "Administrador SGI", "ADMIN"),
+    ("jefe_diseno@sgi.local", "Roberto Méndez - Jefe Diseño", "JEFE_ING"),
+    ("dibujante_1@sgi.local", "Carlos Ruiz - Dibujante 1", "DISENO"),
+    ("dibujante_2@sgi.local", "Ana María Silva - Dibujante 2", "DISENO"),
+    ("ventas@sgi.local", "Laura Gómez - Ventas", "VENTAS"),
+    ("lider_produccion@sgi.local", "Jorge Méndez - Líder Prod", "PRODUCCION"),
+    ("almacen@sgi.local", "Andrés Torres - Almacén", "ALMACEN"),
+    ("calidad@sgi.local", "Paula Rojas - Calidad", "CALIDAD"),
+)
+
+
+def filas_usuarios_demo(clave: str) -> list[tuple]:
+    """(id_usuario, email, hash bcrypt, nombre, rol) por usuario; bcrypt con 12 rondas como la app."""
+    return [
+        (str(uuid.uuid4()), email, bcrypt.hashpw(clave.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8"), nombre, rol)
+        for email, nombre, rol in USUARIOS_DEMO
+    ]
 
 
 def migraciones_sandbox() -> list[Path]:
@@ -137,15 +177,62 @@ def _verificar() -> None:
         conexion.close()
 
 
+def _cargar_usuarios_demo() -> None:
+    clave = os.environ.get(VARIABLE_CLAVE_DEMO)
+    if not clave:
+        print(
+            f"Usuarios de demostracion omitidos: defina {VARIABLE_CLAVE_DEMO} en la sesion "
+            "(la misma clave de los botones de Dev Mode si quiere usarlos) y ejecute "
+            "python -m scripts.preparar_sandbox --usuarios-demo."
+        )
+        return
+    conexion = conectar(SANDBOX)
+    try:
+        cur = conexion.cursor()
+        cur.executemany(
+            "INSERT INTO roles (id_rol, nombre_rol) VALUES (%s, %s) ON CONFLICT (id_rol) DO NOTHING",
+            ROLES_DEMO,
+        )
+        creados = 0
+        for fila in filas_usuarios_demo(clave):
+            cur.execute(
+                "INSERT INTO usuarios (id_usuario, email, password_hash, nombre_completo, id_rol, activo, creado_en) "
+                "VALUES (%s, %s, %s, %s, %s, TRUE, now()) ON CONFLICT (email) DO NOTHING",
+                fila,
+            )
+            creados += cur.rowcount
+        print(
+            f"Usuarios de demostracion: {creados} creados y {len(USUARIOS_DEMO) - creados} ya existian "
+            "(los existentes no se modifican)."
+        )
+    finally:
+        conexion.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=f"Prepara {SANDBOX} desde {PLANTILLA} con las migraciones recientes.")
     parser.add_argument("--regenerar", action="store_true", help=f"Elimina {SANDBOX} (con confirmacion) y la crea de nuevo.")
-    regenerar = parser.parse_args().regenerar
+    parser.add_argument(
+        "--usuarios-demo", action="store_true",
+        help=f"Solo crea los usuarios de demostracion que falten en {SANDBOX} ya existente.",
+    )
+    argumentos = parser.parse_args()
     validar_nombre(SANDBOX, permitir_sandbox=True)
 
-    _crear_sandbox(regenerar)
+    if argumentos.usuarios_demo:
+        admin = conectar_admin()
+        try:
+            if not existe_base(admin.cursor(), SANDBOX):
+                fallar(f"No existe {SANDBOX}. Creela primero con: python -m scripts.preparar_sandbox")
+        finally:
+            admin.close()
+        _cargar_usuarios_demo()
+        return
+
+    _crear_sandbox(argumentos.regenerar)
     _aplicar_migraciones()
     _verificar()
+    _cargar_usuarios_demo()
     print(
         f"{SANDBOX} lista. Para el backend use como DATABASE_URL la conexion de SGI_TEST_PG_ADMIN_URL "
         f"con la base {SANDBOX}; la clave sigue solo en PGPASSWORD."
