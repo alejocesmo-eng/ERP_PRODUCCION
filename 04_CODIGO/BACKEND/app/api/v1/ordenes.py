@@ -35,6 +35,7 @@ from app.api.v1.quality_gate import (
     validar_liberacion_op,
 )
 from app.services.auditoria import agregar_evento_trazabilidad
+from app.services.historial_planos import historial_por_plano
 
 router = APIRouter()
 
@@ -85,6 +86,7 @@ def obtener_expediente_op(
     # Misma selección que la liberación: planos vigentes del producto de la OP (sin otro criterio)
     planos = planos_vigentes_de_producto(db, op.id_producto) if op.id_producto else []
     archivos_por_plano = archivos_vigentes(db, planos)
+    historial_planos = historial_por_plano(db, [plano.id_plano for plano in planos])
     producto = db.query(Producto).filter(Producto.id_producto == op.id_producto).first() if op.id_producto else None
 
     plano_ids = [plano.id_plano for plano in planos]
@@ -189,6 +191,8 @@ def obtener_expediente_op(
             "revisar": revision_posterior_a_aprobacion(plano.fecha_ultima_revision, plano.fecha_aprobacion),
             "piezas": piezas_por_plano.get(plano.id_plano, []),
             "resumen_bom": bom_por_plano.get(plano.id_plano, []),
+            # Línea de tiempo append-only del plano (migración 21)
+            "historial": historial_planos.get(plano.id_plano, []),
         })
 
     estados_bom = [linea.estado_abastecimiento for linea in lineas_bom]

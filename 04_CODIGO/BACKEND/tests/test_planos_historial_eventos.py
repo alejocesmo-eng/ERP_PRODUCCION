@@ -317,3 +317,46 @@ def test_revision_es_solo_de_diseno(ctx, rol):
 
     assert respuesta.status_code == 403
     assert eventos(Sesion, plano.id_plano) == []
+
+
+# --- Lectura: GET /planos/{id}/historial ---
+
+def test_historial_exige_token_y_plano_existente(ctx):
+    client, Sesion, _ = ctx
+    plano = crear_plano(Sesion)
+
+    assert client.get(f"/api/v1/planos/{plano.id_plano}/historial").status_code == 401
+    assert client.get(f"/api/v1/planos/{uuid.uuid4()}/historial", headers=token()).status_code == 404
+    assert client.get(f"/api/v1/planos/{plano.id_plano}/historial", headers=token()).json() == []
+
+
+def test_historial_devuelve_la_linea_de_tiempo_en_orden_con_todos_los_campos(ctx):
+    client, Sesion, _ = ctx
+    plano = crear_plano(Sesion, dibujante_asignado="Ing. Carlos Ruiz")
+    assert subir(client, plano, b"%PDF uno").status_code == 200
+    assert client.patch(
+        f"/api/v1/planos/{plano.id_plano}",
+        json={"version": "V-02", "estado_diseno": "EN_DISENO", "justificacion": JUSTIFICACION},
+        headers=token(),
+    ).status_code == 200
+    assert subir(client, plano, b"%PDF dos", justificacion=JUSTIFICACION).status_code == 200
+    assert client.post(f"/api/v1/planos/{plano.id_plano}/aprobar", headers=token()).status_code == 200
+
+    respuesta = client.get(f"/api/v1/planos/{plano.id_plano}/historial", headers=token("PRODUCCION"))
+
+    assert respuesta.status_code == 200
+    historial = respuesta.json()
+    assert [(e["tipo_evento"], e["version"], e["estado"]) for e in historial] == [
+        ("CARGA_ARCHIVO", "V-01", "PLANIFICADA"),
+        ("CAMBIO_VERSION", "V-02", "EN_DISENO"),
+        ("CAMBIO_ESTADO", "V-02", "EN_DISENO"),
+        ("CAMBIO_ARCHIVO", "V-02", "EN_DISENO"),
+        ("APROBACION", "V-02", "EN_DISENO"),
+    ]
+    assert set(historial[0]) == {
+        "id_evento", "tipo_evento", "version", "version_anterior", "estado", "tipo_archivo",
+        "sha256", "usuario", "fecha", "justificacion",
+    }
+    assert historial[1]["version_anterior"] == "V-01"
+    assert historial[3]["sha256"] == hashlib.sha256(b"%PDF dos").hexdigest()
+    assert [e["fecha"] for e in historial] == sorted(e["fecha"] for e in historial)

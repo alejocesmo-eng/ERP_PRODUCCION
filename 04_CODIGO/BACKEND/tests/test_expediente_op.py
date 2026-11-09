@@ -11,6 +11,7 @@ from app.api.v1 import planos as planos_api
 from app.api.v1.calidad import InspeccionCalidadCreate, registrar_inspeccion_calidad
 from app.api.v1.ordenes import liberar_orden_produccion, obtener_expediente_op
 from app.api.v1.proyectos import obtener_expediente_pedido
+from app.services.historial_planos import registrar_evento_plano
 from app.db.database import Base
 from app.db.models import (
     BOMListaMateriales,
@@ -29,6 +30,7 @@ from app.db.models import (
     Permiso,
     Plano,
     PlanoArchivo,
+    PlanoHistorial,
     Producto,
     Proyecto,
     RegistroTiemposProduccion,
@@ -58,6 +60,7 @@ def db(tmp_path, monkeypatch):
         PedidoDetalle.__table__,
         Plano.__table__,
         PlanoArchivo.__table__,
+        PlanoHistorial.__table__,
         OTDetalle.__table__,
         OrdenProduccion.__table__,
         BOMListaMateriales.__table__,
@@ -340,3 +343,21 @@ def test_tratamiento_termico_registra_servicio_en_la_misma_transaccion(db):
     assert inspeccion.notificado_jefe_produccion is False
     assert servicio.op_id == orden.id_op
     assert servicio.proveedor == "Tratamientos Industriales"
+
+
+def test_expediente_trae_el_historial_de_cada_plano_en_orden(db):
+    crear_expediente(db, aprobado=True)
+    plano = db.query(Plano).filter(Plano.codigo_plano == "PLN-88-A").one()
+    registrar_evento_plano(db, plano, "CARGA_ARCHIVO", "ana.diseno@hd.com", tipo_archivo="PDF", sha256="b" * 64)
+    registrar_evento_plano(db, plano, "APROBACION", "lider.diseno@hd.com")
+    db.commit()
+
+    expediente = obtener_expediente_op("4001234", db=db, usuario_actual={"rol": "PRODUCCION"})
+
+    historial = expediente["planos"][0]["historial"]
+    assert [(e["tipo_evento"], e["usuario"]) for e in historial] == [
+        ("CARGA_ARCHIVO", "ana.diseno@hd.com"),
+        ("APROBACION", "lider.diseno@hd.com"),
+    ]
+    assert historial[0]["sha256"] == "b" * 64
+    assert historial[0]["version"] == "REV-02"

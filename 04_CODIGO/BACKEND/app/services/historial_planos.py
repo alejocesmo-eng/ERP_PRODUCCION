@@ -1,4 +1,6 @@
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Iterable, Optional
+from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -37,7 +39,9 @@ def registrar_evento_plano(
     sha256: Optional[str] = None,
     justificacion: Optional[str] = None,
 ) -> PlanoHistorial:
-    """Añade un evento append-only a la transacción activa; el llamador confirma junto al cambio."""
+    """Añade un evento append-only a la transacción activa; el llamador confirma junto al cambio.
+    La fecha se toma aquí y no del servidor: en PostgreSQL now() es la hora de inicio de la
+    transacción y los eventos de una misma petición quedarían empatados en la línea de tiempo."""
     evento = PlanoHistorial(
         id_plano=plano.id_plano,
         tipo_evento=tipo_evento,
@@ -47,7 +51,40 @@ def registrar_evento_plano(
         tipo_archivo=tipo_archivo,
         sha256=sha256,
         usuario=usuario,
+        fecha=datetime.now(timezone.utc),
         justificacion=justificacion,
     )
     db.add(evento)
     return evento
+
+
+def serializar_evento_plano(evento: PlanoHistorial) -> dict:
+    return {
+        "id_evento": str(evento.id_evento),
+        "tipo_evento": evento.tipo_evento,
+        "version": evento.version,
+        "version_anterior": evento.version_anterior,
+        "estado": evento.estado,
+        "tipo_archivo": evento.tipo_archivo,
+        "sha256": evento.sha256,
+        "usuario": evento.usuario,
+        "fecha": evento.fecha.isoformat() if evento.fecha else None,
+        "justificacion": evento.justificacion,
+    }
+
+
+def historial_por_plano(db: Session, ids_plano: Iterable[UUID]) -> dict[UUID, list[dict]]:
+    """Línea de tiempo de cada plano en orden cronológico, en una sola consulta."""
+    ids = list(ids_plano)
+    if not ids:
+        return {}
+    eventos = (
+        db.query(PlanoHistorial)
+        .filter(PlanoHistorial.id_plano.in_(ids))
+        .order_by(PlanoHistorial.fecha, PlanoHistorial.id_evento)
+        .all()
+    )
+    resultado: dict[UUID, list[dict]] = {}
+    for evento in eventos:
+        resultado.setdefault(evento.id_plano, []).append(serializar_evento_plano(evento))
+    return resultado

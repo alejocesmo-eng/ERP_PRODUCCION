@@ -26,6 +26,7 @@ from app.api.v1.quality_gate import (
 from app.services.auditoria import agregar_evento_trazabilidad
 from app.services.historial_planos import (
     exigir_justificacion,
+    historial_por_plano,
     justificacion_opcional,
     registrar_evento_plano,
 )
@@ -551,6 +552,18 @@ def aprobar_plano(
         db.rollback()
         raise HTTPException(status_code=500, detail="No se pudo aprobar el plano.") from error
     return plano
+
+
+@router.get("/{id_plano}/historial")
+def obtener_historial_plano(
+    id_plano: UUID,
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
+    """Línea de tiempo append-only del plano (migración 21), en orden cronológico."""
+    if not db.query(Plano.id_plano).filter(Plano.id_plano == id_plano).first():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plano no encontrado.")
+    return historial_por_plano(db, [id_plano]).get(id_plano, [])
 
 
 @router.post("/{id_plano}/revision", response_model=PlanoResponse)

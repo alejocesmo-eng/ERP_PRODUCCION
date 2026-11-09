@@ -300,3 +300,25 @@ def test_expediente_de_op_sin_producto_no_muestra_planos_y_no_aprueba(ctx):
     assert datos["producto"] is None
     assert datos["quality_gate"]["aprobado"] is False
     assert "no tiene producto asignado" in datos["quality_gate"]["motivos"][0]
+
+
+# --- Historial de planos (migración 21) ---
+
+def test_expediente_trae_la_linea_de_tiempo_de_cada_plano(ctx):
+    client, sesion = ctx
+    op, [plano] = crear_op(sesion, {"aprobado": False})
+    justificacion = "Revisión de tolerancias con el cliente"
+
+    assert client.post(f"/api/v1/planos/{plano.id_plano}/aprobar", headers=token("DISENO")).status_code == 200
+    respuesta = client.post(
+        f"/api/v1/planos/{plano.id_plano}/revision", json={"justificacion": justificacion}, headers=token("DISENO")
+    )
+    assert respuesta.status_code == 200, respuesta.text
+
+    [fila] = expediente(client, op)["planos"]
+    assert [(e["tipo_evento"], e["usuario"], e["justificacion"]) for e in fila["historial"]] == [
+        ("APROBACION", "diseno@prueba.test", None),
+        ("REVISION", "diseno@prueba.test", justificacion),
+    ]
+    assert fila["revisar"] is True
+    assert client.get(f"/api/v1/planos/{plano.id_plano}/historial", headers=token("PRODUCCION")).json() == fila["historial"]
