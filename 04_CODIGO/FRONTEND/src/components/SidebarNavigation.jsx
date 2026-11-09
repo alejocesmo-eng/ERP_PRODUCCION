@@ -1,153 +1,265 @@
 // src/componentes/SidebarNavigation.jsx
-import React from 'react';
+import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 export const SidebarNavigation = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const [visible, setVisible] = useState(false);
 
   const handleLogout = () => {
     localStorage.removeItem('sgi_token');
     window.location.href = '/';
   };
 
-  const isActive = (path) => 
-    location.pathname === path 
-      ? 'bg-blue-600 text-white font-bold' 
+  const isActive = (path) =>
+    location.pathname === path
+      ? 'bg-blue-600 text-white font-bold shadow-sm'
       : 'text-slate-300 hover:bg-slate-800 hover:text-white';
 
   return (
-    <aside className="w-64 bg-slate-900 text-white min-h-screen p-4 flex flex-col justify-between border-r border-slate-800 shadow-xl">
-      <div>
-        {/* ENCABEZADO CORPORATIVO SGI */}
-        <div className="border-b border-slate-800 pb-4 mb-6">
-          <h1 className="font-extrabold text-lg tracking-wide text-blue-400">SGI — ISO 9001:2026</h1>
-          <p className="text-[11px] text-slate-400 mt-0.5">Sistema de Gestión Integral</p>
+    <>
+      {/* 1. BOTÓN FLOTANTE PARA DESPLEGAR */}
+      <button
+        type="button"
+        onClick={() => setVisible(true)}
+        onMouseEnter={() => setVisible(true)}
+        aria-label="Abrir menú de navegación"
+        className={`fixed top-4 left-4 z-40 p-2.5 rounded-xl bg-slate-900/90 text-white border border-slate-700 shadow-xl backdrop-blur-md hover:bg-slate-800 hover:border-blue-500 transition-all duration-300 flex items-center justify-center cursor-pointer ${
+          visible ? 'opacity-0 pointer-events-none scale-75' : 'opacity-100 scale-100'
+        }`}
+      >
+        <svg
+          className="w-5 h-5 text-blue-400"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M4 6h16M4 12h16M4 18h16"
+          />
+        </svg>
+      </button>
+
+      {/* 2. MENÚ LATERAL (Se oculta solo al retirar el cursor con onMouseLeave) */}
+      <aside
+        onMouseEnter={() => setVisible(true)}
+        onMouseLeave={() => setVisible(false)}
+        className={`fixed top-4 left-0 w-64 bg-slate-900/95 backdrop-blur-md text-white border-y border-r border-slate-800 rounded-r-2xl shadow-2xl p-4 z-50 transition-all duration-300 ease-in-out select-none flex flex-col gap-4 ${
+          visible
+            ? 'translate-x-0 opacity-100 pointer-events-auto'
+            : '-translate-x-full opacity-0 pointer-events-none'
+        }`}
+      >
+        {/* CABECERA */}
+        <div className="border-b border-slate-800 pb-3 flex items-center justify-between">
+          <div>
+            <h1 className="font-extrabold text-3xl tracking-wide text-blue-400">
+              PRISMA
+            </h1>
+            <p className="text-[10px] text-slate-400 mt-0.5">Sistema de Gestión Integral</p>
+          </div>
+          {/* Botón opcional para cerrar de forma manual */}
+          <button
+            type="button"
+            onClick={() => setVisible(false)}
+            className="text-slate-400 hover:text-white p-1 rounded-md hover:bg-slate-800 transition"
+            aria-label="Cerrar menú"
+          >
+            ✕
+          </button>
         </div>
 
-        {/* NAVEGACIÓN MISIONAL POR NIVELES */}
-        <nav className="space-y-6 text-xs">
-          {/* NIVEL 1 — DIRECCIÓN */}
-          <div>
-            <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Nivel 1 — Dirección</h2>
-            <ul className="space-y-1">
-              <li>
-                <Link to="/dashboard" className={`block py-2 px-3 rounded transition ${isActive('/dashboard')}`}>
-                  📊 Dashboard Gerencial
-                </Link>
-              </li>
-            </ul>
-          </div>
-
+        {/* NAVEGACIÓN MISIONAL */}
+        <nav className="space-y-4 text-xs overflow-y-auto max-h-[calc(100vh-140px)] pr-1">
           {/* NIVEL 2 — OPERACIÓN */}
           <div>
-            <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Nivel 2 — Operación</h2>
+            <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+              Nivel 2 — Operación
+            </h2>
             <ul className="space-y-1">
               <li>
-                <Link to="/ventas/proyectos" className={`block py-2 px-3 rounded transition ${isActive('/ventas/proyectos')}`}>
-                  🤝 Ventas / Proyectos
+                <Link
+                  to="/ventas/proyectos"
+                  onClick={() => setVisible(false)}
+                  className={`flex items-center gap-2.5 py-1.5 px-2.5 rounded-lg transition ${isActive('/ventas/proyectos')}`}
+                >
+                  <span className="text-sm">🤝</span>
+                  <span className="truncate">Ventas / Proyectos</span>
                 </Link>
               </li>
               <li>
-                <Link to="/diseno/planos" className={`block py-2 px-3 rounded transition ${isActive('/diseno/planos')}`}>
-                  📐 Diseño e Ingeniería
+                <Link
+                  to="/diseno/planos"
+                  onClick={() => setVisible(false)}
+                  className={`flex items-center gap-2.5 py-1.5 px-2.5 rounded-lg transition ${isActive('/diseno/planos')}`}
+                >
+                  <span className="text-sm">📐</span>
+                  <span className="truncate">Diseño e Ingeniería</span>
                 </Link>
               </li>
               <li>
-                <Link to="/compras/gestion" className={`block py-2 px-3 rounded transition ${isActive('/compras/gestion')}`}>
-                  🛒 Compras y Proveedores
+                <Link
+                  to="/compras/gestion"
+                  onClick={() => setVisible(false)}
+                  className={`flex items-center gap-2.5 py-1.5 px-2.5 rounded-lg transition ${isActive('/compras/gestion')}`}
+                >
+                  <span className="text-sm">🛒</span>
+                  <span className="truncate">Compras y Proveedores</span>
                 </Link>
               </li>
               <li>
-                <Link to="/inventario/general" className={`block py-2 px-3 rounded transition ${isActive('/inventario/general')}`}>
-                  🧾 Inventario General
+                <Link
+                  to="/inventario/general"
+                  onClick={() => setVisible(false)}
+                  className={`flex items-center gap-2.5 py-1.5 px-2.5 rounded-lg transition ${isActive('/inventario/general')}`}
+                >
+                  <span className="text-sm">📋</span>
+                  <span className="truncate">Inventario General</span>
                 </Link>
               </li>
               <li>
-                <Link to="/configuracion/maestros" className={`block py-2 px-3 rounded transition ${isActive('/configuracion/maestros')}`}>
-                  ⚙️ Datos Maestros
+                <Link
+                  to="/almacen/inventario"
+                  onClick={() => setVisible(false)}
+                  className={`flex items-center gap-2.5 py-1.5 px-2.5 rounded-lg transition ${isActive('/almacen/inventario')}`}
+                >
+                  <span className="text-sm">📦</span>
+                  <span className="truncate">Almacén e Inventarios</span>
                 </Link>
               </li>
               <li>
-                <Link to="/almacen/inventario" className={`block py-2 px-3 rounded transition ${isActive('/almacen/inventario')}`}>
-                  📦 Almacén Operativo
+                <Link
+                  to="/produccion"
+                  onClick={() => setVisible(false)}
+                  className={`flex items-center gap-2.5 py-1.5 px-2.5 rounded-lg transition ${isActive('/produccion')}`}
+                >
+                  <span className="text-sm">🏭</span>
+                  <span className="truncate">Producción y Planta</span>
                 </Link>
               </li>
               <li>
-                <Link to="/produccion" className={`block py-2 px-3 rounded transition ${isActive('/produccion')}`}>
-                  🏭 Producción y Planta
+                <Link
+                  to="/mantenimiento/planta"
+                  onClick={() => setVisible(false)}
+                  className={`flex items-center gap-2.5 py-1.5 px-2.5 rounded-lg transition ${isActive('/mantenimiento/planta')}`}
+                >
+                  <span className="text-sm">🔧</span>
+                  <span className="truncate">Mantenimiento de Planta</span>
                 </Link>
               </li>
               <li>
-                <Link to="/mantenimiento/planta" className={`block py-2 px-3 rounded transition ${isActive('/mantenimiento/planta')}`}>
-                  🔧 Mantenimiento de Planta
+                <Link
+                  to="/produccion/capacidad"
+                  onClick={() => setVisible(false)}
+                  className={`flex items-center gap-2.5 py-1.5 px-2.5 rounded-lg transition ${isActive('/produccion/capacidad')}`}
+                >
+                  <span className="text-sm">🕹️</span>
+                  <span className="truncate">Carga de Máquinas</span>
                 </Link>
               </li>
               <li>
-                <Link to="/produccion/capacidad" className={`block py-2 px-3 rounded transition ${isActive('/produccion/capacidad')}`}>
-                  🕹️ Carga de Máquinas
-                </Link>
-              </li>
-              <li>
-                <Link to="/costos/liquidacion" className={`block py-2 px-3 rounded transition ${isActive('/costos/liquidacion')}`}>
-                  💵 Costos por OP
+                <Link
+                  to="/costos/liquidacion"
+                  onClick={() => setVisible(false)}
+                  className={`flex items-center gap-2.5 py-1.5 px-2.5 rounded-lg transition ${isActive('/costos/liquidacion')}`}
+                >
+                  <span className="text-sm">💵</span>
+                  <span className="truncate">Costos por OP</span>
                 </Link>
               </li>
             </ul>
           </div>
 
-          {/* NIVEL 3 — CALIDAD & METROLOGÍA */}
+          {/* NIVEL 3 — CALIDAD */}
           <div>
-            <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Nivel 3 — Calidad & Metrología</h2>
+            <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+              Nivel 3 — Calidad
+            </h2>
             <ul className="space-y-1">
               <li>
-                <Link to="/calidad/producto" className={`block py-2 px-3 rounded transition ${isActive('/calidad/producto')}`}>
-                  🗜️ Metrología / Calidad de Producto
+                <Link
+                  to="/calidad/producto"
+                  onClick={() => setVisible(false)}
+                  className={`flex items-center gap-2.5 py-1.5 px-2.5 rounded-lg transition ${isActive('/calidad/producto')}`}
+                >
+                  <span className="text-sm">🗜️</span>
+                  <span className="truncate">Metrología / Calidad</span>
                 </Link>
               </li>
-             
               <li>
-                <Link to="/calidad/rnc-capa" className={`block py-2 px-3 rounded transition ${isActive('/calidad/rnc-capa')}`}>
-                  📋 RNC / Acciones Correctivas
+                <Link
+                  to="/calidad/rnc-capa"
+                  onClick={() => setVisible(false)}
+                  className={`flex items-center gap-2.5 py-1.5 px-2.5 rounded-lg transition ${isActive('/calidad/rnc-capa')}`}
+                >
+                  <span className="text-sm">📋</span>
+                  <span className="truncate">RNC / Acciones Correctivas</span>
                 </Link>
               </li>
             </ul>
           </div>
 
-          {/* NIVEL 4 — EJECUCIÓN MES EN PLANTA */}
+          {/* NIVEL 4 — PLANTA */}
           <div>
-            <h2 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
-              Nivel 4 — Ejecución Planta
+            <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+              Nivel 4 — Planta
             </h2>
             <ul className="space-y-1">
               <li>
                 <button
                   type="button"
-                  onClick={() => navigate('/produccion/operario')}
-                  className={`w-full text-left py-2 px-3 rounded transition font-bold flex items-center gap-2 cursor-pointer ${isActive('/produccion/operario')}`}
+                  onClick={() => {
+                    setVisible(false);
+                    navigate('/produccion/operario');
+                  }}
+                  className={`w-full text-left py-1.5 px-2.5 rounded-lg transition font-bold flex items-center gap-2.5 cursor-pointer ${isActive(
+                    '/produccion/operario'
+                  )}`}
                 >
-                  📱 Tablet Operario MES
+                  <span className="text-sm">📱</span>
+                  <span className="truncate">Tablet Operario MES</span>
                 </button>
               </li>
             </ul>
           </div>
-        </nav>
-      </div>
 
-      {/* PIE DE PÁGINA CON BOTÓN DE CERRAR SESIÓN */}
-      <div className="border-t border-slate-800 pt-4 space-y-3">
-        <button
-          type="button"
-          onClick={handleLogout}
-          className="w-full py-2 bg-red-900/40 hover:bg-red-800 text-red-200 border border-red-700/50 rounded text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer"
-        >
-          🚪 Cerrar Sesión
-        </button>
-        <div className="text-[10px] text-slate-500 text-center">
-          Control de Acceso & Trazabilidad
+          {/* NIVEL 5 — CONFIGURACIÓN & DATOS MAESTROS */}
+          <div>
+            <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+              Nivel 5 — Configuración
+            </h2>
+            <ul className="space-y-1">
+              <li>
+                <Link
+                  to="/configuracion/maestros"
+                  onClick={() => setVisible(false)}
+                  className={`flex items-center gap-2.5 py-1.5 px-2.5 rounded-lg transition ${isActive('/configuracion/maestros')}`}
+                >
+                  <span className="text-sm">⚙️</span>
+                  <span className="truncate">Datos Maestros</span>
+                </Link>
+              </li>
+            </ul>
+          </div>
+        </nav>
+
+        {/* PIE CON BOTÓN DE CERRAR SESIÓN */}
+        <div className="border-t border-slate-800 pt-3">
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="w-full py-2 px-3 bg-red-950/60 hover:bg-red-800 text-red-200 border border-red-800/60 rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+          >
+            <span>🚪</span>
+            <span>Cerrar Sesión</span>
+          </button>
         </div>
-      </div>
-    </aside>
+      </aside>
+    </>
   );
 };
 
