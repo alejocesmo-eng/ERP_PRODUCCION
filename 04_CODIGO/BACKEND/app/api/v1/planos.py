@@ -341,12 +341,15 @@ def crear_planos(
     if not proyecto:
         raise HTTPException(status_code=404, detail="El proyecto asociado al plano no existe.")
 
+    # Sin piezas: un solo plano con los datos de la cabecera (campos de PlanoWriteRequest)
     piezas = plano_in.piezas or [
         PiezaPlanoWrite(
             codigo_plano=plano_in.codigo_plano,
-            revision=plano_in.revision,
+            version=plano_in.version,
             material_requerido=plano_in.material_requerido,
-            archivo_url=plano_in.archivo_url,
+            archivo_pdf_url=plano_in.archivo_pdf_url,
+            archivo_step_url=plano_in.archivo_step_url,
+            archivo_dxf_url=plano_in.archivo_dxf_url,
         )
     ]
     planos_creados = []
