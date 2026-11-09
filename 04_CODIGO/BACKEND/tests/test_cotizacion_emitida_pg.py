@@ -5,7 +5,9 @@ ENVIADA, APROBADA ni RECHAZADA, y enviar al cliente una cotización en BORRADOR 
 en EMITIDA.
 
 Se ejecuta sobre la copia PostgreSQL de SGI_TEST_PG_URL (sgi_test_*) con la migración 23
-aplicada, dentro de una transacción que se revierte al terminar.
+aplicada, dentro de una transacción que se revierte al terminar. El cliente y la cotización
+se crean con el flujo normal de Ventas (POST /ventas/cotizaciones/), que registra el socio
+de negocio antes de la cotización y respeta cotizaciones_id_socio_fkey.
 """
 import os
 import uuid
@@ -21,7 +23,7 @@ from sqlalchemy.orm import Session
 from app.api.v1 import cotizaciones
 from app.core.security import create_access_token
 from app.db.database import get_db
-from app.db.models import Cotizacion, EstadoCotizacionEnum, SocioNegocio
+from app.db.models import Cotizacion, SocioNegocio
 
 URL_PG = os.environ.get("SGI_TEST_PG_URL")
 
@@ -85,26 +87,38 @@ def test_la_base_acepta_emitida_y_conserva_los_demas_estados(ctx):
 
 def test_enviar_borrador_al_cliente_la_guarda_emitida(ctx):
     client, sesion = ctx
-    sufijo = uuid.uuid4().hex[:10]
-    socio = SocioNegocio(
-        id_socio=uuid.uuid4(), codigo_socio=f"CLI-T23-{sufijo}", nit_cedula=f"T23-{sufijo}",
-        razon_social="Cliente prueba migración 23", es_cliente=True,
+    sufijo = uuid.uuid4().hex[:10].upper()
+    codigo_cliente = f"CLI-T23-{sufijo}"
+
+    # Flujo normal de Ventas: el cliente nuevo se registra en socios_negocio y luego la cotización
+    creada = client.post(
+        "/api/v1/ventas/cotizaciones/",
+        json={
+            "codigo_cliente": codigo_cliente,
+            "razon_social": "Cliente prueba migración 23",
+            "nit": f"T23{sufijo}",
+            "contacto_email": "compras@cliente.test",
+            "numero_cotizacion": f"COT-T23-{sufijo}",
+            "posiciones": [{"descripcion": "Eje de prueba", "cantidad": 1, "precio_unitario": 1000}],
+        },
+        headers=token(),
     )
-    cotizacion = Cotizacion(
-        id_cotizacion=uuid.uuid4(), id_socio=socio.id_socio, numero_cotizacion=f"COT-T23-{sufijo}",
-        estado=EstadoCotizacionEnum.BORRADOR,
-    )
-    sesion.add_all([socio, cotizacion])
-    sesion.flush()
+    assert creada.status_code == 201, creada.text
+    assert creada.json()["estado"] == "BORRADOR"
+    id_cotizacion = uuid.UUID(creada.json()["id_cotizacion"])
+
+    socio = sesion.query(SocioNegocio).filter(SocioNegocio.codigo_socio == codigo_cliente).one()
+    assert socio.es_cliente
+    assert sesion.get(Cotizacion, id_cotizacion).id_socio == socio.id_socio
 
     respuesta = client.post(
-        f"/api/v1/ventas/cotizaciones/{cotizacion.id_cotizacion}/enviar-cliente",
+        f"/api/v1/ventas/cotizaciones/{id_cotizacion}/enviar-cliente",
         json={"destinatario": "compras@cliente.test", "asunto": "Oferta", "mensaje": "Adjuntamos la oferta."},
         headers=token(),
     )
 
     assert respuesta.status_code == 200, respuesta.text
     guardado = sesion.execute(
-        text("SELECT estado::text FROM cotizaciones WHERE id_cotizacion = :id"), {"id": cotizacion.id_cotizacion}
+        text("SELECT estado::text FROM cotizaciones WHERE id_cotizacion = :id"), {"id": id_cotizacion}
     ).scalar_one()
     assert guardado == "EMITIDA"
