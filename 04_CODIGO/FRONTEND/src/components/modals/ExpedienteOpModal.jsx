@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import API from '../../services/api';
+import API, { mensajeError } from '../../services/api';
 import VisorPlanoModal from '../VisorPlanoModal';
 import VistaGrafoCostos from '../../views/nivel2/VistaGrafoCostos';
 
@@ -25,8 +25,21 @@ const ESTILOS_ESTADO = {
   SIN_SOLICITAR: 'bg-slate-100 text-slate-600 border-slate-200',
   COMPLETA: 'bg-emerald-100 text-emerald-800 border-emerald-200',
   PARCIAL: 'bg-amber-100 text-amber-800 border-amber-200',
-  SIN_DESPACHO: 'bg-slate-100 text-slate-600 border-slate-200'
+  SIN_DESPACHO: 'bg-slate-100 text-slate-600 border-slate-200',
+  APROBADO: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+  EN_REVISION: 'bg-amber-100 text-amber-800 border-amber-200',
+  BORRADOR: 'bg-slate-100 text-slate-600 border-slate-200',
+  OBSOLETO: 'bg-red-100 text-red-800 border-red-200'
 };
+
+// Mínimo de caracteres del motivo con que ADMIN libera saltando la regla (LONGITUD_MINIMA_MOTIVO en ordenes.py)
+const LONGITUD_MINIMA_MOTIVO = 10;
+
+function formatearFecha(valor) {
+  if (!valor) return '—';
+  const fecha = new Date(valor);
+  return Number.isNaN(fecha.getTime()) ? valor : fecha.toLocaleString('es-CO');
+}
 
 function normalizarTexto(valor) {
   return String(valor || '')
@@ -98,6 +111,9 @@ export default function ExpedienteOpModal({
   const [error, setError] = useState('');
   const [mensajeAccion, setMensajeAccion] = useState('');
   const [liberando, setLiberando] = useState(false);
+  const [motivoAdmin, setMotivoAdmin] = useState('');
+  const [planosRevisar, setPlanosRevisar] = useState([]);
+  const [aprobandoPlano, setAprobandoPlano] = useState(null);
   const [planoAbierto, setPlanoAbierto] = useState(null);
   const [costos, setCostos] = useState(null);
   const [cargandoCostos, setCargandoCostos] = useState(false);
@@ -119,13 +135,15 @@ export default function ExpedienteOpModal({
     setError('');
     setExpediente(null);
     setMensajeAccion('');
+    setMotivoAdmin('');
+    setPlanosRevisar([]);
     API.get(`/ordenes/expediente/${encodeURIComponent(codigoOp)}`)
       .then((respuesta) => {
         if (activo) setExpediente(respuesta.data);
       })
       .catch((fallo) => {
         if (activo) {
-          setError(fallo.response?.data?.detail || 'No fue posible cargar el expediente de la OP.');
+          setError(mensajeError(fallo, 'No fue posible cargar el expediente de la OP.'));
         }
       })
       .finally(() => {
@@ -147,7 +165,7 @@ export default function ExpedienteOpModal({
       })
       .catch((fallo) => {
         if (activo) {
-          setErrorCostos(fallo.response?.data?.detail || 'No fue posible cargar los costos reales de la OP.');
+          setErrorCostos(mensajeError(fallo, 'No fue posible cargar los costos reales de la OP.'));
           setCostos(null);
         }
       })
@@ -161,17 +179,44 @@ export default function ExpedienteOpModal({
 
   if (!abierto) return null;
 
+  const recargarExpediente = async () => {
+    const respuesta = await API.get(`/ordenes/expediente/${encodeURIComponent(codigoOp)}`);
+    setExpediente(respuesta.data);
+  };
+
+  const aprobarPlano = async (plano) => {
+    setMensajeAccion('');
+    setAprobandoPlano(plano.id_plano);
+    try {
+      await API.post(`/planos/${plano.id_plano}/aprobar`);
+      setMensajeAccion(`El plano ${plano.codigo_plano} quedó APROBADO por Diseño.`);
+      await recargarExpediente();
+    } catch (fallo) {
+      setMensajeAccion(mensajeError(fallo, `No se pudo aprobar el plano ${plano.codigo_plano}.`));
+    } finally {
+      setAprobandoPlano(null);
+    }
+  };
+
   const ejecutarAccion = async (accion, contexto = {}) => {
     setMensajeAccion('');
     if (accion === 'LIBERAR_OP') {
       setLiberando(true);
+      setPlanosRevisar([]);
       try {
-        await API.patch(`/ordenes/liberar/${encodeURIComponent(codigoOp)}`);
-        setMensajeAccion('La OP fue liberada correctamente.');
-        const respuesta = await API.get(`/ordenes/expediente/${encodeURIComponent(codigoOp)}`);
-        setExpediente(respuesta.data);
+        // DISENO libera con la regla completa (sin cuerpo); ADMIN la salta solo con motivo
+        const cuerpo = rol === 'ADMIN' ? { motivo: motivoAdmin.trim() } : undefined;
+        const respuesta = await API.patch(`/ordenes/liberar/${encodeURIComponent(codigoOp)}`, cuerpo);
+        setPlanosRevisar(respuesta.data?.planos_revisar || []);
+        setMensajeAccion(
+          rol === 'ADMIN'
+            ? 'La OP fue liberada por excepción de administrador; el motivo quedó en la trazabilidad.'
+            : 'La OP fue liberada correctamente.'
+        );
+        setMotivoAdmin('');
+        await recargarExpediente();
       } catch (fallo) {
-        setMensajeAccion(fallo.response?.data?.detail || 'No se pudo liberar la OP.');
+        setMensajeAccion(mensajeError(fallo, 'No se pudo liberar la OP.'));
       } finally {
         setLiberando(false);
       }
@@ -191,6 +236,11 @@ export default function ExpedienteOpModal({
   const materiales = expediente?.resumen_bom || [];
   const motivosGate = expediente?.quality_gate?.motivos || [];
   const puedeLiberar = Boolean(expediente?.quality_gate?.aprobado);
+  const esAdmin = rol === 'ADMIN';
+  const motivoValido = motivoAdmin.trim().length >= LONGITUD_MINIMA_MOTIVO;
+  const yaLiberada = ['LIBERADA', 'LIBERADA_PRODUCCION'].includes(expediente?.estado_operativo);
+  // DISENO necesita la regla completa; ADMIN la salta con motivo (PERM_ADMIN_ALL)
+  const liberacionHabilitada = !liberando && !yaLiberada && (esAdmin ? motivoValido : puedeLiberar);
   const mostrarTab = (id) => setPestana(id);
 
   return (
@@ -236,6 +286,50 @@ export default function ExpedienteOpModal({
                   <span>{puedeLiberar ? '🟢 RN-OP-004: Aprobado' : '🔴 RN-OP-004: Bloqueado'}</span>
                   {!puedeLiberar && <span className="font-medium">{motivosGate.join(' ') || 'Faltan planos o insumos en almacén.'}</span>}
                 </div>
+                {!!planos.length && (
+                  <div className="mt-2 max-h-32 overflow-y-auto rounded border border-slate-200">
+                    <table className="w-full border-collapse text-left">
+                      <thead className="sticky top-0 bg-slate-100 text-[10px] uppercase text-slate-600">
+                        <tr>
+                          <th className="px-2 py-1">Plano</th>
+                          <th className="px-2 py-1">Revisión</th>
+                          <th className="px-2 py-1">Aprobación Diseño</th>
+                          <th className="px-2 py-1">Aprobado por / fecha</th>
+                          <th className="px-2 py-1 text-right">Acción</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {planos.map((plano) => {
+                          const aprobado = plano.estado === 'APROBADO';
+                          return (
+                            <tr key={plano.id_plano}>
+                              <td className="px-2 py-1 font-mono font-bold text-blue-900">{plano.codigo_plano}</td>
+                              <td className="px-2 py-1 font-mono">{plano.revision || '—'}</td>
+                              <td className="px-2 py-1">
+                                <EtiquetaEstado valor={plano.estado || 'BORRADOR'} />
+                                {plano.revisar && (
+                                  <span title="La última revisión es posterior a la aprobación" className="ml-1 inline-flex rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-extrabold text-amber-800">⚠ Revisar</span>
+                                )}
+                              </td>
+                              <td className="px-2 py-1 text-slate-600">{aprobado ? `${plano.aprobado_por || '—'} · ${formatearFecha(plano.fecha_aprobacion)}` : 'Pendiente'}</td>
+                              <td className="px-2 py-1 text-right">
+                                {rol === 'DISENO' && (!aprobado || plano.revisar) && (
+                                  <AccionButton
+                                    onClick={() => aprobarPlano(plano)}
+                                    disabled={Boolean(aprobandoPlano)}
+                                    className="border-emerald-200 bg-emerald-50 text-emerald-800"
+                                  >
+                                    {aprobandoPlano === plano.id_plano ? 'Aprobando…' : '✔ Aprobar plano'}
+                                  </AccionButton>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </>
             )}
           </header>
@@ -257,6 +351,11 @@ export default function ExpedienteOpModal({
             {cargando && <p className="rounded bg-slate-50 p-4 text-center font-semibold text-slate-600">Cargando expediente…</p>}
             {error && <p role="alert" className="rounded border border-red-200 bg-red-50 p-3 font-semibold text-red-800">{error}</p>}
             {mensajeAccion && <p role="status" className="mb-3 rounded border border-amber-200 bg-amber-50 p-2 text-amber-900">{mensajeAccion}</p>}
+            {!!planosRevisar.length && (
+              <p role="alert" className="mb-3 rounded border border-amber-300 bg-amber-50 p-2 font-semibold text-amber-900">
+                ⚠ Planos con revisión posterior a la aprobación de Diseño: {planosRevisar.join(', ')}. Verifique que la revisión vigente sea la aprobada.
+              </p>
+            )}
             {pestana === 'costos' && (
               <div className="space-y-3">
                 {cargandoCostos && <p className="rounded bg-slate-50 p-4 text-center font-semibold text-slate-600">Cargando costos reales…</p>}
@@ -436,7 +535,28 @@ export default function ExpedienteOpModal({
                 <>
                   <AccionButton onClick={() => ejecutarAccion('CARGAR_REEMPLAZAR_PLANO')} className="border-blue-200 bg-blue-50 text-blue-800">📄 Cargar/Reemplazar Plano PDF</AccionButton>
                   <AccionButton onClick={() => ejecutarAccion('SOLICITAR_BOM')} className="border-amber-200 bg-amber-50 text-amber-800">🛒 Solicitar BOM</AccionButton>
-                  <AccionButton onClick={() => ejecutarAccion('LIBERAR_OP')} disabled={!puedeLiberar || liberando} className="border-emerald-200 bg-emerald-600 text-white hover:bg-emerald-700">🟢 {liberando ? 'Liberando…' : 'Liberar OP'}</AccionButton>
+                  {esAdmin && !yaLiberada && (
+                    <label className="flex items-center gap-1 text-[10px] font-bold text-slate-700">
+                      Motivo de excepción
+                      <input
+                        type="text"
+                        value={motivoAdmin}
+                        onChange={(evento) => setMotivoAdmin(evento.target.value)}
+                        placeholder={`Mínimo ${LONGITUD_MINIMA_MOTIVO} caracteres`}
+                        className={`w-56 rounded border px-2 py-1 font-normal ${motivoAdmin && !motivoValido ? 'border-red-300 bg-red-50' : 'border-slate-300'}`}
+                      />
+                      <span className={motivoValido ? 'text-emerald-700' : 'text-slate-500'}>
+                        {motivoAdmin.trim().length}/{LONGITUD_MINIMA_MOTIVO}
+                      </span>
+                    </label>
+                  )}
+                  <AccionButton
+                    onClick={() => ejecutarAccion('LIBERAR_OP')}
+                    disabled={!liberacionHabilitada}
+                    className="border-emerald-200 bg-emerald-600 text-white hover:bg-emerald-700"
+                  >
+                    🟢 {liberando ? 'Liberando…' : esAdmin ? 'Liberar OP (excepción ADMIN)' : 'Liberar OP'}
+                  </AccionButton>
                 </>
               )}
               {permisos.produccion && (

@@ -36,4 +36,20 @@ export const mensajeStockInsuficiente = (detail) => {
   return `Cantidad mayor al disponible para venta${detail.sku ? ` (${detail.sku})` : ''}. Máximo: ${detail.disponible ?? 0} ${unidad}. Reduzca la cantidad o consulte a Almacén.`;
 };
 
+// Texto legible del error de una petición: detail de texto (400/403/409) o lista de
+// validación de FastAPI (422: [{loc, msg}]) con el nombre del campo, sin la ruta body->.
+export const mensajeError = (fallo, porDefecto) => {
+  const detail = fallo?.response?.data?.detail;
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  if (Array.isArray(detail) && detail.length) {
+    return detail
+      .map((item) => {
+        const campo = Array.isArray(item?.loc) ? item.loc[item.loc.length - 1] : '';
+        return campo && campo !== 'body' ? `${campo}: ${item?.msg || 'valor inválido'}` : item?.msg || 'valor inválido';
+      })
+      .join(' · ');
+  }
+  return mensajeStockInsuficiente(detail) || porDefecto;
+};
+
 export default API;
