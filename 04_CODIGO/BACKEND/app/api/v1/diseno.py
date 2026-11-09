@@ -6,13 +6,18 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
+from app.api.deps import obtener_usuario_actual
 from app.db.database import get_db
 from app.db.models import Plano, SolicitudCambioTecnico
 
 router = APIRouter()
 
 @router.post("/op/{id_plano}/iniciar-trabajo")
-def iniciar_trabajo_diseno(id_plano: UUID, db: Session = Depends(get_db)):
+def iniciar_trabajo_diseno(
+    id_plano: UUID,
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     """
     Marca el inicio del trabajo de diseño para una OP.
     Cambia el estado a 'EN_DISENO' y registra el timestamp de inicio.
@@ -32,7 +37,11 @@ def iniciar_trabajo_diseno(id_plano: UUID, db: Session = Depends(get_db)):
     return {"mensaje": "Trabajo de diseño iniciado", "inicio": plano.fecha_inicio_diseno}
 
 @router.post("/op/{id_plano}/liberar")
-def liberar_diseno_produccion(id_plano: UUID, db: Session = Depends(get_db)):
+def liberar_diseno_produccion(
+    id_plano: UUID,
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     """
     Libera el diseño para producción tras validar requisitos bloqueantes:
     1. Presencia de los 3 archivos técnicos (.pdf, .step, .dxf).
@@ -80,7 +89,11 @@ def liberar_diseno_produccion(id_plano: UUID, db: Session = Depends(get_db)):
     return {"mensaje": "Diseño liberado exitosamente a producción", "tiempo_total_minutos": plano.tiempo_total_diseno_minutos}
 
 @router.patch("/ecr/{id_solicitud}/resolver")
-def resolver_ecr(id_solicitud: UUID, db: Session = Depends(get_db)):
+def resolver_ecr(
+    id_solicitud: UUID,
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     """
     Permite al dibujante marcar una observación técnica como resuelta.
     """
