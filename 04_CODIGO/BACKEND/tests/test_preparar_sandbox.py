@@ -161,3 +161,74 @@ def test_crea_solo_los_que_faltan_y_no_imprime_la_clave(monkeypatch, capsys):
     assert all("ON CONFLICT (email) DO NOTHING" in sentencia for sentencia, _ in inserciones)
     assert all(CLAVE_DEMO not in parametros for _, parametros in inserciones)
 
+def test_los_usuarios_demo_incluyen_operario_y_mantenimiento():
+    roles = {rol for _, _, rol in preparar_sandbox.USUARIOS_DEMO}
+
+    assert {"OPERARIO", "MANTENIMIENTO"} <= roles
+    assert len({email for email, _, _ in preparar_sandbox.USUARIOS_DEMO}) == len(preparar_sandbox.USUARIOS_DEMO)
+
+
+class CursorRestablecer(CursorFalso):
+    """INSERT: 0 filas si el correo ya existe. UPDATE: 1 fila por correo existente."""
+
+    def execute(self, sentencia, parametros=None):
+        self.sentencias.append((sentencia, parametros))
+        if sentencia.startswith("INSERT INTO usuarios"):
+            self.rowcount = 0 if parametros[1] in self.existentes else 1
+        else:
+            self.rowcount = 1 if parametros[-1] in self.existentes else 0
+
+
+def test_restablecer_actualiza_solo_los_usuarios_demo_existentes(monkeypatch, capsys):
+    monkeypatch.setenv(preparar_sandbox.VARIABLE_CLAVE_DEMO, CLAVE_DEMO)
+    existentes = {"admin@sgi.com", "dibujante_1@sgi.local"}
+    cursor = CursorRestablecer(existentes=existentes)
+    monkeypatch.setattr(preparar_sandbox, "conectar", lambda base: ConexionFalsa(cursor))
+
+    preparar_sandbox._cargar_usuarios_demo(restablecer=True)
+
+    actualizaciones = [(s, p) for s, p in cursor.sentencias if s.startswith("UPDATE usuarios")]
+    assert {p[-1] for _, p in actualizaciones} == existentes
+    for _, (hash_clave, _, rol, email) in actualizaciones:
+        assert bcrypt.checkpw(CLAVE_DEMO.encode("utf-8"), hash_clave.encode("utf-8"))
+        assert rol == {e: r for e, _, r in preparar_sandbox.USUARIOS_DEMO}[email]
+    salida = capsys.readouterr().out
+    assert f"{len(preparar_sandbox.USUARIOS_DEMO) - 2} creados y 2 restablecidos" in salida
+    assert CLAVE_DEMO not in salida
+
+
+def test_sin_restablecer_no_actualiza_usuarios_existentes(monkeypatch, capsys):
+    monkeypatch.setenv(preparar_sandbox.VARIABLE_CLAVE_DEMO, CLAVE_DEMO)
+    cursor = CursorRestablecer(existentes={"admin@sgi.com"})
+    monkeypatch.setattr(preparar_sandbox, "conectar", lambda base: ConexionFalsa(cursor))
+
+    preparar_sandbox._cargar_usuarios_demo()
+
+    assert not any(s.startswith("UPDATE") for s, _ in cursor.sentencias)
+    assert "1 ya existian" in capsys.readouterr().out
+
+
+def test_restablecer_exige_usuarios_demo(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["preparar_sandbox", "--restablecer-claves"])
+
+    with pytest.raises(SystemExit):
+        preparar_sandbox.main()
+
+
+def test_usuarios_demo_con_restablecer_no_crea_ni_migra_la_base(monkeypatch):
+    llamadas = []
+    monkeypatch.setattr("sys.argv", ["preparar_sandbox", "--usuarios-demo", "--restablecer-claves"])
+    monkeypatch.setattr(preparar_sandbox, "conectar_admin", lambda: ConexionFalsa(CursorExiste()))
+    monkeypatch.setattr(preparar_sandbox, "existe_base", lambda cursor, nombre: True)
+    monkeypatch.setattr(preparar_sandbox, "_crear_sandbox", lambda regenerar: llamadas.append("crear"))
+    monkeypatch.setattr(preparar_sandbox, "_aplicar_migraciones", lambda: llamadas.append("migrar"))
+    monkeypatch.setattr(preparar_sandbox, "_cargar_usuarios_demo", lambda restablecer=False: llamadas.append(("usuarios", restablecer)))
+
+    preparar_sandbox.main()
+
+    assert llamadas == [("usuarios", True)]
+
+
+class CursorExiste:
+    pass
+
