@@ -6,8 +6,9 @@ Credenciales solo por variables de entorno (ADR-005):
   postgresql://usuario_bd_local@localhost:5432/postgres. El usuario necesita CREATEDB.
 - PGPASSWORD: clave de ese usuario; la leen libpq y psycopg2 sin que aparezca en ninguna URL.
 
-Solo se opera sobre bases cuyo nombre empieza por sgi_test_. La base operativa sgi_db
-queda siempre excluida.
+Solo se opera sobre bases cuyo nombre empieza por sgi_test_, y sobre sgi_sandbox cuando el
+llamador lo pide de forma explicita (preparar_sandbox). La base operativa sgi_db queda
+siempre excluida.
 """
 import os
 import re
@@ -20,6 +21,9 @@ from sqlalchemy.engine import make_url
 PLANTILLA = "sgi_test_template"
 COPIA_POR_DEFECTO = "sgi_test_copia"
 BASE_OPERATIVA = "sgi_db"
+# Base local para pruebas manuales de la aplicacion; sin prefijo sgi_test_, por lo que el
+# conftest no la acepta como base de pruebas automaticas
+SANDBOX = "sgi_sandbox"
 _NOMBRE_VALIDO = re.compile(r"^sgi_test_[a-z0-9_]+$")
 
 
@@ -44,9 +48,11 @@ def url_admin():
     return url
 
 
-def validar_nombre(nombre: str, permitir_plantilla: bool = False) -> str:
+def validar_nombre(nombre: str, permitir_plantilla: bool = False, permitir_sandbox: bool = False) -> str:
     if nombre.lower() == BASE_OPERATIVA:
         fallar(f"{BASE_OPERATIVA} es la base operativa: operacion rechazada.")
+    if permitir_sandbox and nombre == SANDBOX:
+        return nombre
     if not _NOMBRE_VALIDO.match(nombre):
         fallar(f"Nombre de base no permitido: {nombre!r}. Debe empezar por sgi_test_ y usar solo [a-z0-9_].")
     if nombre == PLANTILLA and not permitir_plantilla:
@@ -58,7 +64,7 @@ def conectar(base: str):
     """Conexion psycopg2 en autocommit; la clave la toma libpq de PGPASSWORD."""
     url = url_admin()
     if base != (url.database or "postgres"):
-        validar_nombre(base, permitir_plantilla=True)
+        validar_nombre(base, permitir_plantilla=True, permitir_sandbox=True)
     conexion = psycopg2.connect(
         host=url.host or "localhost",
         port=url.port or 5432,
