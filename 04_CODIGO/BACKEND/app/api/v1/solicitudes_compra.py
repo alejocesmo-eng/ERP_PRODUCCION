@@ -8,6 +8,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.api.deps import obtener_usuario_actual
 from app.db.database import get_db
 from app.db.models import (
     ArticuloInventario,
@@ -152,7 +153,11 @@ def _respuesta_requisicion_mrp(requisicion: RequisicionMRP) -> dict:
 
 
 @router.post("/mrp/retales", status_code=status.HTTP_201_CREATED)
-def registrar_retal_mrp(retal_in: RetalMRPCreate, db: Session = Depends(get_db)):
+def registrar_retal_mrp(
+    retal_in: RetalMRPCreate,
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     codigo_retal = retal_in.codigo_retal.strip()
     if db.query(RetalSobrante).filter(RetalSobrante.codigo_retal == codigo_retal).first():
         raise HTTPException(status_code=400, detail="El código de retal ya está registrado.")
@@ -177,7 +182,10 @@ def registrar_retal_mrp(retal_in: RetalMRPCreate, db: Session = Depends(get_db))
 
 
 @router.post("/mrp/ejecutar", status_code=status.HTTP_201_CREATED)
-def ejecutar_mrp(db: Session = Depends(get_db)):
+def ejecutar_mrp(
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     """Explota el BOM de OP confirmadas y consolida una PR por especificación material."""
     estados_confirmados = [
         EstadoOPEnum.APROBADA,
@@ -385,7 +393,10 @@ def ejecutar_mrp(db: Session = Depends(get_db)):
 
 
 @router.get("/mrp/requisiciones")
-def listar_requisiciones_mrp(db: Session = Depends(get_db)):
+def listar_requisiciones_mrp(
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     ejecucion = db.query(EjecucionMRP).order_by(EjecucionMRP.ejecutado_en.desc()).first()
     if not ejecucion:
         return []
@@ -402,6 +413,7 @@ def actualizar_estado_requisicion_mrp(
     id_requisicion: UUID,
     actualizacion: EstadoRequisicionMRPUpdate,
     db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     requisicion = db.query(RequisicionMRP).options(
         joinedload(RequisicionMRP.trazabilidad)
@@ -473,6 +485,7 @@ SOLICITUDES_DB = [
 def listar_solicitudes_compra(
     estado_bom: Optional[EstadoMaterialBOMEnum] = None,
     db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     consulta = db.query(SolicitudCompraORM)
     if estado_bom:
@@ -523,7 +536,11 @@ def listar_solicitudes_compra(
     return resultado + temporales
 
 @router.get("/verificar-pieza/{codigo_op}/{codigo_plano}")
-def verificar_solicitud_pieza(codigo_op: str, codigo_plano: str):
+def verificar_solicitud_pieza(
+    codigo_op: str,
+    codigo_plano: str,
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     sol = next((s for s in SOLICITUDES_DB if s.codigo_op == codigo_op and s.codigo_plano == codigo_plano), None)
     if sol:
         return {
@@ -535,7 +552,11 @@ def verificar_solicitud_pieza(codigo_op: str, codigo_plano: str):
     return {"existe": False, "estado_bom": EstadoMaterialBOMEnum.SIN_SOLICITAR}
 
 @router.post("/", response_model=SolicitudCompraResponse, status_code=status.HTTP_201_CREATED)
-def crear_solicitud_compra(sol_in: SolicitudCompraCreate, db: Session = Depends(get_db)):
+def crear_solicitud_compra(
+    sol_in: SolicitudCompraCreate,
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     # 1. Consolidar lista de items/insumos
     lista_items = sol_in.items or sol_in.insumos or []
     if not lista_items:
@@ -621,6 +642,7 @@ def actualizar_estado_solicitud(
     id_solicitud: UUID,
     sol_up: SolicitudCompraUpdate,
     db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     solicitud_db = db.query(SolicitudCompraORM).filter(
         SolicitudCompraORM.id_solicitud == id_solicitud
