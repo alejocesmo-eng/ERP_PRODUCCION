@@ -361,6 +361,7 @@ def actualizar_plano(
     id_plano: UUID,
     plano_in: PlanoUpdateRequest,
     db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     plano = db.query(Plano).options(joinedload(Plano.bom_items)).filter(
         Plano.id_plano == id_plano

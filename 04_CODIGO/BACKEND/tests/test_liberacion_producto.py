@@ -353,7 +353,9 @@ CASOS_REGLA = {
 def ejecutar_ruta(client, sesion, ruta, producto, plano):
     """Lleva la OP (o el plano) al estado de la ruta y devuelve (respuesta, código de éxito, comprobación de estado)."""
     if ruta == "plano_liberada":
-        respuesta = client.patch(f"/api/v1/planos/{plano.id_plano}", json={"estado_diseno": "LIBERADA"})
+        respuesta = client.patch(
+            f"/api/v1/planos/{plano.id_plano}", json={"estado_diseno": "LIBERADA"}, headers=token()
+        )
         if respuesta.status_code != 200:
             sesion.rollback()  # fin de la petición rechazada: get_db cierra la sesión sin commit
         sesion.expire_all()
