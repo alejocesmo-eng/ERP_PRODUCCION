@@ -18,6 +18,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from app.api.deps import obtener_usuario_actual
 from app.db.database import get_db
 from app.db.models import (
     AccionCAPA,
@@ -266,7 +267,10 @@ def _es_tabla_inspeccion_ausente(error: Exception) -> bool:
 # =============================================================================
 
 @router.get("/ordenes-abiertas", response_model=List[dict])
-def listar_ordenes_abiertas(db: Session = Depends(get_db)):
+def listar_ordenes_abiertas(
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     """Lista todas las órdenes de producción que todavía no están cerradas o canceladas."""
     estados_finales = (
         EstadoOPEnum.CERRADA,
@@ -322,7 +326,10 @@ def listar_ordenes_abiertas(db: Session = Depends(get_db)):
 
 
 @router.get("/inspeccion", response_model=List[InspeccionCalidadResponse])
-def listar_inspecciones_calidad(db: Session = Depends(get_db)):
+def listar_inspecciones_calidad(
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     """Lista inspecciones registradas; responde vacío si la tabla aún no fue creada."""
     try:
         return db.query(InspeccionCalidad).order_by(
@@ -336,7 +343,10 @@ def listar_inspecciones_calidad(db: Session = Depends(get_db)):
 
 
 @router.get("/ordenes-terminadas", response_model=List[dict])
-def listar_ordenes_terminadas(db: Session = Depends(get_db)):
+def listar_ordenes_terminadas(
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     """
     Lista las órdenes de producción marcadas como terminadas desde el módulo de producción,
     listas para la inspección de calidad.
@@ -369,7 +379,8 @@ def listar_ordenes_terminadas(db: Session = Depends(get_db)):
 @router.post("/inspeccionar", response_model=InspeccionCalidadResponse, status_code=status.HTTP_201_CREATED)
 def registrar_inspeccion_calidad(
     inspeccion_in: InspeccionCalidadCreate, 
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     """
     Registra el resultado de inspección, emite informes de tratamiento térmico si aplica,
@@ -525,7 +536,10 @@ def registrar_inspeccion_calidad(
 # =============================================================================
 
 @router.get("/no-conformidades", response_model=List[NoConformidadResponse])
-def listar_no_conformidades(db: Session = Depends(get_db)):
+def listar_no_conformidades(
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     """Consulta la lista persistida de No Conformidades en PostgreSQL."""
     ncs = db.query(NoConformidad).order_by(NoConformidad.creado_en.desc()).all()
     resultado = []
@@ -553,7 +567,8 @@ def listar_no_conformidades(db: Session = Depends(get_db)):
 @router.post("/no-conformidades", response_model=NoConformidadResponse, status_code=status.HTTP_201_CREATED)
 def registrar_no_conformidad(
     nc_in: NoConformidadCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     """Registra una No Conformidad persistente en PostgreSQL (ISO 9001:2026)."""
     existente = db.query(NoConformidad).filter(NoConformidad.codigo_nc == nc_in.codigo_nc).first()
@@ -621,6 +636,7 @@ def listar_rnc(
     codigo_op: Optional[str] = None,
     causa_raiz: Optional[str] = None,
     db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     consulta = db.query(NoConformidad, OrdenProduccion).outerjoin(
         OrdenProduccion, NoConformidad.id_op == OrdenProduccion.id_op
@@ -660,6 +676,7 @@ def crear_accion_capa(
     id_rnc: UUID,
     accion_in: AccionCAPACreate,
     db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     nc = db.query(NoConformidad).filter(NoConformidad.id_nc == id_rnc).with_for_update().first()
     if nc is None:
@@ -691,6 +708,7 @@ def cerrar_accion_capa(
     id_capa: UUID,
     cierre: AccionCAPACierre,
     db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     accion = db.query(AccionCAPA).filter(AccionCAPA.id_capa == id_capa).with_for_update().first()
     if accion is None:
