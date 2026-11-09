@@ -5,6 +5,9 @@
 -- =============================================================================
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- Búsqueda de productos tolerante a acentos y errores de tipeo (migración 22)
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS unaccent;
 
 BEGIN;
 
@@ -320,6 +323,28 @@ CREATE TABLE IF NOT EXISTS productos (
     actualizado_en TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS ix_productos_codigo_anterior ON productos (codigo_anterior);
+
+-- Normalización para la búsqueda de productos (migración 22). IMMUTABLE para indexarlas.
+CREATE OR REPLACE FUNCTION sgi_normalizar(texto TEXT)
+RETURNS TEXT
+LANGUAGE sql IMMUTABLE PARALLEL SAFE
+AS $$
+    SELECT regexp_replace(lower(public.unaccent('public.unaccent'::regdictionary, btrim(coalesce(texto, '')))), '\s+', ' ', 'g');
+$$;
+
+CREATE OR REPLACE FUNCTION sgi_normalizar_codigo(texto TEXT)
+RETURNS TEXT
+LANGUAGE sql IMMUTABLE PARALLEL SAFE
+AS $$
+    SELECT regexp_replace(public.sgi_normalizar(texto), '[^a-z0-9]', '', 'g');
+$$;
+
+CREATE INDEX IF NOT EXISTS ix_productos_descripcion_trgm
+    ON productos USING gin (sgi_normalizar(descripcion) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS ix_productos_codigo_rn_trgm
+    ON productos USING gin (sgi_normalizar_codigo(codigo_rn) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS ix_productos_codigo_anterior_trgm
+    ON productos USING gin (sgi_normalizar_codigo(codigo_anterior) gin_trgm_ops);
 
 DO $$ BEGIN
     ALTER TABLE planos ADD CONSTRAINT fk_planos_id_producto

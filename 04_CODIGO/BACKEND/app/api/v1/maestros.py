@@ -4,7 +4,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.deps import obtener_usuario_actual, requerir_roles
@@ -14,6 +15,7 @@ from app.db.models import (
     ArticuloInventario,
     CategoriaInventario,
     EstructuraFinanciera,
+    Producto,
     SocioNegocio,
     TipoEstructuraFinancieraEnum,
     TrabajadorUsuario,
@@ -578,3 +580,136 @@ def desactivar_unidad_medida(
         raise HTTPException(status_code=404, detail="Unidad de medida no encontrada.")
     unidad.activo = False
     return _serializar_unidad(_guardar(db, unidad, "No se pudo desactivar la unidad de medida."))
+
+
+# =============================================================================
+# BÚSQUEDA DE PRODUCTOS (22_MIGRACION_BUSQUEDA_PRODUCTOS.sql)
+# =============================================================================
+
+UMBRAL_SIMILITUD_PRODUCTOS = 0.3
+LONGITUD_MINIMA_BUSQUEDA = 2
+LONGITUD_MAXIMA_BUSQUEDA = 100
+# undefined_function / undefined_object de PostgreSQL: falta la migración 22 en la base
+CODIGOS_BUSQUEDA_NO_INSTALADA = {"42883", "42704"}
+MENSAJE_BUSQUEDA_NO_DISPONIBLE = (
+    "Búsqueda de productos no disponible: aplique 22_MIGRACION_BUSQUEDA_PRODUCTOS.sql "
+    "(extensiones pg_trgm y unaccent y funciones sgi_normalizar)."
+)
+
+# Los operadores % y <% usan los índices GIN de trigramas; el LIKE sobre el texto normalizado
+# admite además coincidencias parciales por debajo del umbral. La puntuación es el mayor de:
+# código idéntico (1,0), código que empieza por lo buscado (0,9), similarity de cada código y
+# word_similarity contra la descripción.
+SQL_BUSQUEDA_PRODUCTOS = text("""
+WITH consulta AS (
+    SELECT sgi_normalizar(:q) AS texto, sgi_normalizar_codigo(:q) AS codigo
+), candidatos AS (
+    SELECT
+        p.id_producto, p.codigo_rn, p.codigo_anterior, p.descripcion, p.familia, p.estado,
+        sgi_normalizar_codigo(p.codigo_rn) AS rn,
+        sgi_normalizar_codigo(p.codigo_anterior) AS anterior,
+        sgi_normalizar(p.descripcion) AS descripcion_normalizada,
+        c.texto, c.codigo
+    FROM productos p CROSS JOIN consulta c
+    WHERE (p.estado = 'ACTIVO' OR :incluir_obsoletos)
+      AND (
+            sgi_normalizar_codigo(p.codigo_rn) % c.codigo
+         OR sgi_normalizar_codigo(p.codigo_anterior) % c.codigo
+         OR c.texto <% sgi_normalizar(p.descripcion)
+         OR sgi_normalizar(p.descripcion) LIKE '%' || c.texto || '%'
+         OR (c.codigo <> '' AND (
+                sgi_normalizar_codigo(p.codigo_rn) LIKE '%' || c.codigo || '%'
+             OR sgi_normalizar_codigo(p.codigo_anterior) LIKE '%' || c.codigo || '%'))
+      )
+), puntuados AS (
+    SELECT
+        id_producto, codigo_rn, codigo_anterior, descripcion, familia, estado,
+        GREATEST(
+            CASE WHEN codigo <> '' AND rn = codigo THEN 1.0
+                 WHEN codigo <> '' AND rn LIKE codigo || '%' THEN 0.9 ELSE 0 END,
+            similarity(rn, codigo)
+        ) AS puntaje_codigo_rn,
+        COALESCE(GREATEST(
+            CASE WHEN codigo <> '' AND anterior = codigo THEN 1.0
+                 WHEN codigo <> '' AND anterior LIKE codigo || '%' THEN 0.9 ELSE 0 END,
+            similarity(anterior, codigo)
+        ), 0) AS puntaje_codigo_anterior,
+        word_similarity(texto, descripcion_normalizada) AS puntaje_descripcion
+    FROM candidatos
+)
+SELECT *, GREATEST(puntaje_codigo_rn, puntaje_codigo_anterior, puntaje_descripcion) AS similitud
+FROM puntuados
+ORDER BY similitud DESC, codigo_rn
+LIMIT :limite
+""")
+
+
+def _serializar_producto(producto, similitud=None, coincide_en=None):
+    return {
+        "id_producto": str(producto.id_producto),
+        "codigo_rn": producto.codigo_rn,
+        "codigo_anterior": producto.codigo_anterior,
+        "descripcion": producto.descripcion,
+        "familia": producto.familia,
+        "estado": producto.estado,
+        "similitud": round(float(similitud), 4) if similitud is not None else None,
+        "coincide_en": coincide_en,
+    }
+
+
+@router.get("/productos")
+def buscar_productos(
+    q: Optional[str] = None,
+    limit: int = Query(default=20, ge=1, le=50),
+    incluir_obsoletos: bool = False,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(obtener_usuario_actual),
+):
+    """Catálogo de productos RN. Con q: búsqueda por código RN, código anterior o descripción,
+    sin distinguir mayúsculas ni acentos y tolerante a errores de tipeo, ordenada por similitud.
+    Sin q: productos ordenados por código RN."""
+    texto = (q or "").strip()
+    if texto and not LONGITUD_MINIMA_BUSQUEDA <= len(texto) <= LONGITUD_MAXIMA_BUSQUEDA:
+        raise HTTPException(
+            status_code=422,
+            detail=f"La búsqueda debe tener entre {LONGITUD_MINIMA_BUSQUEDA} y {LONGITUD_MAXIMA_BUSQUEDA} caracteres.",
+        )
+
+    if not texto:
+        consulta = db.query(Producto)
+        if not incluir_obsoletos:
+            consulta = consulta.filter(Producto.estado == "ACTIVO")
+        return [_serializar_producto(producto) for producto in consulta.order_by(Producto.codigo_rn).limit(limit).all()]
+
+    try:
+        # Umbrales solo para esta transacción; word_similarity_threshold vale 0,6 por defecto
+        db.execute(
+            text(
+                "SELECT set_config('pg_trgm.similarity_threshold', :umbral, true), "
+                "set_config('pg_trgm.word_similarity_threshold', :umbral, true)"
+            ),
+            {"umbral": str(UMBRAL_SIMILITUD_PRODUCTOS)},
+        )
+        filas = db.execute(
+            SQL_BUSQUEDA_PRODUCTOS,
+            {"q": texto, "incluir_obsoletos": incluir_obsoletos, "limite": limit},
+        ).all()
+    except DBAPIError as error:
+        db.rollback()
+        falta_migracion = (
+            getattr(error.orig, "pgcode", None) in CODIGOS_BUSQUEDA_NO_INSTALADA
+            or "no such function" in str(error.orig).lower()
+        )
+        if falta_migracion:
+            raise HTTPException(status_code=503, detail=MENSAJE_BUSQUEDA_NO_DISPONIBLE) from error
+        raise
+
+    resultado = []
+    for fila in filas:
+        puntajes = {
+            "codigo_rn": fila.puntaje_codigo_rn,
+            "codigo_anterior": fila.puntaje_codigo_anterior,
+            "descripcion": fila.puntaje_descripcion,
+        }
+        resultado.append(_serializar_producto(fila, fila.similitud, max(puntajes, key=puntajes.get)))
+    return resultado
