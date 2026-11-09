@@ -19,6 +19,7 @@ from app.api.deps import obtener_usuario_actual, requerir_roles
 from app.api.v1.quality_gate import (
     ESTADOS_BOM_LIBERABLES,
     revision_posterior_a_aprobacion,
+    ruta_fisica_archivo,
     validar_entrega_diseno,
     validar_liberacion_op,
 )
@@ -584,24 +585,27 @@ def descargar_cad_plano(id_plano: UUID, tipo: str, db: Session = Depends(get_db)
     """
     Descarga de archivos CAD (.step o .dxf).
     tipos: 'step', 'dxf'
+    Sirve solo el archivo vigente de planos_archivos; las columnas archivo_step_url y
+    archivo_dxf_url no se usan como respaldo.
     """
     plano = db.query(Plano).filter(Plano.id_plano == id_plano).first()
     if not plano:
         raise HTTPException(status_code=404, detail="Plano no encontrado.")
 
+    tipo = tipo.lower()
     if tipo not in {"step", "dxf"}:
         raise HTTPException(status_code=400, detail="Tipo de descarga inválido. Use step o dxf.")
 
-    campo = "archivo_step_url" if tipo == "step" else "archivo_dxf_url"
-    url = getattr(plano, campo)
+    vigente = db.query(PlanoArchivo).filter(
+        PlanoArchivo.id_plano == plano.id_plano,
+        PlanoArchivo.tipo == tipo.upper(),
+        PlanoArchivo.vigente.is_(True),
+    ).first()
+    if not vigente:
+        raise HTTPException(status_code=404, detail=f"El plano no tiene un archivo {tipo.upper()} vigente.")
 
-    if not url:
-        raise HTTPException(status_code=404, detail=f"Archivo {tipo} no disponible.")
-
-    nombre_archivo = os.path.basename(url)
-    ruta_fisica = os.path.join(DIRECTORIO_STATIC_PLANOS, nombre_archivo)
-
-    if not os.path.exists(ruta_fisica):
+    ruta_fisica = ruta_fisica_archivo(vigente.ruta)
+    if not os.path.isfile(ruta_fisica):
         raise HTTPException(status_code=404, detail="Archivo físico no encontrado.")
 
-    return FileResponse(ruta_fisica, filename=nombre_archivo)
+    return FileResponse(ruta_fisica, filename=vigente.nombre_original or os.path.basename(ruta_fisica))

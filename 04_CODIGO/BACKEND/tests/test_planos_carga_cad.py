@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.api.v1 import planos as planos_api
-from app.api.v1.planos import subir_archivo_cad_por_tipo
+from app.api.v1.planos import descargar_cad_plano, subir_archivo_cad_por_tipo
 from app.db.database import Base
 from app.db.models import BOMListaMateriales, Plano, PlanoArchivo, Proyecto
 
@@ -119,3 +119,87 @@ def test_carga_cad_bloqueada_en_op_liberada(db, directorio_planos, tipo, nombre)
 
     assert error.value.status_code == 409
     assert list(directorio_planos.iterdir()) == []
+
+
+def registrar_archivo(db, directorio, plano, tipo, nombre_disco, contenido, vigente=True, nombre_original=None):
+    """Registro en planos_archivos con su archivo en disco (sin pasar por la carga)."""
+    if nombre_disco:
+        (directorio / nombre_disco).write_bytes(contenido)
+    db.add(PlanoArchivo(
+        id_plano=plano.id_plano,
+        tipo=tipo,
+        ruta=f"/static/planos/{nombre_disco or 'no_existe.bin'}",
+        nombre_original=nombre_original or nombre_disco or "no_existe.bin",
+        tamano_bytes=len(contenido),
+        sha256=hashlib.sha256(contenido).hexdigest(),
+        vigente=vigente,
+    ))
+    db.commit()
+
+
+@pytest.mark.parametrize("tipo", ["step", "dxf", "STEP"])
+def test_descarga_cad_sirve_el_archivo_vigente_y_no_el_historico(db, directorio_planos, tipo):
+    plano = crear_plano(db)
+    extension = tipo.lower()
+    registrar_archivo(db, directorio_planos, plano, extension.upper(), f"historico.{extension}", b"viejo", vigente=False)
+    registrar_archivo(
+        db, directorio_planos, plano, extension.upper(), f"vigente.{extension}", b"nuevo",
+        nombre_original=f"pieza_cliente.{extension}",
+    )
+
+    respuesta = descargar_cad_plano(plano.id_plano, tipo, db)
+
+    assert respuesta.path == str(directorio_planos / f"vigente.{extension}")
+    assert f"pieza_cliente.{extension}" in respuesta.headers["content-disposition"]
+
+
+def test_descarga_cad_no_usa_la_columna_antigua_como_respaldo(db, directorio_planos):
+    plano = crear_plano(db)
+    (directorio_planos / "solo_columna.step").write_bytes(b"step antiguo")
+    plano.archivo_step_url = "/static/planos/solo_columna.step"
+    db.commit()
+
+    with pytest.raises(HTTPException) as error:
+        descargar_cad_plano(plano.id_plano, "step", db)
+
+    assert error.value.status_code == 404
+    assert "vigente" in error.value.detail
+
+
+def test_descarga_cad_sin_vigente_da_404_aunque_haya_historico(db, directorio_planos):
+    plano = crear_plano(db)
+    registrar_archivo(db, directorio_planos, plano, "DXF", "historico.dxf", b"viejo", vigente=False)
+
+    with pytest.raises(HTTPException) as error:
+        descargar_cad_plano(plano.id_plano, "dxf", db)
+
+    assert error.value.status_code == 404
+
+
+def test_descarga_cad_vigente_sin_archivo_en_disco_da_404(db, directorio_planos):
+    plano = crear_plano(db)
+    registrar_archivo(db, directorio_planos, plano, "STEP", None, b"registrado")
+
+    with pytest.raises(HTTPException) as error:
+        descargar_cad_plano(plano.id_plano, "step", db)
+
+    assert error.value.status_code == 404
+    assert error.value.detail == "Archivo físico no encontrado."
+
+
+@pytest.mark.parametrize("tipo", ["pdf", "iges", ""])
+def test_descarga_cad_rechaza_tipo_invalido(db, tipo):
+    plano = crear_plano(db)
+
+    with pytest.raises(HTTPException) as error:
+        descargar_cad_plano(plano.id_plano, tipo, db)
+
+    assert error.value.status_code == 400
+
+
+def test_descarga_cad_plano_inexistente_da_404(db):
+    with pytest.raises(HTTPException) as error:
+        descargar_cad_plano(uuid.uuid4(), "step", db)
+
+    assert error.value.status_code == 404
+    assert error.value.detail == "Plano no encontrado."
