@@ -51,14 +51,21 @@ export default function LoginView({ onLoginSuccess }) {
   };
 
   // Acceso rápido solo en desarrollo: en el build de producción import.meta.env.DEV es false
-  // y la función (con su clave de pruebas) no se incluye en el bundle
+  // y ni la función ni la clave se incluyen en el bundle.
+  // La clave de los usuarios demo no se escribe en el código: sale de VITE_DEV_LOGIN_PASSWORD
+  // (04_CODIGO/FRONTEND/.env.local, no versionado), con el mismo valor que SGI_SANDBOX_DEMO_PASSWORD.
+  const claveAccesoRapido = import.meta.env.DEV ? import.meta.env.VITE_DEV_LOGIN_PASSWORD : undefined;
   const fastLogin = import.meta.env.DEV ? async (email) => {
+    if (!claveAccesoRapido) {
+      setError('Acceso rápido no configurado: defina VITE_DEV_LOGIN_PASSWORD en 04_CODIGO/FRONTEND/.env.local y reinicie Vite.');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
       const formData = new URLSearchParams();
       formData.append('username', email);
-      formData.append('password', '123456');
+      formData.append('password', claveAccesoRapido);
 
       const response = await API.post('/auth/token', formData, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -133,6 +140,11 @@ export default function LoginView({ onLoginSuccess }) {
         {import.meta.env.DEV && (
         <div className="mt-8 pt-6 border-t border-slate-100">
           <p className="text-[10px] font-bold text-slate-400 uppercase mb-3 text-center">Acceso de Pruebas (Dev Mode)</p>
+          {!claveAccesoRapido && (
+            <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 mb-3 text-center">
+              Defina VITE_DEV_LOGIN_PASSWORD en 04_CODIGO/FRONTEND/.env.local y reinicie Vite para usar estos accesos.
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-2">
             {[
               { email: 'admin@sgi.com', label: 'Admin' },
@@ -143,7 +155,7 @@ export default function LoginView({ onLoginSuccess }) {
               <button
                 key={user.email}
                 onClick={() => fastLogin(user.email)}
-                disabled={loading}
+                disabled={loading || !claveAccesoRapido}
                 className="py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-[10px] transition border border-slate-200 font-medium"
               >
                 {user.label}

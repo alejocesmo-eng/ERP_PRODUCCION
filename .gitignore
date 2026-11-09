@@ -12,3 +12,5 @@ desktop.ini
 Claude outputs/
 _respaldo_claude_2026-10-31/
 tmp_ot8/
+# Variables locales de Vite (.env.local, .env.development.local): claves de desarrollo
+*.local
