@@ -234,6 +234,8 @@ CREATE TABLE IF NOT EXISTS ordenes_produccion (
     id_proyecto UUID NOT NULL REFERENCES proyectos(id_proyecto) ON DELETE CASCADE,
     id_plano UUID REFERENCES planos(id_plano),
     id_producto UUID,
+    id_detalle_pedido UUID CONSTRAINT fk_ordenes_produccion_id_detalle_pedido
+        REFERENCES pedido_detalles(detalle_id) ON DELETE RESTRICT,
     id_mantenimiento INTEGER REFERENCES mantenimientos_maquinas(id_mantenimiento) ON DELETE SET NULL,
     codigo_op VARCHAR(50) UNIQUE NOT NULL,
     cantidad_fabricar INTEGER DEFAULT 1 NOT NULL,
@@ -247,6 +249,10 @@ CREATE TABLE IF NOT EXISTS ordenes_produccion (
     creado_en TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     actualizado_en TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+-- Una sola OP no CANCELADA por línea de pedido (migración 20)
+CREATE UNIQUE INDEX IF NOT EXISTS ux_ordenes_produccion_detalle_activa
+    ON ordenes_produccion (id_detalle_pedido)
+    WHERE id_detalle_pedido IS NOT NULL AND estado <> 'CANCELADA';
 
 -- -----------------------------------------------------------------------------
 -- 8. MÓDULO ALMACÉN, INVENTARIOS Y COMPRAS (PM-04)

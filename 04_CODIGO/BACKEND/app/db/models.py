@@ -616,11 +616,21 @@ class OrdenProduccion(Base):
     PM-03: Orden de Producción en Planta y Control de Liberación (ISO 9001:2026).
     """
     __tablename__ = "ordenes_produccion"
+    __table_args__ = (
+        # Una sola OP no CANCELADA por línea de pedido (20_MIGRACION_OP_LINEA_PEDIDO.sql)
+        Index(
+            "ux_ordenes_produccion_detalle_activa", "id_detalle_pedido",
+            unique=True,
+            postgresql_where=text("id_detalle_pedido IS NOT NULL AND estado <> 'CANCELADA'"),
+            sqlite_where=text("id_detalle_pedido IS NOT NULL AND estado <> 'CANCELADA'"),
+        ),
+    )
 
     id_op = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     id_proyecto = Column(UUID(as_uuid=True), ForeignKey("proyectos.id_proyecto", ondelete="CASCADE"), nullable=False)
     id_plano = Column(UUID(as_uuid=True), ForeignKey("planos.id_plano"), nullable=True)
     id_producto = Column(UUID(as_uuid=True), ForeignKey("productos.id_producto", name="fk_ordenes_produccion_id_producto", ondelete="RESTRICT"), nullable=True, index=True)
+    id_detalle_pedido = Column(UUID(as_uuid=True), ForeignKey("pedido_detalles.detalle_id", name="fk_ordenes_produccion_id_detalle_pedido", ondelete="RESTRICT"), nullable=True)
     id_mantenimiento = Column(Integer, ForeignKey("mantenimientos_maquinas.id_mantenimiento", ondelete="SET NULL"), nullable=True)
     codigo_op = Column(String(50), unique=True, nullable=False)
     cantidad_fabricar = Column(Integer, default=1, nullable=False)
