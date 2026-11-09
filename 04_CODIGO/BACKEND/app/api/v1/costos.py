@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.api.deps import obtener_usuario_actual
 from app.db.database import get_db
 from app.db.models import (
     CentroTrabajo,
@@ -65,7 +66,11 @@ def _anexar_presupuesto(
 
 
 @router.get("/liquidar/{codigo_op}")
-def liquidar_op(codigo_op: str, db: Session = Depends(get_db)):
+def liquidar_op(
+    codigo_op: str,
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     resumen = obtener_costos_op(codigo_op, db)
     cotizacion = resumen["cotizacion_comercial"]
     real = resumen["costos"]["real_total"]
@@ -79,7 +84,10 @@ def liquidar_op(codigo_op: str, db: Session = Depends(get_db)):
 
 
 @router.get("/oee")
-def obtener_oee(db: Session = Depends(get_db)):
+def obtener_oee(
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     desde = datetime.utcnow() - timedelta(days=7)
     registros = (
         db.query(RegistroTiempoOperario, SubLoteOperacion, OperacionOT)
@@ -173,7 +181,11 @@ def _obtener_op(db: Session, codigo_op: str) -> OrdenProduccion:
 
 
 @router.get("/op/{codigo_op}")
-def obtener_costos_op(codigo_op: str, db: Session = Depends(get_db)):
+def obtener_costos_op(
+    codigo_op: str,
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     orden = _obtener_op(db, codigo_op)
     proyecto = db.query(Proyecto).filter(
         Proyecto.id_proyecto == orden.id_proyecto
@@ -375,6 +387,7 @@ def registrar_consumo_material_op(
     codigo_op: str,
     consumo: ConsumoMaterialCreate,
     db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     orden = _obtener_op(db, codigo_op)
     registro = ConsumoMaterialOP(
@@ -401,6 +414,7 @@ def registrar_servicio_tercero_op(
     codigo_op: str,
     servicio: ServicioTerceroCreate,
     db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     orden = _obtener_op(db, codigo_op)
     registro = ServicioTerceroOP(op_id=orden.id_op, **servicio.dict())
@@ -443,7 +457,11 @@ def _guardar_centro_trabajo(
 
 
 @router.post("/centros-trabajo", status_code=status.HTTP_201_CREATED)
-def crear_centro_trabajo(centro_in: CentroTrabajoCreate, db: Session = Depends(get_db)):
+def crear_centro_trabajo(
+    centro_in: CentroTrabajoCreate,
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     return _guardar_centro_trabajo(centro_in, db, actualizar=False)
 
 
@@ -452,6 +470,7 @@ def actualizar_centro_trabajo(
     codigo_centro: str,
     centro_in: CentroTrabajoCreate,
     db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     if codigo_centro.strip() != centro_in.codigo_centro.strip():
         raise HTTPException(status_code=400, detail="El código de centro debe coincidir con el recurso.")
