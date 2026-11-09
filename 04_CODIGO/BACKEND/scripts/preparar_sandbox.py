@@ -60,6 +60,13 @@ VERIFICACIONES = (
     ("Extension pg_trgm (migracion 22)", "SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'"),
     ("Extension unaccent (migracion 22)", "SELECT 1 FROM pg_extension WHERE extname = 'unaccent'"),
     ("Funcion sgi_normalizar (migracion 22)", "SELECT 1 FROM pg_proc WHERE proname = 'sgi_normalizar'"),
+    (
+        "Estado EMITIDA en cotizaciones.estado (migracion 23)",
+        "SELECT 1 FROM pg_attribute a JOIN pg_enum e ON e.enumtypid = a.atttypid "
+        "WHERE a.attrelid = 'public.cotizaciones'::regclass AND a.attname = 'estado' AND e.enumlabel = 'EMITIDA' "
+        "UNION ALL SELECT 1 FROM pg_constraint WHERE conname = 'chk_cotizaciones_estado' "
+        "AND pg_get_constraintdef(oid) LIKE '%EMITIDA%'",
+    ),
 )
 
 
@@ -178,7 +185,7 @@ def _verificar() -> None:
                 faltantes.append(descripcion)
         if faltantes:
             fallar("Verificacion incompleta en sgi_sandbox: " + "; ".join(faltantes))
-        print("Verificacion correcta: historial append-only y busqueda de productos instalados.")
+        print("Verificacion correcta: historial append-only, busqueda de productos y estado EMITIDA instalados.")
     finally:
         conexion.close()
 

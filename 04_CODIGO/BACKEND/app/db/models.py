@@ -45,6 +45,7 @@ class EstadoProyectoEnum(str, enum.Enum):
 
 class EstadoCotizacionEnum(str, enum.Enum):
     BORRADOR = "BORRADOR"
+    EMITIDA = "EMITIDA"  # migración 23: estado al enviar la oferta al cliente desde BORRADOR
     ENVIADA = "ENVIADA"
     APROBADA = "APROBADA"
     RECHAZADA = "RECHAZADA"
