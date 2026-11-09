@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from app.api.deps import obtener_usuario_actual
 from app.db.database import get_db
 from app.db.models import EmpresaEmisora
 from app.schemas.empresa_schema import EmpresaEmisoraResponse, EmpresaEmisoraUpdate
@@ -7,7 +8,10 @@ from app.schemas.empresa_schema import EmpresaEmisoraResponse, EmpresaEmisoraUpd
 router = APIRouter()
 
 @router.get("/", response_model=EmpresaEmisoraResponse, summary="Obtener datos de la empresa emisora")
-def obtener_empresa_emisora(db: Session = Depends(get_db)):
+def obtener_empresa_emisora(
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     empresa = db.query(EmpresaEmisora).first()
     if not empresa:
         empresa = EmpresaEmisora(
@@ -27,7 +31,11 @@ def obtener_empresa_emisora(db: Session = Depends(get_db)):
     return empresa
 
 @router.put("/", response_model=EmpresaEmisoraResponse, summary="Actualizar datos de la empresa emisora")
-def actualizar_empresa_emisora(datos: EmpresaEmisoraUpdate, db: Session = Depends(get_db)):
+def actualizar_empresa_emisora(
+    datos: EmpresaEmisoraUpdate,
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     empresa = db.query(EmpresaEmisora).first()
     if not empresa:
         empresa = EmpresaEmisora()
