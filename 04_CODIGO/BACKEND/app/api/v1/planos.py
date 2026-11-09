@@ -346,7 +346,10 @@ def generar_token_plano_ttl(id_plano: UUID, ttl_minutos: int = 15) -> str:
 # =============================================================================
 
 @router.get("/", response_model=List[PlanoResponse])
-def listar_planos(db: Session = Depends(get_db)):
+def listar_planos(
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     return db.query(Plano).options(
         joinedload(Plano.bom_items)
     ).order_by(Plano.creado_en.desc()).all()
@@ -652,7 +655,11 @@ def registrar_revision_plano(
 
 
 @router.get("/token/{id_plano}", response_model=TokenPlanoResponse)
-def obtener_token_temporal_plano(id_plano: UUID, db: Session = Depends(get_db)):
+def obtener_token_temporal_plano(
+    id_plano: UUID,
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     """
     Genera un token de acceso temporal firmado con TTL de 15 minutos para visualizar el plano PDF.
     """
@@ -751,7 +758,12 @@ def subir_archivo_cad_por_tipo(
     return _guardar_archivo_cad(db, plano, archivo, tipo.lower(), usuario_actual, justificacion)
 
 @router.get("/descargar-cad/{id_plano}/{tipo}")
-def descargar_cad_plano(id_plano: UUID, tipo: str, db: Session = Depends(get_db)):
+def descargar_cad_plano(
+    id_plano: UUID,
+    tipo: str,
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     """
     Descarga de archivos CAD (.step o .dxf).
     tipos: 'step', 'dxf'

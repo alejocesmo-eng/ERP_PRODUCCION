@@ -212,7 +212,7 @@ def test_plano_de_producto_sin_proyecto_ni_codigo_op_se_lista(ctx):
     client, sesion, _ = ctx
     plano = crear_plano(sesion)
 
-    respuesta = client.get("/api/v1/planos/")
+    respuesta = client.get("/api/v1/planos/", headers=token())
 
     assert respuesta.status_code == 200, respuesta.text
     [fila] = [p for p in respuesta.json() if p["id_plano"] == str(plano.id_plano)]

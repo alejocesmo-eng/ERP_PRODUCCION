@@ -198,7 +198,7 @@ def test_marca_revisar_en_expediente_y_en_plano_response(ctx, config, esperado):
 
     assert expediente(client, op)["planos"][0]["revisar"] is esperado
 
-    listado = client.get("/api/v1/planos/").json()
+    listado = client.get("/api/v1/planos/", headers=token("DISENO")).json()
     [plano_response] = [item for item in listado if item["id_plano"] == str(plano.id_plano)]
     assert plano_response["revisar"] is esperado
     for campo in ("estado", "aprobado_por", "fecha_aprobacion", "fecha_ultima_revision"):
