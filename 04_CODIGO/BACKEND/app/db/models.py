@@ -594,6 +594,56 @@ class PlanoArchivo(Base):
     plano = relationship("Plano", back_populates="archivos")
 
 
+TIPOS_EVENTO_PLANO = (
+    "CREACION", "CAMBIO_VERSION", "CARGA_ARCHIVO", "CAMBIO_ARCHIVO",
+    "REVISION", "CAMBIO_ESTADO", "APROBACION",
+)
+# Eventos que exigen justificación de al menos 10 caracteres sin contar espacios
+EVENTOS_PLANO_CON_JUSTIFICACION = ("CAMBIO_VERSION", "CAMBIO_ARCHIVO", "REVISION")
+
+
+class PlanoHistorial(Base):
+    """
+    Historial append-only por plano (21_MIGRACION_PLANOS_HISTORIAL.sql).
+    Solo se insertan eventos; en PostgreSQL un trigger rechaza UPDATE y DELETE.
+    Sin relación ORM con cascada desde Plano para que ningún borrado arrastre el historial.
+    """
+    __tablename__ = "planos_historial"
+    __table_args__ = (
+        CheckConstraint(
+            "tipo_evento IN ('CREACION', 'CAMBIO_VERSION', 'CARGA_ARCHIVO', 'CAMBIO_ARCHIVO', "
+            "'REVISION', 'CAMBIO_ESTADO', 'APROBACION')",
+            name="ck_planos_historial_tipo_evento",
+        ),
+        CheckConstraint(
+            "tipo_archivo IS NULL OR tipo_archivo IN ('PDF', 'STEP', 'DXF')",
+            name="ck_planos_historial_tipo_archivo",
+        ),
+        # Expresión regular de PostgreSQL: SQLite (pruebas en memoria) no admite el operador ~
+        CheckConstraint(
+            "sha256 IS NULL OR sha256 ~ '^[0-9a-f]{64}$'", name="ck_planos_historial_sha256"
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "tipo_evento NOT IN ('CAMBIO_VERSION', 'CAMBIO_ARCHIVO', 'REVISION') "
+            "OR (justificacion IS NOT NULL AND length(trim(justificacion)) >= 10)",
+            name="ck_planos_historial_justificacion",
+        ),
+        Index("ix_planos_historial_plano_fecha", "id_plano", "fecha"),
+    )
+
+    id_evento = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id_plano = Column(UUID(as_uuid=True), ForeignKey("planos.id_plano", ondelete="RESTRICT"), nullable=False)
+    tipo_evento = Column(String(30), nullable=False)
+    version = Column(String(10), nullable=True)
+    version_anterior = Column(String(10), nullable=True)
+    estado = Column(String(50), nullable=True)
+    tipo_archivo = Column(String(10), nullable=True)
+    sha256 = Column(CHAR(64), nullable=True)
+    usuario = Column(String(100), nullable=False)
+    fecha = Column(DateTime(timezone=True), nullable=False, default=func.now(), server_default=func.now())
+    justificacion = Column(Text, nullable=True)
+
+
 class BOMListaMateriales(Base):
     """
     PM-02 / BOM: Lista de materiales y despiece requerido por cada plano/OT.

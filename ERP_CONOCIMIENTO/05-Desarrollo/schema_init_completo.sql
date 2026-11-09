@@ -209,6 +209,41 @@ CREATE TABLE IF NOT EXISTS planos_archivos (
 CREATE INDEX IF NOT EXISTS ix_planos_archivos_id_plano ON planos_archivos (id_plano);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_planos_archivos_vigente ON planos_archivos (id_plano, tipo) WHERE vigente;
 
+-- Historial append-only por plano (migración 21). Un trigger rechaza UPDATE y DELETE.
+CREATE TABLE IF NOT EXISTS planos_historial (
+    id_evento UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id_plano UUID NOT NULL REFERENCES planos(id_plano) ON DELETE RESTRICT,
+    tipo_evento VARCHAR(30) NOT NULL CONSTRAINT ck_planos_historial_tipo_evento CHECK (tipo_evento IN (
+        'CREACION', 'CAMBIO_VERSION', 'CARGA_ARCHIVO', 'CAMBIO_ARCHIVO',
+        'REVISION', 'CAMBIO_ESTADO', 'APROBACION'
+    )),
+    version VARCHAR(10),
+    version_anterior VARCHAR(10),
+    estado VARCHAR(50),
+    tipo_archivo VARCHAR(10) CONSTRAINT ck_planos_historial_tipo_archivo CHECK (tipo_archivo IS NULL OR tipo_archivo IN ('PDF', 'STEP', 'DXF')),
+    sha256 CHAR(64) CONSTRAINT ck_planos_historial_sha256 CHECK (sha256 IS NULL OR sha256 ~ '^[0-9a-f]{64}$'),
+    usuario VARCHAR(100) NOT NULL,
+    fecha TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    justificacion TEXT,
+    CONSTRAINT ck_planos_historial_justificacion CHECK (
+        tipo_evento NOT IN ('CAMBIO_VERSION', 'CAMBIO_ARCHIVO', 'REVISION')
+        OR (justificacion IS NOT NULL AND length(trim(justificacion)) >= 10)
+    )
+);
+CREATE INDEX IF NOT EXISTS ix_planos_historial_plano_fecha ON planos_historial (id_plano, fecha);
+
+CREATE OR REPLACE FUNCTION rechazar_edicion_planos_historial()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'El historial de planos es append-only: no se permite UPDATE ni DELETE.';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_planos_historial_inmutable ON planos_historial;
+CREATE TRIGGER trg_planos_historial_inmutable
+    BEFORE UPDATE OR DELETE ON planos_historial
+    FOR EACH ROW EXECUTE FUNCTION rechazar_edicion_planos_historial();
+
 CREATE TABLE IF NOT EXISTS ot_detalles (
     ot_detalle_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     detalle_pedido_id UUID NOT NULL REFERENCES pedido_detalles(detalle_id) ON DELETE CASCADE,
