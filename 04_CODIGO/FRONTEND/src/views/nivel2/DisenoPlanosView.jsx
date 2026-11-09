@@ -1,6 +1,6 @@
 // src/views/nivel2/DisenoPlanosView.jsx
 import React, { useState, useEffect } from 'react';
-import API from '../../services/api';
+import API, { mensajeError } from '../../services/api';
 import VisorPlanoModal from '../../components/VisorPlanoModal';
 
 export default function DisenoPlanosView() {
@@ -78,7 +78,24 @@ export default function DisenoPlanosView() {
     piezas: []
   });
 
-  const SECUENCIA_ESTADOS = ['ABIERTA', 'PLANIFICADA', 'EN_DISENO', 'LIBERADA'];
+  const SECUENCIA_ESTADOS = ['ABIERTA', 'PLANIFICADA', 'EN_DISENO', 'PAUSADA', 'LISTA_PARA_LIBERAR', 'LIBERADA'];
+  // Transiciones que acepta PATCH /planos/{id}: PAUSADA solo desde EN_DISENO y, desde PAUSADA,
+  // solo reanudar (EN_DISENO) o entregar (LISTA_PARA_LIBERAR)
+  const TRANSICIONES_DISENO = {
+    ABIERTA: ['PLANIFICADA'],
+    PLANIFICADA: ['EN_DISENO'],
+    EN_DISENO: ['PAUSADA', 'LISTA_PARA_LIBERAR', 'LIBERADA'],
+    PAUSADA: ['EN_DISENO', 'LISTA_PARA_LIBERAR'],
+    LISTA_PARA_LIBERAR: ['LIBERADA'],
+    LIBERADA: []
+  };
+  const ESTILOS_ETAPA = {
+    LIBERADA: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+    LISTA_PARA_LIBERAR: 'bg-teal-100 text-teal-800 border-teal-300',
+    PAUSADA: 'bg-orange-100 text-orange-800 border-orange-300',
+    EN_DISENO: 'bg-purple-100 text-purple-800 border-purple-300',
+    PLANIFICADA: 'bg-amber-100 text-amber-800 border-amber-300'
+  };
   const OPCIONES_CAUSA_ESPERA = [
     'Falta visita al cliente para toma de medidas',
     'El cliente no ha enviado los planos',
@@ -177,7 +194,10 @@ export default function DisenoPlanosView() {
 
         return {
           ...pl,
-          version_plano: pl.version_plano || pl.revision || 'v1.0',
+          // PlanoResponse trae version y archivo_pdf_url; la vista usa version_plano y archivo_url
+          version_plano: pl.version_plano || pl.version || pl.revision || 'v1.0',
+          revision: pl.revision || pl.version,
+          archivo_url: pl.archivo_url || pl.archivo_pdf_url || '',
           numero_pedido: pedEncontrado?.numero_pedido || pl.numero_pedido || 'PED-2026-110',
           cliente_nombre: pl.cliente_nombre || pedEncontrado?.cliente_nombre || 'Cliente General',
           ubicacion_cliente: pl.ubicacion_cliente || pedEncontrado?.ubicacion_cliente || 'Planta Principal',
@@ -406,14 +426,13 @@ export default function DisenoPlanosView() {
   const handleCambiarEtapaOrden = async (plano, nuevoEstado) => {
     setMensaje({ tipo: '', texto: '' });
     const estadoActual = plano.estado_diseno || 'PLANIFICADA';
-    const idxActual = SECUENCIA_ESTADOS.indexOf(estadoActual);
-    const idxNuevo = SECUENCIA_ESTADOS.indexOf(nuevoEstado);
+    const permitidos = TRANSICIONES_DISENO[estadoActual] || [];
 
-    if (idxNuevo !== idxActual + 1) {
-      if (idxNuevo < idxActual) {
+    if (!permitidos.includes(nuevoEstado)) {
+      if (SECUENCIA_ESTADOS.indexOf(nuevoEstado) < SECUENCIA_ESTADOS.indexOf(estadoActual)) {
         alert(`⚠️ Regla ISO 9001: No se permite retroceder de ${estadoActual} a ${nuevoEstado}.`);
       } else {
-        alert(`⚠️ Flujo Incompleto: Debe pasar secuencialmente por las etapas de Ingeniería (${SECUENCIA_ESTADOS[idxActual + 1]}).`);
+        alert(`⚠️ Flujo Incompleto: desde ${estadoActual} solo se puede pasar a ${permitidos.join(' o ') || 'ninguna otra etapa'}.`);
       }
       return;
     }
@@ -434,14 +453,15 @@ export default function DisenoPlanosView() {
     try {
       setLoading(true);
       await API.patch(`/planos/${plano.id_plano}`, { estado_diseno: nuevoEstado });
-      setMensaje({ tipo: 'exito', texto: `✅ Estado de la Orden OP-${plano.codigo_op} actualizado a ${nuevoEstado}.` });
+      setMensaje({
+        tipo: 'exito',
+        texto: estadoActual === 'PAUSADA' && nuevoEstado === 'EN_DISENO'
+          ? `▶️ Orden OP-${plano.codigo_op} reanudada; si tenía otra orden EN_DISENO, quedó PAUSADA.`
+          : `✅ Estado de la Orden OP-${plano.codigo_op} actualizado a ${nuevoEstado}.`
+      });
       cargarPlanosYPedidos();
     } catch (error) {
-      const detalle = error?.response?.data?.detail;
-      setMensaje({
-        tipo: 'error',
-        texto: typeof detalle === 'string' ? detalle : 'No se pudo cambiar el estado de la orden.'
-      });
+      setMensaje({ tipo: 'error', texto: mensajeError(error, 'No se pudo cambiar el estado de la orden.') });
     } finally {
       setLoading(false);
     }
@@ -810,13 +830,15 @@ export default function DisenoPlanosView() {
       formData.append('archivo', file);
 
       const campoMapeado = tipoFormato === 'STEP' ? 'archivo_step_url' : tipoFormato === 'DXF' ? 'archivo_dxf_url' : 'archivo_url';
+      // Campo de PlanoResponse con la ruta vigente de cada tipo
+      const campoRespuesta = tipoFormato === 'STEP' ? 'archivo_step_url' : tipoFormato === 'DXF' ? 'archivo_dxf_url' : 'archivo_pdf_url';
 
       if (nuevoPlano.id_plano) {
-        const res = await API.post(`/planos/upload-pdf/${nuevoPlano.id_plano}`, formData, {
+        const res = await API.post(`/planos/upload-cad/${nuevoPlano.id_plano}/${tipoFormato.toLowerCase()}`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
         });
-        
-        handleCambioPieza(piezaId, campoMapeado, res.data.archivo_url);
+
+        handleCambioPieza(piezaId, campoMapeado, res.data[campoRespuesta]);
         setMensaje({ tipo: 'exito', texto: `✅ Archivo CAD ${tipoFormato} [${file.name}] adjunto exitosamente al plano.` });
       } else {
         const urlTemp = `/static/planos/${file.name}`;
@@ -824,7 +846,7 @@ export default function DisenoPlanosView() {
         setMensaje({ tipo: 'exito', texto: `📄 Archivo ${tipoFormato} [${file.name}] vinculado temporalmente. Guarde la OP.` });
       }
     } catch (err) {
-      alert(`Error al subir el archivo ${tipoFormato} al servidor backend.`);
+      setMensaje({ tipo: 'error', texto: mensajeError(err, `Error al subir el archivo ${tipoFormato} al servidor backend.`) });
     } finally {
       setLoading(false);
     }
@@ -1409,7 +1431,9 @@ export default function DisenoPlanosView() {
                   <option value="TODOS">Todas las Etapas</option>
                   <option value="PLANIFICADA">2. PLANIFICADAS</option>
                   <option value="EN_DISENO">3. EN DISEÑO</option>
-                  <option value="LIBERADA">4. LIBERADAS</option>
+                  <option value="PAUSADA">4. PAUSADAS</option>
+                  <option value="LISTA_PARA_LIBERAR">5. LISTAS PARA LIBERAR</option>
+                  <option value="LIBERADA">6. LIBERADAS</option>
                 </select>
 
                 <input
@@ -1436,20 +1460,22 @@ export default function DisenoPlanosView() {
                     <th className="p-3 text-center bg-purple-50 text-purple-900 border-r">📅 Compromiso Entrega</th>
                     <th className="p-3 text-center">Archivos CAD (.PDF/.STEP/.DXF)</th>
                     <th className="p-3">Etapa Lineal</th>
+                    <th className="p-3">Aprobación Diseño</th>
                     <th className="p-3 text-center">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
                   {planosFiltrados.length === 0 ? (
                     <tr>
-                      <td colSpan="11" className="p-6 text-center text-slate-400 font-medium">
+                      <td colSpan="12" className="p-6 text-center text-slate-400 font-medium">
                         {loading ? 'Cargando órdenes...' : 'No hay órdenes de producción registradas.'}
                       </td>
                     </tr>
                   ) : (
                     planosFiltrados.map((pl) => {
                       const estadoActual = pl.estado_diseno || 'PLANIFICADA';
-                      const idxActual = SECUENCIA_ESTADOS.indexOf(estadoActual);
+                      const etapasPermitidas = TRANSICIONES_DISENO[estadoActual] || [];
+                      const aprobadoDiseno = pl.estado === 'APROBADO';
                       const metricas = calcularMetricasTiempo(pl.fecha_apertura_orden || '2026-10-18', pl.fecha_entrega_produccion);
 
                       return (
@@ -1544,25 +1570,49 @@ export default function DisenoPlanosView() {
                               value={estadoActual}
                               onChange={(e) => handleCambiarEtapaOrden(pl, e.target.value)}
                               className={`p-1 rounded text-[10px] font-bold border focus:outline-none cursor-pointer ${
-                                estadoActual === 'LIBERADA' ? 'bg-emerald-100 text-emerald-800 border-emerald-300' :
-                                estadoActual === 'EN_DISENO' ? 'bg-purple-100 text-purple-800 border-purple-300' :
-                                estadoActual === 'PLANIFICADA' ? 'bg-amber-100 text-amber-800 border-amber-300' :
-                                'bg-blue-100 text-blue-800 border-blue-300'
+                                ESTILOS_ETAPA[estadoActual] || 'bg-blue-100 text-blue-800 border-blue-300'
                               }`}
                             >
                               {SECUENCIA_ESTADOS.map((est, idx) => (
-                                <option 
-                                  key={est} 
-                                  value={est} 
-                                  disabled={idx !== idxActual + 1 && idx !== idxActual}
+                                <option
+                                  key={est}
+                                  value={est}
+                                  disabled={est !== estadoActual && !etapasPermitidas.includes(est)}
                                 >
-                                  {idx + 1}. {est} {idx < idxActual ? '🔒 (Completado)' : idx > idxActual + 1 ? '🔒 (Bloqueado)' : ''}
+                                  {idx + 1}. {est} {est === estadoActual || etapasPermitidas.includes(est) ? '' : '🔒'}
                                 </option>
                               ))}
                             </select>
                           </td>
 
+                          <td className="p-3 whitespace-nowrap text-[10px]">
+                            <span className={`px-1.5 py-0.5 rounded font-extrabold border ${
+                              aprobadoDiseno ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-100 text-slate-600 border-slate-300'
+                            }`}>
+                              {aprobadoDiseno ? '✔ APROBADO' : (pl.estado || 'BORRADOR').replaceAll('_', ' ')}
+                            </span>
+                            {pl.revisar && (
+                              <span title="La última revisión es posterior a la aprobación" className="ml-1 px-1.5 py-0.5 rounded font-extrabold border bg-amber-50 text-amber-800 border-amber-300">⚠ Revisar</span>
+                            )}
+                            {aprobadoDiseno && (
+                              <span className="block mt-0.5 text-slate-500">
+                                {pl.aprobado_por || '—'} · {pl.fecha_aprobacion ? new Date(pl.fecha_aprobacion).toLocaleDateString('es-CO') : '—'}
+                              </span>
+                            )}
+                          </td>
+
                           <td className="p-3 text-center whitespace-nowrap space-x-1">
+                            {estadoActual === 'PAUSADA' && (
+                              <button
+                                type="button"
+                                onClick={() => handleCambiarEtapaOrden(pl, 'EN_DISENO')}
+                                className="px-2 py-1 bg-orange-100 hover:bg-orange-200 text-orange-900 font-bold rounded text-[10px] border border-orange-300 transition cursor-pointer"
+                                title="Reanudar la orden: vuelve a EN_DISENO y pausa la otra orden activa del dibujante"
+                              >
+                                ▶ Reanudar
+                              </button>
+                            )}
+
                             <button
                               type="button"
                               onClick={() => handleAbrirHistorialVersiones(pl)}
@@ -2138,7 +2188,9 @@ export default function DisenoPlanosView() {
                     <option value="ABIERTA">1. ABIERTA</option>
                     <option value="PLANIFICADA">2. PLANIFICADA</option>
                     <option value="EN_DISENO">3. EN DISEÑO</option>
-                    <option value="LIBERADA">4. LIBERADA (Requiere Plano & Materiales)</option>
+                    <option value="PAUSADA">4. PAUSADA</option>
+                    <option value="LISTA_PARA_LIBERAR">5. LISTA PARA LIBERAR (Requiere PDF, aprobación y BOM radicada)</option>
+                    <option value="LIBERADA">6. LIBERADA (Requiere Plano & Materiales)</option>
                   </select>
                 </div>
 
