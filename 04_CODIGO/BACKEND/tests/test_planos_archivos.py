@@ -72,10 +72,11 @@ def crear_plano(sesion):
     return plano
 
 
-def subir(client, ruta, plano, nombre, contenido, cabeceras=None):
+def subir(client, ruta, plano, nombre, contenido, cabeceras=None, justificacion=None):
     return client.post(
         f"/api/v1/planos/{ruta}/{plano.id_plano}",
         files={"archivo": (nombre, contenido, "application/octet-stream")},
+        data={"justificacion": justificacion} if justificacion else None,
         headers=token() if cabeceras is None else cabeceras,
     )
 
@@ -160,7 +161,10 @@ def test_segundo_pdf_reemplaza_al_anterior_y_deja_el_historico(ctx):
 
     assert subir(client, "upload-pdf", plano, "plano_v1.pdf", b"%PDF primera version").status_code == 200
     [primero] = archivos(sesion, plano, "PDF")
-    respuesta = subir(client, "upload-pdf", plano, "plano_v2.pdf", b"%PDF segunda version")
+    respuesta = subir(
+        client, "upload-pdf", plano, "plano_v2.pdf", b"%PDF segunda version",
+        justificacion="Corrección de cotas solicitada por el cliente",
+    )
     assert respuesta.status_code == 200, respuesta.text
 
     registros = archivos(sesion, plano, "PDF")

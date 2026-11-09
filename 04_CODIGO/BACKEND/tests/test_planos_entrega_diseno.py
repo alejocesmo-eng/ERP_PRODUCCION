@@ -10,7 +10,9 @@ from sqlalchemy.orm import sessionmaker
 from app.api.v1 import planos as planos_api
 from app.api.v1.planos import PlanoUpdateRequest, actualizar_plano
 from app.db.database import Base
-from app.db.models import BOMListaMateriales, EstadoPlanoEnum, Plano, PlanoArchivo, Proyecto
+from app.db.models import BOMListaMateriales, EstadoPlanoEnum, Plano, PlanoArchivo, PlanoHistorial, Proyecto
+
+USUARIO = {"email": "dibujante1@prueba.test", "rol": "DISENO"}
 
 
 @pytest.fixture
@@ -22,6 +24,7 @@ def db(tmp_path, monkeypatch):
         Plano.__table__,
         BOMListaMateriales.__table__,
         PlanoArchivo.__table__,
+        PlanoHistorial.__table__,
     ]
     Base.metadata.create_all(engine, tables=tables)
     session = sessionmaker(bind=engine)()
@@ -100,7 +103,7 @@ def test_entrega_diseno_rechaza_sin_pdf_sin_aprobar_o_sin_bom_radicada(db, con_p
     plano = crear_plano_en_diseno(db, con_pdf, estado_bom, aprobado)
 
     with pytest.raises(HTTPException) as error:
-        actualizar_plano(plano.id_plano, PlanoUpdateRequest(estado_diseno="LISTA_PARA_LIBERAR"), db)
+        actualizar_plano(plano.id_plano, PlanoUpdateRequest(estado_diseno="LISTA_PARA_LIBERAR"), db, USUARIO)
 
     assert error.value.status_code == 400
     assert texto in error.value.detail
@@ -113,7 +116,7 @@ def test_entrega_diseno_rechaza_sin_pdf_sin_aprobar_o_sin_bom_radicada(db, con_p
 def test_entrega_diseno_pasa_con_bom_radicada_y_cierra_cronometro(db, estado_bom):
     plano = crear_plano_en_diseno(db, True, estado_bom)
 
-    actualizado = actualizar_plano(plano.id_plano, PlanoUpdateRequest(estado_diseno="LISTA_PARA_LIBERAR"), db)
+    actualizado = actualizar_plano(plano.id_plano, PlanoUpdateRequest(estado_diseno="LISTA_PARA_LIBERAR"), db, USUARIO)
 
     assert actualizado.estado_diseno == "LISTA_PARA_LIBERAR"
     assert actualizado.fecha_fin_diseno is not None
@@ -125,7 +128,7 @@ def test_entrega_diseno_verifica_el_hash_del_pdf(db):
     (db.info["directorio"] / "PLN-TEST-RN004.pdf").write_bytes(b"%PDF alterado")
 
     with pytest.raises(HTTPException) as error:
-        actualizar_plano(plano.id_plano, PlanoUpdateRequest(estado_diseno="LISTA_PARA_LIBERAR"), db)
+        actualizar_plano(plano.id_plano, PlanoUpdateRequest(estado_diseno="LISTA_PARA_LIBERAR"), db, USUARIO)
 
     assert error.value.status_code == 409
     assert "sha256" in error.value.detail
@@ -135,7 +138,7 @@ def test_liberada_conserva_gate_de_stock_completo(db):
     plano = crear_plano_en_diseno(db, True, "SOLICITADO")
 
     with pytest.raises(HTTPException) as error:
-        actualizar_plano(plano.id_plano, PlanoUpdateRequest(estado_diseno="LIBERADA"), db)
+        actualizar_plano(plano.id_plano, PlanoUpdateRequest(estado_diseno="LIBERADA"), db, USUARIO)
 
     assert error.value.status_code == 400
     assert "pendientes de almacén" in error.value.detail
@@ -173,7 +176,7 @@ def test_iniciar_otra_orden_pausa_la_activa_del_mismo_dibujante(db):
     ajena = crear_plano_dibujante(db, "EN_DISENO", dibujante="Otro Dibujante")
     siguiente = crear_plano_dibujante(db, "PLANIFICADA")
 
-    actualizar_plano(siguiente.id_plano, PlanoUpdateRequest(estado_diseno="EN_DISENO"), db)
+    actualizar_plano(siguiente.id_plano, PlanoUpdateRequest(estado_diseno="EN_DISENO"), db, USUARIO)
 
     db.refresh(activa)
     db.refresh(ajena)
@@ -194,7 +197,7 @@ def test_concurrencia_unitaria_reconoce_variantes_del_nombre_del_dibujante(db):
                                   fecha_inicio_diseno=datetime.now(timezone.utc) - timedelta(minutes=50),
                                   fecha_fin_diseno=datetime.now(timezone.utc) - timedelta(minutes=40))
 
-    actualizar_plano(nueva.id_plano, PlanoUpdateRequest(estado_diseno="EN_DISENO"), db)
+    actualizar_plano(nueva.id_plano, PlanoUpdateRequest(estado_diseno="EN_DISENO"), db, USUARIO)
 
     db.refresh(activa)
     assert activa.estado_diseno == "PAUSADA"
@@ -211,7 +214,7 @@ def test_reanudar_descuenta_el_tiempo_en_pausa(db):
         tiempo_total_diseno_minutos=20,
     )
 
-    reanudada = actualizar_plano(pausada.id_plano, PlanoUpdateRequest(estado_diseno="EN_DISENO"), db)
+    reanudada = actualizar_plano(pausada.id_plano, PlanoUpdateRequest(estado_diseno="EN_DISENO"), db, USUARIO)
 
     trabajado = datetime.now(timezone.utc) - reanudada.fecha_inicio_diseno.replace(tzinfo=timezone.utc)
     assert reanudada.fecha_fin_diseno is None
@@ -223,7 +226,7 @@ def test_rechaza_transiciones_invalidas_de_pausa(db, estado_actual, estado_nuevo
     plano = crear_plano_dibujante(db, estado_actual)
 
     with pytest.raises(HTTPException) as error:
-        actualizar_plano(plano.id_plano, PlanoUpdateRequest(estado_diseno=estado_nuevo), db)
+        actualizar_plano(plano.id_plano, PlanoUpdateRequest(estado_diseno=estado_nuevo), db, USUARIO)
 
     assert error.value.status_code == 400
 
@@ -233,7 +236,7 @@ def test_observaciones_tecnicas_se_guardan_sin_alterar_estado_ni_cronometro(db):
     plano = crear_plano_dibujante(db, "EN_DISENO", fecha_inicio_diseno=inicio)
     nota = "Dejar sobremedida de 0.3 mm para rectificado; tolerancia h7 en Ø 50."
 
-    actualizado = actualizar_plano(plano.id_plano, PlanoUpdateRequest(observaciones_tecnicas=nota), db)
+    actualizado = actualizar_plano(plano.id_plano, PlanoUpdateRequest(observaciones_tecnicas=nota), db, USUARIO)
 
     assert actualizado.observaciones_tecnicas == nota
     assert actualizado.estado_diseno == "EN_DISENO"

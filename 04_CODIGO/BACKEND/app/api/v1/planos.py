@@ -6,7 +6,7 @@ import unicodedata
 from typing import List, Optional
 from uuid import UUID, uuid4
 from datetime import datetime, date, timedelta, timezone
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, computed_field
 from sqlalchemy.orm import Session, joinedload
@@ -24,6 +24,11 @@ from app.api.v1.quality_gate import (
     validar_liberacion_op,
 )
 from app.services.auditoria import agregar_evento_trazabilidad
+from app.services.historial_planos import (
+    exigir_justificacion,
+    justificacion_opcional,
+    registrar_evento_plano,
+)
 
 router = APIRouter()
 
@@ -44,6 +49,7 @@ FORMATOS_CAD = {
     "dxf": ("archivo_dxf_url", (".dxf",), ".dxf"),
 }
 TAMANO_BLOQUE_CARGA = 1024 * 1024
+CAMPOS_ARCHIVO = ("archivo_pdf_url", "archivo_step_url", "archivo_dxf_url")
 
 
 def _tipo_por_extension(nombre: Optional[str]) -> str:
@@ -65,9 +71,13 @@ def _obtener_plano_para_carga(db: Session, id_plano: UUID) -> Plano:
     return plano
 
 
-def _guardar_archivo_cad(db: Session, plano: Plano, archivo: UploadFile, tipo: str, usuario_actual: dict) -> Plano:
+def _guardar_archivo_cad(
+    db: Session, plano: Plano, archivo: UploadFile, tipo: str, usuario_actual: dict, justificacion: Optional[str] = None
+) -> Plano:
     """Guarda el archivo con sha256 y tamaño en planos_archivos (migración 19).
-    El vigente anterior del mismo tipo pasa a histórico; la columna archivo_*_url sigue al vigente."""
+    El vigente anterior del mismo tipo pasa a histórico; la columna archivo_*_url sigue al vigente.
+    Historial (migración 21): la primera carga del tipo es CARGA_ARCHIVO sin justificación;
+    reemplazar el vigente por otro contenido es CAMBIO_ARCHIVO y exige justificación (422)."""
     if tipo not in FORMATOS_CAD:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tipo CAD inválido. Use pdf, step o dxf.")
     # Inmutabilidad post-liberación: el paquete técnico liberado queda congelado
@@ -87,6 +97,12 @@ def _guardar_archivo_cad(db: Session, plano: Plano, archivo: UploadFile, tipo: s
     # Se escribe en un temporal calculando sha256 y tamaño; el nombre final incluye el hash
     # para que una carga nueva no sobrescriba el archivo del histórico.
     os.makedirs(DIRECTORIO_STATIC_PLANOS, exist_ok=True)
+    tipo_archivo = tipo.upper()
+    vigente = db.query(PlanoArchivo).filter(
+        PlanoArchivo.id_plano == plano.id_plano,
+        PlanoArchivo.tipo == tipo_archivo,
+        PlanoArchivo.vigente.is_(True),
+    ).first()
     ruta_temporal = os.path.join(DIRECTORIO_STATIC_PLANOS, f".carga_{uuid4().hex}.tmp")
     calculo = hashlib.sha256()
     tamano_bytes = 0
@@ -99,6 +115,9 @@ def _guardar_archivo_cad(db: Session, plano: Plano, archivo: UploadFile, tipo: s
         if tamano_bytes == 0:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El archivo está vacío.")
         sha256 = calculo.hexdigest()
+        # Reemplazo con otro contenido: la justificación se valida antes de dejar el archivo en disco
+        cambio_archivo = bool(vigente) and vigente.sha256 != sha256
+        texto_justificacion = exigir_justificacion(justificacion) if cambio_archivo else None
         prefijo = f"{plano.codigo_plano}_{plano.version}_{sha256[:12]}"
         nombre_archivo = re.sub(r"[^A-Za-z0-9._-]", "_", prefijo) + ext_final
         os.replace(ruta_temporal, os.path.join(DIRECTORIO_STATIC_PLANOS, nombre_archivo))
@@ -107,15 +126,18 @@ def _guardar_archivo_cad(db: Session, plano: Plano, archivo: UploadFile, tipo: s
             os.remove(ruta_temporal)
 
     ruta = f"/static/planos/{nombre_archivo}"
-    tipo_archivo = tipo.upper()
-    vigente = db.query(PlanoArchivo).filter(
-        PlanoArchivo.id_plano == plano.id_plano,
-        PlanoArchivo.tipo == tipo_archivo,
-        PlanoArchivo.vigente.is_(True),
-    ).first()
     try:
         # El mismo archivo ya vigente (mismo contenido y misma ruta) no crea otra entrada en el histórico
         if not (vigente and vigente.sha256 == sha256 and vigente.ruta == ruta):
+            if vigente is None or cambio_archivo:
+                registrar_evento_plano(
+                    db, plano,
+                    "CAMBIO_ARCHIVO" if cambio_archivo else "CARGA_ARCHIVO",
+                    usuario_actual["email"],
+                    tipo_archivo=tipo_archivo,
+                    sha256=sha256,
+                    justificacion=texto_justificacion,
+                )
             if vigente:
                 vigente.vigente = False
                 db.flush()
@@ -257,6 +279,13 @@ class PlanoUpdateRequest(BaseModel):
     unidad_planta: Optional[str] = None
     observaciones_tecnicas: Optional[str] = None
     piezas: Optional[List[PiezaPlanoWrite]] = None
+    # Obligatoria (mínimo 10 caracteres) cuando cambia la versión
+    justificacion: Optional[str] = None
+
+
+class JustificacionPlanoRequest(BaseModel):
+    """Cuerpo de la revisión (justificación obligatoria) y de la aprobación (opcional)."""
+    justificacion: Optional[str] = None
 
 
 class TokenPlanoResponse(BaseModel):
@@ -302,7 +331,11 @@ def _datos_pieza(plano_in: PlanoWriteRequest, pieza: PiezaPlanoWrite):
 
 
 @router.post("/", response_model=List[PlanoResponse], status_code=status.HTTP_201_CREATED)
-def crear_planos(plano_in: PlanoWriteRequest, db: Session = Depends(get_db)):
+def crear_planos(
+    plano_in: PlanoWriteRequest,
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
     proyecto = db.query(Proyecto).filter(Proyecto.id_proyecto == plano_in.id_proyecto).first()
     if not proyecto:
         raise HTTPException(status_code=404, detail="El proyecto asociado al plano no existe.")
@@ -334,6 +367,7 @@ def crear_planos(plano_in: PlanoWriteRequest, db: Session = Depends(get_db)):
             )
             db.add(plano)
             db.flush()
+            registrar_evento_plano(db, plano, "CREACION", usuario_actual["email"])
             datos_bom = _datos_pieza(plano_in, pieza)
             if datos_bom["codigo_material"]:
                 db.add(BOMListaMateriales(
@@ -369,12 +403,10 @@ def actualizar_plano(
     if not plano:
         raise HTTPException(status_code=404, detail="Plano no encontrado.")
 
+    # Los archivos no se editan aquí: solo con las rutas de carga (hash, planos_archivos e historial)
     campos_editables = {
         "estado_diseno",
         "causa_espera",
-        "archivo_pdf_url",
-        "archivo_step_url",
-        "archivo_dxf_url",
         "material_requerido",
         "version",
         "dibujante_asignado",
@@ -389,6 +421,24 @@ def actualizar_plano(
         if estado_anterior == "PAUSADA" and estado_nuevo not in {"EN_DISENO", "LISTA_PARA_LIBERAR"}:
             raise HTTPException(status_code=400, detail="Una orden PAUSADA solo puede reanudarse o entregarse.")
     datos_actualizacion = plano_in.dict(exclude_unset=True)
+    # 422 antes de escribir: un archivo distinto del actual o una versión nueva sin justificación.
+    # El mismo valor que ya tiene el plano se acepta (la mesa de Diseño reenvía el plano completo).
+    archivos_cambiados = [
+        campo for campo in CAMPOS_ARCHIVO
+        if campo in datos_actualizacion and (datos_actualizacion[campo] or None) != (getattr(plano, campo) or None)
+    ]
+    if archivos_cambiados:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Los archivos del plano ({', '.join(archivos_cambiados)}) no se cambian con PATCH: "
+                "use la carga de archivos POST /planos/upload-cad/{id_plano}/{tipo}."
+            ),
+        )
+    version_anterior = plano.version
+    version_nueva = datos_actualizacion.get("version")
+    cambio_version = bool(version_nueva) and version_nueva != version_anterior
+    texto_justificacion = exigir_justificacion(plano_in.justificacion) if cambio_version else None
     for campo in campos_editables:
         if campo in datos_actualizacion:
             setattr(plano, campo, datos_actualizacion[campo])
@@ -440,10 +490,21 @@ def actualizar_plano(
                         continue
                     _detener_cronometro_diseno(orden_activa, ahora)
                     orden_activa.estado_diseno = "PAUSADA"
+                    registrar_evento_plano(db, orden_activa, "CAMBIO_ESTADO", usuario_actual["email"])
             if estado_anterior == "PAUSADA" or not plano.fecha_inicio_diseno:
                 _reanudar_cronometro_diseno(plano, ahora)
         if estado_anterior == "EN_DISENO" and plano.estado_diseno in ESTADOS_ENTREGA_DISENO | {"PAUSADA"}:
             _detener_cronometro_diseno(plano, ahora)
+
+        # Historial (migración 21); la versión nueva cuenta como revisión del plano
+        if cambio_version:
+            plano.fecha_ultima_revision = ahora
+            registrar_evento_plano(
+                db, plano, "CAMBIO_VERSION", usuario_actual["email"],
+                version_anterior=version_anterior, justificacion=texto_justificacion,
+            )
+        if plano.estado_diseno != estado_anterior:
+            registrar_evento_plano(db, plano, "CAMBIO_ESTADO", usuario_actual["email"])
         db.commit()
         db.refresh(plano)
     except SQLAlchemyError as error:
@@ -455,10 +516,12 @@ def actualizar_plano(
 @router.post("/{id_plano}/aprobar", response_model=PlanoResponse)
 def aprobar_plano(
     id_plano: UUID,
+    datos: Optional[JustificacionPlanoRequest] = None,
     db: Session = Depends(get_db),
     usuario_actual: dict = Depends(requerir_roles(["DISENO"])),
 ):
-    """Aprobación de Diseño: condición 3 de la regla de liberación de la OP."""
+    """Aprobación de Diseño: condición 3 de la regla de liberación de la OP.
+    La justificación es opcional y queda en el historial del plano."""
     plano = db.query(Plano).filter(Plano.id_plano == id_plano).first()
     if not plano:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plano no encontrado.")
@@ -468,6 +531,10 @@ def aprobar_plano(
     plano.aprobado_por = usuario_actual["email"]
     plano.fecha_aprobacion = datetime.now(timezone.utc)
     try:
+        registrar_evento_plano(
+            db, plano, "APROBACION", usuario_actual["email"],
+            justificacion=justificacion_opcional(datos.justificacion if datos else None),
+        )
         agregar_evento_trazabilidad(
             db,
             tipo_entidad="PLANO",
@@ -483,6 +550,31 @@ def aprobar_plano(
     except SQLAlchemyError as error:
         db.rollback()
         raise HTTPException(status_code=500, detail="No se pudo aprobar el plano.") from error
+    return plano
+
+
+@router.post("/{id_plano}/revision", response_model=PlanoResponse)
+def registrar_revision_plano(
+    id_plano: UUID,
+    datos: Optional[JustificacionPlanoRequest] = None,
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(requerir_roles(["DISENO"])),
+):
+    """Revisión de Diseño sin cambio de versión: exige justificación y fija
+    fecha_ultima_revision, de modo que un plano ya aprobado queda marcado como Revisar."""
+    texto_justificacion = exigir_justificacion(datos.justificacion if datos else None)
+    plano = db.query(Plano).filter(Plano.id_plano == id_plano).first()
+    if not plano:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plano no encontrado.")
+
+    plano.fecha_ultima_revision = datetime.now(timezone.utc)
+    try:
+        registrar_evento_plano(db, plano, "REVISION", usuario_actual["email"], justificacion=texto_justificacion)
+        db.commit()
+        db.refresh(plano)
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="No se pudo registrar la revisión del plano.") from error
     return plano
 
 
@@ -551,11 +643,12 @@ def subir_pdf_plano(
     archivo: UploadFile = File(...),
     db: Session = Depends(get_db),
     usuario_actual: dict = Depends(obtener_usuario_actual),
+    justificacion: Optional[str] = Form(None),
 ):
     """Carga por extensión: acepta PDF, STEP y DXF (la mesa de Diseño envía aquí los tres)."""
     tipo = _tipo_por_extension(archivo.filename)
     plano = _obtener_plano_para_carga(db, id_plano)
-    return _guardar_archivo_cad(db, plano, archivo, tipo, usuario_actual)
+    return _guardar_archivo_cad(db, plano, archivo, tipo, usuario_actual, justificacion)
 
 @router.post("/upload-cad/{id_plano}", response_model=PlanoResponse)
 def subir_cad_plano(
@@ -563,11 +656,12 @@ def subir_cad_plano(
     archivo: UploadFile = File(...),
     db: Session = Depends(get_db),
     usuario_actual: dict = Depends(obtener_usuario_actual),
+    justificacion: Optional[str] = Form(None),
 ):
     """Carga por extensión: .pdf, .step/.stp o .dxf."""
     tipo = _tipo_por_extension(archivo.filename)
     plano = _obtener_plano_para_carga(db, id_plano)
-    return _guardar_archivo_cad(db, plano, archivo, tipo, usuario_actual)
+    return _guardar_archivo_cad(db, plano, archivo, tipo, usuario_actual, justificacion)
 
 @router.post("/upload-cad/{id_plano}/{tipo}", response_model=PlanoResponse)
 def subir_archivo_cad_por_tipo(
@@ -576,10 +670,12 @@ def subir_archivo_cad_por_tipo(
     archivo: UploadFile = File(...),
     db: Session = Depends(get_db),
     usuario_actual: dict = Depends(obtener_usuario_actual),
+    justificacion: Optional[str] = Form(None),
 ):
-    """Carga multiformato: tipo = pdf | step | dxf (.pdf, .step/.stp, .dxf)."""
+    """Carga multiformato: tipo = pdf | step | dxf (.pdf, .step/.stp, .dxf).
+    justificacion (Form): obligatoria al reemplazar el archivo vigente por otro contenido."""
     plano = _obtener_plano_para_carga(db, id_plano)
-    return _guardar_archivo_cad(db, plano, archivo, tipo.lower(), usuario_actual)
+    return _guardar_archivo_cad(db, plano, archivo, tipo.lower(), usuario_actual, justificacion)
 
 @router.get("/descargar-cad/{id_plano}/{tipo}")
 def descargar_cad_plano(id_plano: UUID, tipo: str, db: Session = Depends(get_db)):

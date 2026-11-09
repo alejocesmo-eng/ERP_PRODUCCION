@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from app.api.v1 import planos as planos_api
 from app.api.v1.planos import descargar_cad_plano, subir_archivo_cad_por_tipo
 from app.db.database import Base
-from app.db.models import BOMListaMateriales, Plano, PlanoArchivo, Proyecto
+from app.db.models import BOMListaMateriales, Plano, PlanoArchivo, PlanoHistorial, Proyecto
 
 USUARIO = {"email": "dibujante1@prueba.test", "rol": "DISENO"}
 CONTENIDO = b"contenido-cad"
@@ -25,6 +25,7 @@ def db():
         Plano.__table__,
         BOMListaMateriales.__table__,
         PlanoArchivo.__table__,
+        PlanoHistorial.__table__,
     ]
     Base.metadata.create_all(engine, tables=tables)
     session = sessionmaker(bind=engine)()
