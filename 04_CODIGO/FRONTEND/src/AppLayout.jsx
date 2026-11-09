@@ -4,6 +4,7 @@ import SidebarNavigation from './components/SidebarNavigation';
 import { Outlet, useNavigate } from 'react-router-dom';
 import { ProyectosProvider } from './context/ProyectosContext';
 import ExpedienteOpModal from './components/modals/ExpedienteOpModal';
+import UsuarioConectado from './components/UsuarioConectado';
 
 export default function AppLayout() {
   const navigate = useNavigate();
@@ -52,6 +53,7 @@ export default function AppLayout() {
         <SidebarNavigation />
         <main className="flex-1 p-6 overflow-y-auto">
           <div className="mb-5 flex flex-wrap items-end justify-end gap-2 rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+            <UsuarioConectado className="mr-auto self-center" />
             <form
               className="flex flex-wrap items-end gap-2"
               onSubmit={(event) => {

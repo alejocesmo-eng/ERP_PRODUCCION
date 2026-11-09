@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import API from '../services/api';
+import { guardarSesion } from '../services/sesion';
 
 export default function LoginView({ onLoginSuccess }) {
   const [username, setUsername] = useState('');
@@ -28,7 +29,7 @@ export default function LoginView({ onLoginSuccess }) {
       }
 
       // 1. Guardar token inmutable en localStorage
-      localStorage.setItem('sgi_token', access_token);
+      guardarSesion(response.data);
 
       // 2. Ejecutar callback de éxito o forzar redirección
       if (onLoginSuccess) {
@@ -72,7 +73,7 @@ export default function LoginView({ onLoginSuccess }) {
       });
 
       const { access_token } = response.data;
-      localStorage.setItem('sgi_token', access_token);
+      guardarSesion(response.data);
       if (onLoginSuccess) {
         onLoginSuccess(access_token);
       } else {

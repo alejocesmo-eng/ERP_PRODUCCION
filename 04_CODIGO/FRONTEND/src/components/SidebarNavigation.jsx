@@ -1,6 +1,7 @@
 // src/componentes/SidebarNavigation.jsx
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { cerrarSesion } from '../services/sesion';
 
 export const SidebarNavigation = () => {
   const location = useLocation();
@@ -8,7 +9,7 @@ export const SidebarNavigation = () => {
   const [visible, setVisible] = useState(false);
 
   const handleLogout = () => {
-    localStorage.removeItem('sgi_token');
+    cerrarSesion();
     window.location.href = '/';
   };
 
