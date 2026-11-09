@@ -50,7 +50,9 @@ export default function LoginView({ onLoginSuccess }) {
     }
   };
 
-  const fastLogin = async (email) => {
+  // Acceso rápido solo en desarrollo: en el build de producción import.meta.env.DEV es false
+  // y la función (con su clave de pruebas) no se incluye en el bundle
+  const fastLogin = import.meta.env.DEV ? async (email) => {
     setLoading(true);
     setError('');
     try {
@@ -74,7 +76,7 @@ export default function LoginView({ onLoginSuccess }) {
     } finally {
       setLoading(false);
     }
-  };
+  } : null;
 
   return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
@@ -128,6 +130,7 @@ export default function LoginView({ onLoginSuccess }) {
           Control de Acceso Autenticado — [ISO 9001:2026]
         </div>
 
+        {import.meta.env.DEV && (
         <div className="mt-8 pt-6 border-t border-slate-100">
           <p className="text-[10px] font-bold text-slate-400 uppercase mb-3 text-center">Acceso de Pruebas (Dev Mode)</p>
           <div className="grid grid-cols-2 gap-2">
@@ -148,6 +151,7 @@ export default function LoginView({ onLoginSuccess }) {
             ))}
           </div>
         </div>
+        )}
       </div>
     </div>
   );
