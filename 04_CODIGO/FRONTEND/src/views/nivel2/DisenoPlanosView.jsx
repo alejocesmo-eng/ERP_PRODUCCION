@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import API, { mensajeError } from '../../services/api';
 import VisorPlanoModal from '../../components/VisorPlanoModal';
+import LineaTiempoPlano from '../../components/LineaTiempoPlano';
 
 export default function DisenoPlanosView() {
   // BLOQUE 1: ESTADOS PRINCIPALES DEL MÓDULO PM-02 Y ROL DEL USUARIO
@@ -42,6 +43,9 @@ export default function DisenoPlanosView() {
 
   const [modalHistorialVersionesAbierto, setModalHistorialVersionesAbierto] = useState(false);
   const [planoHistorialSeleccionado, setPlanoHistorialSeleccionado] = useState(null);
+  const [historialPlano, setHistorialPlano] = useState({ eventos: [], cargando: false, error: '' });
+  const [justificacionRevision, setJustificacionRevision] = useState('');
+  const [registrandoRevision, setRegistrandoRevision] = useState(false);
 
   const [mantenimientoSeleccionado, setMantenimientoSeleccionado] = useState(null);
   const [piezasLevantamiento, setPiezasLevantamiento] = useState([]);
@@ -89,6 +93,8 @@ export default function DisenoPlanosView() {
     LISTA_PARA_LIBERAR: ['LIBERADA'],
     LIBERADA: []
   };
+  // Mínimo de la justificación de cambio de versión, cambio de archivo y revisión (historial_planos.py)
+  const LONGITUD_MINIMA_JUSTIFICACION = 10;
   const ESTILOS_ETAPA = {
     LIBERADA: 'bg-emerald-100 text-emerald-800 border-emerald-300',
     LISTA_PARA_LIBERAR: 'bg-teal-100 text-teal-800 border-teal-300',
@@ -207,10 +213,7 @@ export default function DisenoPlanosView() {
           bom_items: bomItems,
           estado_bom: estadoBomPlano,
           archivo_step_url: pl.archivo_step_url || '',
-          archivo_dxf_url: pl.archivo_dxf_url || '',
-          historial_versiones: pl.historial_versiones || [
-            { version: pl.version_plano || 'v1.0', fecha: pl.created_at?.split('T')[0] || '2026-10-18', dibujante: pl.dibujante_asignado || 'Ing. Carlos Ruiz', motivo: 'Versión inicial de plano cargada.' }
-          ]
+          archivo_dxf_url: pl.archivo_dxf_url || ''
         };
       });
 
@@ -597,7 +600,10 @@ export default function DisenoPlanosView() {
       fecha_inicio_programada: pl.fecha_inicio_programada || '',
       fecha_entrega_cliente: pl.fecha_entrega_cliente || pedidoAsociado.fecha_compromiso || '',
       fecha_entrega_produccion: pl.fecha_entrega_produccion || pedidoAsociado.fecha_compromiso || '',
-      piezas: piezasFormateadas
+      piezas: piezasFormateadas,
+      // Versión guardada del plano: si cambia al guardar, el PATCH exige justificación
+      version_original: piezasFormateadas[0]?.version_plano,
+      justificacion: ''
     });
 
     setModalNuevoPlanoAbierto(true);
@@ -824,14 +830,26 @@ export default function DisenoPlanosView() {
     const file = e.target.files[0];
     if (!file) return;
 
+    const campoMapeado = tipoFormato === 'STEP' ? 'archivo_step_url' : tipoFormato === 'DXF' ? 'archivo_dxf_url' : 'archivo_url';
+    // Campo de PlanoResponse con la ruta vigente de cada tipo
+    const campoRespuesta = tipoFormato === 'STEP' ? 'archivo_step_url' : tipoFormato === 'DXF' ? 'archivo_dxf_url' : 'archivo_pdf_url';
+    const justificacion = (nuevoPlano.justificacion || '').trim();
+    const piezaActual = (nuevoPlano.piezas || []).find(p => p.id === piezaId);
+    // Reemplazar un archivo vigente exige justificación (el servidor responde 422 si falta)
+    if (nuevoPlano.id_plano && piezaActual?.[campoMapeado] && justificacion.length < LONGITUD_MINIMA_JUSTIFICACION) {
+      setMensaje({
+        tipo: 'error',
+        texto: `⚠️ El plano ya tiene ${tipoFormato}: escriba la "Justificación del cambio de archivo o versión" (mínimo ${LONGITUD_MINIMA_JUSTIFICACION} caracteres) antes de reemplazarlo.`
+      });
+      e.target.value = '';
+      return;
+    }
+
     try {
       setLoading(true);
       const formData = new FormData();
       formData.append('archivo', file);
-
-      const campoMapeado = tipoFormato === 'STEP' ? 'archivo_step_url' : tipoFormato === 'DXF' ? 'archivo_dxf_url' : 'archivo_url';
-      // Campo de PlanoResponse con la ruta vigente de cada tipo
-      const campoRespuesta = tipoFormato === 'STEP' ? 'archivo_step_url' : tipoFormato === 'DXF' ? 'archivo_dxf_url' : 'archivo_pdf_url';
+      if (justificacion) formData.append('justificacion', justificacion);
 
       if (nuevoPlano.id_plano) {
         const res = await API.post(`/planos/upload-cad/${nuevoPlano.id_plano}/${tipoFormato.toLowerCase()}`, formData, {
@@ -857,9 +875,38 @@ export default function DisenoPlanosView() {
     setModalVisorPlanoOpen(true);
   };
 
+  const cargarHistorialPlano = async (idPlano) => {
+    setHistorialPlano({ eventos: [], cargando: true, error: '' });
+    try {
+      const respuesta = await API.get(`/planos/${idPlano}/historial`);
+      setHistorialPlano({ eventos: Array.isArray(respuesta.data) ? respuesta.data : [], cargando: false, error: '' });
+    } catch (error) {
+      setHistorialPlano({ eventos: [], cargando: false, error: mensajeError(error, 'No se pudo cargar el historial del plano.') });
+    }
+  };
+
   const handleAbrirHistorialVersiones = (plano) => {
     setPlanoHistorialSeleccionado(plano);
+    setJustificacionRevision('');
     setModalHistorialVersionesAbierto(true);
+    cargarHistorialPlano(plano.id_plano);
+  };
+
+  const handleRegistrarRevision = async () => {
+    const justificacion = justificacionRevision.trim();
+    if (justificacion.length < LONGITUD_MINIMA_JUSTIFICACION) return;
+    setRegistrandoRevision(true);
+    try {
+      await API.post(`/planos/${planoHistorialSeleccionado.id_plano}/revision`, { justificacion });
+      setJustificacionRevision('');
+      setMensaje({ tipo: 'exito', texto: `✅ Revisión registrada en el plano ${planoHistorialSeleccionado.codigo_plano}.` });
+      await cargarHistorialPlano(planoHistorialSeleccionado.id_plano);
+      cargarPlanosYPedidos();
+    } catch (error) {
+      setHistorialPlano(prev => ({ ...prev, error: mensajeError(error, 'No se pudo registrar la revisión.') }));
+    } finally {
+      setRegistrandoRevision(false);
+    }
   };
 
   const handleCrearOrdenPorItem = async (pieza) => {
@@ -954,12 +1001,27 @@ export default function DisenoPlanosView() {
         setMensaje({ tipo: 'error', texto: 'Asigne al menos una línea con cantidad mayor a 0 a esta OP.' });
         return;
       }
+      const { version_original, justificacion, ...datosPlano } = nuevoPlano;
       const payload = {
-        ...nuevoPlano,
+        ...datosPlano,
         piezas: piezasOp.map(({ id, cantidad_pendiente, cantidad_solicitada, ...resto }) => resto)
       };
-      
+
       if (nuevoPlano.id_plano) {
+        // Cambio de versión del plano: se envía con su justificación (422 en el servidor si falta)
+        const versionNueva = piezasOp[0]?.version_plano;
+        if (versionNueva && versionNueva !== version_original) {
+          const texto = (justificacion || '').trim();
+          if (texto.length < LONGITUD_MINIMA_JUSTIFICACION) {
+            setMensaje({
+              tipo: 'error',
+              texto: `⚠️ Cambió la versión de ${version_original || '—'} a ${versionNueva}: escriba la "Justificación del cambio de archivo o versión" (mínimo ${LONGITUD_MINIMA_JUSTIFICACION} caracteres).`
+            });
+            return;
+          }
+          payload.version = versionNueva;
+          payload.justificacion = texto;
+        }
         await API.patch(`/planos/${nuevoPlano.id_plano}`, payload);
       } else {
         await API.post('/planos/', payload);
@@ -974,11 +1036,7 @@ export default function DisenoPlanosView() {
       setFiltroEstado('TODOS');
       await cargarPlanosYPedidos();
     } catch (error) {
-      const detalle = error?.response?.data?.detail;
-      setMensaje({
-        tipo: 'error',
-        texto: typeof detalle === 'string' ? `⚠️ ${detalle}` : 'Error al actualizar la orden de diseño.'
-      });
+      setMensaje({ tipo: 'error', texto: `⚠️ ${mensajeError(error, 'Error al actualizar la orden de diseño.')}` });
     } finally {
       setLoading(false);
     }
@@ -1617,9 +1675,9 @@ export default function DisenoPlanosView() {
                               type="button"
                               onClick={() => handleAbrirHistorialVersiones(pl)}
                               className="px-2 py-1 bg-purple-100 hover:bg-purple-200 text-purple-900 font-bold rounded text-[10px] border border-purple-300 transition cursor-pointer"
-                              title="Ver historial de versiones"
+                              title="Ver la línea de tiempo del plano y registrar revisiones"
                             >
-                              📜 Versiones
+                              📜 Historial
                             </button>
 
                             <button
@@ -2176,6 +2234,26 @@ export default function DisenoPlanosView() {
                 </div>
               </div>
 
+              {/* JUSTIFICACIÓN DEL HISTORIAL (migración 21): cambio de versión o reemplazo de archivo */}
+              {nuevoPlano.id_plano && (
+                <div className="bg-amber-50/60 p-3 rounded-xl border border-amber-200">
+                  <label htmlFor="justificacion-cambio-plano" className="block font-semibold text-slate-800 mb-1">
+                    Justificación del cambio de archivo o versión
+                  </label>
+                  <textarea
+                    id="justificacion-cambio-plano"
+                    rows={2}
+                    value={nuevoPlano.justificacion || ''}
+                    onChange={(e) => setNuevoPlano({ ...nuevoPlano, justificacion: e.target.value })}
+                    placeholder={`Obligatoria al cambiar la versión o reemplazar un PDF, STEP o DXF vigente (mínimo ${LONGITUD_MINIMA_JUSTIFICACION} caracteres).`}
+                    className="w-full p-1.5 border border-amber-300 rounded text-slate-800 bg-white"
+                  />
+                  <span className={`text-[10px] font-semibold ${(nuevoPlano.justificacion || '').trim().length >= LONGITUD_MINIMA_JUSTIFICACION ? 'text-emerald-700' : 'text-slate-500'}`}>
+                    {(nuevoPlano.justificacion || '').trim().length}/{LONGITUD_MINIMA_JUSTIFICACION} caracteres · queda en el historial del plano
+                  </span>
+                </div>
+              )}
+
               {/* SECCIÓN DE FECHAS TEMPORALES Y ETAPAS */}
               <div className="grid grid-cols-1 sm:grid-cols-6 gap-2.5 bg-blue-50/40 p-3 rounded-xl border border-blue-200 items-center">
                 <div>
@@ -2487,11 +2565,11 @@ export default function DisenoPlanosView() {
       {/* MODAL HISTORIAL DE VERSIÓN DEL PLANO */}
       {modalHistorialVersionesAbierto && planoHistorialSeleccionado && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-5 space-y-3 border-t-4 border-purple-600 text-xs">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-5 space-y-3 border-t-4 border-purple-600 text-xs">
             <div className="flex justify-between items-start border-b pb-2">
               <div>
                 <span className="px-2 py-0.5 bg-purple-100 text-purple-900 text-[10px] font-extrabold rounded uppercase">
-                  Trazabilidad de Versiones CAD [ISO 9001:2026]
+                  Línea de tiempo del plano [ISO 9001:2026]
                 </span>
                 <h3 className="text-base font-bold text-slate-800 mt-1">
                   Historial: {planoHistorialSeleccionado.codigo_plano} (OP-{planoHistorialSeleccionado.codigo_op})
@@ -2500,21 +2578,39 @@ export default function DisenoPlanosView() {
               <button onClick={() => setModalHistorialVersionesAbierto(false)} className="text-slate-400 hover:text-slate-600 font-bold text-base cursor-pointer">✕</button>
             </div>
 
-            <div className="space-y-2 max-h-64 overflow-y-auto">
-              {(planoHistorialSeleccionado.historial_versiones || [
-                { version: planoHistorialSeleccionado.version_plano || 'v1.0', fecha: planoHistorialSeleccionado.fecha_apertura_orden, dibujante: planoHistorialSeleccionado.dibujante_asignado, motivo: 'Versión inicial de plano cargada.' }
-              ]).map((ver, idx) => (
-                <div key={idx} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
-                  <div className="flex justify-between items-center font-bold text-slate-800">
-                    <span className="bg-purple-600 text-white px-2 py-0.5 rounded text-[10px]">{ver.version}</span>
-                    <span className="text-[10px] text-slate-500 font-mono">📅 {ver.fecha}</span>
-                  </div>
-                  <p className="text-slate-700 font-medium text-[11px] mt-1">{ver.motivo}</p>
-                  <div className="text-[10px] text-slate-500 font-semibold pt-1 border-t border-slate-200">
-                    👤 Diseñador Responsable: <strong>{ver.dibujante}</strong>
-                  </div>
-                </div>
-              ))}
+            <div className="max-h-80 overflow-y-auto pr-1">
+              <LineaTiempoPlano
+                eventos={historialPlano.eventos}
+                cargando={historialPlano.cargando}
+                error={historialPlano.error}
+              />
+            </div>
+
+            <div className="rounded-xl border border-orange-200 bg-orange-50/60 p-3 space-y-1.5">
+              <label htmlFor="justificacion-revision-plano" className="block font-semibold text-slate-800">
+                Registrar revisión sin cambio de versión (rol Diseño)
+              </label>
+              <textarea
+                id="justificacion-revision-plano"
+                rows={2}
+                value={justificacionRevision}
+                onChange={(e) => setJustificacionRevision(e.target.value)}
+                placeholder={`Justificación de la revisión (mínimo ${LONGITUD_MINIMA_JUSTIFICACION} caracteres). Si el plano está aprobado, quedará marcado para revisar.`}
+                className="w-full p-1.5 border border-orange-300 rounded text-slate-800 bg-white"
+              />
+              <div className="flex items-center justify-between">
+                <span className={`text-[10px] font-semibold ${justificacionRevision.trim().length >= LONGITUD_MINIMA_JUSTIFICACION ? 'text-emerald-700' : 'text-slate-500'}`}>
+                  {justificacionRevision.trim().length}/{LONGITUD_MINIMA_JUSTIFICACION} caracteres
+                </span>
+                <button
+                  type="button"
+                  onClick={handleRegistrarRevision}
+                  disabled={registrandoRevision || justificacionRevision.trim().length < LONGITUD_MINIMA_JUSTIFICACION}
+                  className="px-3 py-1 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded text-[11px] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {registrandoRevision ? 'Registrando…' : '📝 Registrar revisión'}
+                </button>
+              </div>
             </div>
 
             <div className="flex justify-end border-t pt-2">

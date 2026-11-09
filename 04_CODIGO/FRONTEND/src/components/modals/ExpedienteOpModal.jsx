@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import API, { mensajeError } from '../../services/api';
 import VisorPlanoModal from '../VisorPlanoModal';
 import VistaGrafoCostos from '../../views/nivel2/VistaGrafoCostos';
+import LineaTiempoPlano from '../LineaTiempoPlano';
 
 const PESTANAS = [
   { id: 'piezas', etiqueta: '📋 Despiece de Piezas / Kit' },
@@ -114,6 +115,8 @@ export default function ExpedienteOpModal({
   const [motivoAdmin, setMotivoAdmin] = useState('');
   const [planosRevisar, setPlanosRevisar] = useState([]);
   const [aprobandoPlano, setAprobandoPlano] = useState(null);
+  const [justificacionAprobacion, setJustificacionAprobacion] = useState('');
+  const [historialAbierto, setHistorialAbierto] = useState(null);
   const [planoAbierto, setPlanoAbierto] = useState(null);
   const [costos, setCostos] = useState(null);
   const [cargandoCostos, setCargandoCostos] = useState(false);
@@ -137,6 +140,8 @@ export default function ExpedienteOpModal({
     setMensajeAccion('');
     setMotivoAdmin('');
     setPlanosRevisar([]);
+    setJustificacionAprobacion('');
+    setHistorialAbierto(null);
     API.get(`/ordenes/expediente/${encodeURIComponent(codigoOp)}`)
       .then((respuesta) => {
         if (activo) setExpediente(respuesta.data);
@@ -188,7 +193,10 @@ export default function ExpedienteOpModal({
     setMensajeAccion('');
     setAprobandoPlano(plano.id_plano);
     try {
-      await API.post(`/planos/${plano.id_plano}/aprobar`);
+      // La justificación de la aprobación es opcional y queda en el historial del plano
+      const justificacion = justificacionAprobacion.trim();
+      await API.post(`/planos/${plano.id_plano}/aprobar`, justificacion ? { justificacion } : undefined);
+      setJustificacionAprobacion('');
       setMensajeAccion(`El plano ${plano.codigo_plano} quedó APROBADO por Diseño.`);
       await recargarExpediente();
     } catch (fallo) {
@@ -312,7 +320,13 @@ export default function ExpedienteOpModal({
                                 )}
                               </td>
                               <td className="px-2 py-1 text-slate-600">{aprobado ? `${plano.aprobado_por || '—'} · ${formatearFecha(plano.fecha_aprobacion)}` : 'Pendiente'}</td>
-                              <td className="px-2 py-1 text-right">
+                              <td className="px-2 py-1 text-right whitespace-nowrap">
+                                <AccionButton
+                                  onClick={() => setHistorialAbierto(historialAbierto === plano.id_plano ? null : plano.id_plano)}
+                                  className={`mr-1 border-purple-200 ${historialAbierto === plano.id_plano ? 'bg-purple-600 text-white' : 'bg-purple-50 text-purple-800'}`}
+                                >
+                                  📜 Historial ({(plano.historial || []).length})
+                                </AccionButton>
                                 {rol === 'DISENO' && (!aprobado || plano.revisar) && (
                                   <AccionButton
                                     onClick={() => aprobarPlano(plano)}
@@ -330,6 +344,30 @@ export default function ExpedienteOpModal({
                     </table>
                   </div>
                 )}
+                {rol === 'DISENO' && planos.some((plano) => plano.estado !== 'APROBADO' || plano.revisar) && (
+                  <label className="mt-1 flex items-center gap-1 text-[10px] font-bold text-slate-700">
+                    Justificación de la aprobación (opcional)
+                    <input
+                      type="text"
+                      value={justificacionAprobacion}
+                      onChange={(evento) => setJustificacionAprobacion(evento.target.value)}
+                      placeholder="Queda en el historial del plano que apruebe"
+                      className="flex-1 rounded border border-slate-300 px-2 py-1 font-normal"
+                    />
+                  </label>
+                )}
+                {historialAbierto && (() => {
+                  const planoHistorial = planos.find((plano) => plano.id_plano === historialAbierto);
+                  if (!planoHistorial) return null;
+                  return (
+                    <div className="mt-2 max-h-56 overflow-y-auto rounded border border-purple-200 bg-white p-2">
+                      <div className="mb-1 font-bold text-purple-900">
+                        Línea de tiempo · {planoHistorial.codigo_plano} ({planoHistorial.revision || '—'})
+                      </div>
+                      <LineaTiempoPlano eventos={planoHistorial.historial || []} />
+                    </div>
+                  );
+                })()}
               </>
             )}
           </header>
