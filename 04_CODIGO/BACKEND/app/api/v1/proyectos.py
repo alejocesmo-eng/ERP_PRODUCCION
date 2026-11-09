@@ -334,11 +334,31 @@ def obtener_expediente_pedido(id_proyecto: UUID, db: Session = Depends(get_db)):
     for orden in ordenes:
         ordenes_por_plano.setdefault(orden.id_plano, []).append(orden)
 
+    # OP creadas desde una línea del pedido (migración 20), con o sin plano
+    ordenes_por_linea = (
+        db.query(OrdenProduccion)
+        .filter(OrdenProduccion.id_detalle_pedido.in_(detalle_ids))
+        .all()
+        if detalle_ids else []
+    )
+    planos_de_ordenes = dict(planos_por_id)
+    ids_plano_extra = {
+        orden.id_plano
+        for orden in ordenes_por_linea
+        if orden.id_plano and orden.id_plano not in planos_de_ordenes
+    }
+    if ids_plano_extra:
+        planos_de_ordenes.update({
+            plano.id_plano: plano
+            for plano in db.query(Plano).filter(Plano.id_plano.in_(ids_plano_extra)).all()
+        })
+
+    ids_plano_bom = list(planos_de_ordenes)
     lineas_bom = (
         db.query(BOMListaMateriales)
-        .filter(BOMListaMateriales.plano_id.in_(plano_ids))
+        .filter(BOMListaMateriales.plano_id.in_(ids_plano_bom))
         .all()
-        if plano_ids else []
+        if ids_plano_bom else []
     )
     bom_por_plano = {}
     for linea in lineas_bom:
@@ -346,7 +366,7 @@ def obtener_expediente_pedido(id_proyecto: UUID, db: Session = Depends(get_db)):
 
     codigos_op = {
         orden.codigo_op
-        for orden in ordenes
+        for orden in ordenes + ordenes_por_linea
         if orden.codigo_op
     }
     codigos_op.update(
@@ -382,15 +402,19 @@ def obtener_expediente_pedido(id_proyecto: UUID, db: Session = Depends(get_db)):
         return estados[0]
 
     def serializar_orden(orden, plano):
+        # plano es None para una OP de línea de pedido sin plano asignado
         return {
             "id_op": str(orden.id_op) if orden else None,
             "codigo_op": orden.codigo_op if orden else plano.codigo_op,
-            "codigo_plano": plano.codigo_plano,
-            "revision": plano.revision,
-            "unidad_planta": plano.unidad_planta,
-            "archivo_url": plano.archivo_url,
-            "estado_pdf": "CARGA_OK" if plano.archivo_url and plano.archivo_url.strip() else "PENDIENTE",
-            "estado_insumo": estado_insumo(plano.id_plano),
+            "detalle_id": str(orden.id_detalle_pedido) if orden and orden.id_detalle_pedido else None,
+            "codigo_plano": plano.codigo_plano if plano else None,
+            "revision": plano.revision if plano else None,
+            "unidad_planta": plano.unidad_planta if plano else None,
+            "archivo_url": plano.archivo_url if plano else None,
+            "estado_pdf": (
+                "CARGA_OK" if plano.archivo_url and plano.archivo_url.strip() else "PENDIENTE"
+            ) if plano else "SIN_PLANO",
+            "estado_insumo": estado_insumo(plano.id_plano) if plano else "SIN_REGISTRO",
             "estado_produccion": (
                 orden.estado.value if hasattr(orden.estado, "value") else orden.estado
             ) if orden else None,
@@ -429,6 +453,18 @@ def obtener_expediente_pedido(id_proyecto: UUID, db: Session = Depends(get_db)):
             centros = sorted(imputacion_por_op.get(fila["codigo_op"], set()))
             fila["centro_costo_imputado"] = ", ".join(centros) or None
             ordenes_vinculadas.append(fila)
+
+    # Unión de las OP por plano y por línea de pedido, sin repetir la misma OP
+    ids_op_vinculadas = {fila["id_op"] for fila in ordenes_vinculadas if fila["id_op"]}
+    ordenes_produccion = list(ordenes_vinculadas)
+    ordenes_de_linea = {}
+    for orden in ordenes_por_linea:
+        fila = serializar_orden(orden, planos_de_ordenes.get(orden.id_plano))
+        centros = sorted(imputacion_por_op.get(fila["codigo_op"], set()))
+        fila["centro_costo_imputado"] = ", ".join(centros) or None
+        ordenes_de_linea.setdefault(orden.id_detalle_pedido, []).append(fila)
+        if fila["id_op"] not in ids_op_vinculadas:
+            ordenes_produccion.append(fila)
 
     detalles_expediente = []
     for indice, detalle in enumerate(detalles, start=1):
@@ -476,6 +512,7 @@ def obtener_expediente_pedido(id_proyecto: UUID, db: Session = Depends(get_db)):
             "fecha_compromiso": detalle.fecha_requerida.isoformat() if detalle.fecha_requerida else None,
             "observaciones": detalle.observaciones,
             "ot_detalles": ordenes_detalle,
+            "ordenes_produccion": ordenes_de_linea.get(detalle.detalle_id, []),
         })
 
     return {
@@ -496,7 +533,7 @@ def obtener_expediente_pedido(id_proyecto: UUID, db: Session = Depends(get_db)):
         "presupuestos_componentes": proyecto.presupuestos_componentes or [],
         "detalles": detalles_expediente,
         "pedido_detalles": detalles_expediente,
-        "ordenes_produccion": ordenes_vinculadas,
+        "ordenes_produccion": ordenes_produccion,
         "planos": ordenes_vinculadas,
     }
 
