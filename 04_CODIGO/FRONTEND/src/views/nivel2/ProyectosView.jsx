@@ -950,6 +950,15 @@ export default function ProyectosView() {
     return cod.includes(termino) || cli.includes(termino) || maq.includes(termino) || op.includes(termino);
   });
 
+  // Expediente comercial: OP del pedido (por plano y por línea de pedido); las filas de
+  // planos sin OP (id_op nulo) no son órdenes y se omiten
+  const ordenesVinculadas = (proyectoSeleccionado?.ordenes_produccion || []).filter(orden => orden.id_op);
+  const posicionPorDetalle = Object.fromEntries(
+    (proyectoSeleccionado?.detalles || [])
+      .filter(detalle => detalle.detalle_id)
+      .map((detalle, indice) => [detalle.detalle_id, detalle.posicion || `POS-${(indice + 1) * 10}`])
+  );
+
   return (
     <div className="p-6 bg-slate-50 min-h-screen space-y-6">
       <header className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -1943,19 +1952,21 @@ export default function ProyectosView() {
                             const cobertura = detalle.estado_cobertura || (
                               asignado <= 0 ? 'SIN_ASIGNAR' : asignado < solicitado ? 'PARCIAL' : 'ASIGNADO'
                             );
-                            const cantidadOrdenes = new Set(
-                              (detalle.ot_detalles || [])
-                                .map(relacion => relacion.orden_produccion?.codigo_op)
-                                .filter(Boolean)
-                            ).size;
+                            // OP por plano (ot_detalles) y por línea de pedido (ordenes_produccion)
+                            const cantidadOrdenes = new Set([
+                              ...(detalle.ot_detalles || []).map(relacion => relacion.orden_produccion?.codigo_op),
+                              ...(detalle.ordenes_produccion || []).map(orden => orden.codigo_op)
+                            ].filter(Boolean)).size;
                             const estilosCobertura = {
                               ASIGNADO: 'border-emerald-200 bg-emerald-50 text-emerald-800',
                               PARCIAL: 'border-amber-200 bg-amber-50 text-amber-800',
+                              DESDE_STOCK: 'border-blue-200 bg-blue-50 text-blue-800',
                               SIN_ASIGNAR: 'border-slate-200 bg-slate-100 text-slate-600'
                             };
                             const etiquetaCobertura = cobertura === 'ASIGNADO'
                               ? '100% ASIGNADO'
-                              : cobertura === 'PARCIAL' ? 'PARCIAL' : 'SIN ASIGNAR';
+                              : cobertura === 'PARCIAL' ? 'PARCIAL'
+                                : cobertura === 'DESDE_STOCK' ? 'DESDE STOCK' : 'SIN ASIGNAR';
                             return (
                               <tr key={detalle.detalle_id || detalle.id || indice} className="hover:bg-slate-50">
                                 <td className="whitespace-nowrap px-2 py-1.5 font-mono font-bold text-slate-700">
@@ -1989,6 +2000,62 @@ export default function ProyectosView() {
                           {(proyectoSeleccionado.detalles || []).length === 0 && (
                             <tr>
                               <td colSpan="6" className="px-3 py-6 text-center text-slate-400">No hay posiciones asociadas al pedido.</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+
+                  <section aria-label="Órdenes de producción vinculadas" className="overflow-hidden rounded-lg border border-slate-200">
+                    <div className="flex items-center justify-between border-b border-slate-200 bg-white px-3 py-1.5">
+                      <h3 className="font-bold text-slate-800">Órdenes de producción vinculadas</h3>
+                      <span className="text-[10px] font-semibold text-slate-500">
+                        {ordenesVinculadas.length} órdenes
+                      </span>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[800px] border-collapse text-left text-[11px]">
+                        <thead className="bg-slate-100 text-[10px] font-extrabold uppercase text-slate-600">
+                          <tr>
+                            <th className="px-2 py-1.5">OP</th>
+                            <th className="px-2 py-1.5">Posición</th>
+                            <th className="px-2 py-1.5">Plano / Revisión</th>
+                            <th className="px-2 py-1.5">Estado de producción</th>
+                            <th className="px-2 py-1.5 text-right">Avance</th>
+                            <th className="px-2 py-1.5">Centro de costos</th>
+                            <th className="px-2 py-1.5 text-center">Expediente</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {ordenesVinculadas.map((orden) => (
+                            <tr key={orden.id_op} className="hover:bg-slate-50">
+                              <td className="whitespace-nowrap px-2 py-1.5 font-mono font-bold text-blue-800">{orden.codigo_op}</td>
+                              <td className="whitespace-nowrap px-2 py-1.5 font-mono text-slate-700">
+                                {posicionPorDetalle[orden.detalle_id] || '—'}
+                              </td>
+                              <td className="whitespace-nowrap px-2 py-1.5 text-slate-700">
+                                {orden.codigo_plano ? `${orden.codigo_plano} · ${orden.revision || '—'}` : 'Sin plano asignado'}
+                              </td>
+                              <td className="whitespace-nowrap px-2 py-1.5 font-semibold text-slate-800">
+                                {(orden.estado_produccion || 'SIN ESTADO').replaceAll('_', ' ')}
+                              </td>
+                              <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono">{Number(orden.porcentaje_avance || 0)}%</td>
+                              <td className="px-2 py-1.5 text-purple-800">{orden.centro_costo_imputado || '—'}</td>
+                              <td className="px-2 py-1.5 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => window.dispatchEvent(new CustomEvent('sgi:abrir-expediente-op', { detail: { codigoOp: orden.codigo_op } }))}
+                                  className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-800 hover:bg-emerald-100 cursor-pointer"
+                                >
+                                  📂 Abrir expediente
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                          {ordenesVinculadas.length === 0 && (
+                            <tr>
+                              <td colSpan="7" className="px-3 py-6 text-center text-slate-400">El pedido aún no tiene órdenes de producción.</td>
                             </tr>
                           )}
                         </tbody>
