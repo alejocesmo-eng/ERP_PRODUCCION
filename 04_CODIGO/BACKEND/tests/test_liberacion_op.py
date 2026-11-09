@@ -2,15 +2,17 @@
 """
 Fase C: liberación de OP.
 
-Regla: cada plano de la OP con PDF, BOM abastecida y estado APROBADO (aprobado_por y
-fecha_aprobacion). PERM_OP_LIBERAR la exige; PERM_ADMIN_ALL la salta solo con motivo
-de al menos 10 caracteres, con evento de trazabilidad. La misma comprobación en
-PATCH /ordenes/liberar/{codigo_op}, PATCH /ordenes/{id_proyecto} y POST /ordenes/.
+Regla: cada plano vigente del producto de la OP con PDF vigente (planos_archivos), BOM
+abastecida y estado APROBADO (aprobado_por y fecha_aprobacion). PERM_OP_LIBERAR la exige;
+PERM_ADMIN_ALL la salta solo con motivo de al menos 10 caracteres, con evento de trazabilidad.
+La misma comprobación en PATCH /ordenes/liberar/{codigo_op}, PATCH /ordenes/{id_proyecto} y
+POST /ordenes/ (que crea la OP desde una línea de pedido, detalle_id).
 
 Se ejecuta sobre la copia PostgreSQL de SGI_TEST_PG_URL (sgi_test_*), que trae las
 asignaciones de rol_permisos de la migración 16. Cada prueba corre dentro de una
-transacción que se revierte al terminar.
+transacción que se revierte al terminar; los PDF se escriben en un directorio temporal.
 """
+import hashlib
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -31,7 +33,10 @@ from app.db.models import (
     EstadoPlanoEnum,
     HistorialAccionesDocumento,
     OrdenProduccion,
+    PedidoDetalle,
     Plano,
+    PlanoArchivo,
+    Producto,
     Proyecto,
 )
 
@@ -41,12 +46,14 @@ pytestmark = pytest.mark.pg
 
 
 @pytest.fixture
-def ctx():
+def ctx(tmp_path, monkeypatch):
     assert (make_url(URL_PG).database or "").startswith("sgi_test_"), "Solo se prueba sobre copias sgi_test_*."
+    monkeypatch.setattr(planos, "DIRECTORIO_STATIC_PLANOS", str(tmp_path))
     engine = create_engine(URL_PG)
     conexion = engine.connect()
     transaccion = conexion.begin()
     sesion = Session(bind=conexion, join_transaction_mode="create_savepoint")
+    sesion.info["directorio"] = tmp_path
 
     app = FastAPI()
     app.include_router(ordenes.router, prefix="/api/v1/ordenes")
@@ -68,7 +75,30 @@ def token(rol: str) -> dict:
     return {"Authorization": f"Bearer {t}"}
 
 
+LINEAS_PEDIDO = {}
+
+
+def registrar_pdf_vigente(sesion, plano):
+    contenido = f"%PDF plano {plano.codigo_plano}".encode()
+    sha256 = hashlib.sha256(contenido).hexdigest()
+    nombre = f"{plano.codigo_plano}_{sha256[:12]}.pdf"
+    (sesion.info["directorio"] / nombre).write_bytes(contenido)
+    sesion.add(PlanoArchivo(
+        id_plano=plano.id_plano,
+        tipo="PDF",
+        ruta=f"/static/planos/{nombre}",
+        nombre_original=f"{plano.codigo_plano}.pdf",
+        tamano_bytes=len(contenido),
+        sha256=sha256,
+        revision=plano.version,
+        vigente=True,
+        subido_por="dibujante1@prueba.test",
+    ))
+    plano.archivo_pdf_url = f"/static/planos/{nombre}"
+
+
 def crear_plano(sesion, *, con_pdf=True, estado_bom="EN_ALMACEN", aprobado=True, revision_posterior=False):
+    """Producto RN con un plano y la línea de pedido de ese producto."""
     sufijo = uuid.uuid4().hex[:8].upper()
     codigo_op = f"OP-C-{sufijo}"
     proyecto = Proyecto(
@@ -80,22 +110,40 @@ def crear_plano(sesion, *, con_pdf=True, estado_bom="EN_ALMACEN", aprobado=True,
         requisitos_cliente="Según plano",
         confirmado=True,
     )
+    producto = Producto(
+        id_producto=uuid.uuid4(),
+        codigo_rn=f"RN-100-200-{uuid.uuid4().int % 1000000:06d}",
+        descripcion=f"Producto fase C {sufijo}",
+    )
     plano = Plano(
         id_plano=uuid.uuid4(),
         id_proyecto=proyecto.id_proyecto,
+        id_producto=producto.id_producto,
         codigo_op=codigo_op,
         codigo_plano=f"PLN-C-{sufijo}",
         revision="V-01",
-        archivo_url=f"/static/planos/PLN-C-{sufijo}.pdf" if con_pdf else None,
     )
+    linea = PedidoDetalle(
+        detalle_id=uuid.uuid4(),
+        pedido_id=proyecto.id_proyecto,
+        codigo_producto=f"PROD-C-{sufijo}",
+        id_producto=producto.id_producto,
+        descripcion="Conjunto de prueba",
+        cantidad_solicitada=1,
+    )
+    LINEAS_PEDIDO[plano.id_plano] = linea.detalle_id
     if aprobado:
         aprobado_en = datetime.now(timezone.utc) - timedelta(days=1)
         plano.estado = EstadoPlanoEnum.APROBADO
         plano.aprobado_por = "dibujante1@prueba.test"
         plano.fecha_aprobacion = aprobado_en
         plano.fecha_ultima_revision = aprobado_en + (timedelta(hours=2) if revision_posterior else -timedelta(hours=2))
-    sesion.add_all([proyecto, plano])
+    sesion.add_all([proyecto, producto])
     sesion.flush()
+    sesion.add_all([plano, linea])
+    sesion.flush()
+    if con_pdf:
+        registrar_pdf_vigente(sesion, plano)
     if estado_bom:
         sesion.add(BOMListaMateriales(
             plano_id=plano.id_plano,
@@ -115,6 +163,7 @@ def crear_op(sesion, **kwargs):
         id_op=uuid.uuid4(),
         id_proyecto=proyecto.id_proyecto,
         id_plano=plano.id_plano,
+        id_producto=plano.id_producto,
         codigo_op=plano.codigo_op,
         cantidad_fabricar=1,
     )
@@ -154,6 +203,7 @@ def liberar_patch(client, op, rol, motivo=None):
 def crear_post(client, proyecto, plano, rol, motivo=None):
     cuerpo = {
         "codigo_op": plano.codigo_op,
+        "detalle_id": str(LINEAS_PEDIDO[plano.id_plano]),
         "id_proyecto": str(proyecto.id_proyecto),
         "id_plano": str(plano.id_plano),
         "estado": EstadoOPEnum.LIBERADA_PRODUCCION.value,
@@ -214,6 +264,7 @@ def test_post_sin_estado_crea_la_op_en_borrador_sin_liberarla(ctx):
     proyecto, plano = crear_plano(sesion, con_pdf=False, aprobado=False)
     cuerpo = {
         "codigo_op": plano.codigo_op,
+        "detalle_id": str(LINEAS_PEDIDO[plano.id_plano]),
         "id_proyecto": str(proyecto.id_proyecto),
         "id_plano": str(plano.id_plano),
     }
@@ -230,7 +281,7 @@ def test_post_sin_estado_crea_la_op_en_borrador_sin_liberarla(ctx):
 def test_op_creada_en_borrador_activa_la_reserva_al_liberarla(ctx):
     client, sesion = ctx
     proyecto, plano = crear_plano(sesion)
-    cuerpo = {"codigo_op": plano.codigo_op, "id_proyecto": str(proyecto.id_proyecto), "id_plano": str(plano.id_plano)}
+    cuerpo = {"codigo_op": plano.codigo_op, "detalle_id": str(LINEAS_PEDIDO[plano.id_plano])}
     assert client.post("/api/v1/ordenes/", json=cuerpo, headers=token("DISENO")).status_code == 201
     assert reserva_stock(sesion, plano.codigo_op) is False
 

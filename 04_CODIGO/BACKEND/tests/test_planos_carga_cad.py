@@ -1,3 +1,4 @@
+import hashlib
 import io
 import uuid
 
@@ -9,7 +10,11 @@ from sqlalchemy.orm import sessionmaker
 from app.api.v1 import planos as planos_api
 from app.api.v1.planos import subir_archivo_cad_por_tipo
 from app.db.database import Base
-from app.db.models import BOMListaMateriales, Plano, Proyecto
+from app.db.models import BOMListaMateriales, Plano, PlanoArchivo, Proyecto
+
+USUARIO = {"email": "dibujante1@prueba.test", "rol": "DISENO"}
+CONTENIDO = b"contenido-cad"
+SHA_CONTENIDO = hashlib.sha256(CONTENIDO).hexdigest()
 
 
 @pytest.fixture
@@ -19,6 +24,7 @@ def db():
         Proyecto.__table__,
         Plano.__table__,
         BOMListaMateriales.__table__,
+        PlanoArchivo.__table__,
     ]
     Base.metadata.create_all(engine, tables=tables)
     session = sessionmaker(bind=engine)()
@@ -60,7 +66,7 @@ def crear_plano(db, estado_diseno="EN_DISENO"):
 
 
 def archivo(nombre):
-    return UploadFile(filename=nombre, file=io.BytesIO(b"contenido-cad"))
+    return UploadFile(filename=nombre, file=io.BytesIO(CONTENIDO))
 
 
 @pytest.mark.parametrize(
@@ -75,11 +81,15 @@ def archivo(nombre):
 def test_carga_cad_guarda_archivo_y_actualiza_columna(db, directorio_planos, tipo, nombre, campo, extension):
     plano = crear_plano(db)
 
-    resultado = subir_archivo_cad_por_tipo(plano.id_plano, tipo, archivo(nombre), db)
+    resultado = subir_archivo_cad_por_tipo(plano.id_plano, tipo, archivo(nombre), db, USUARIO)
 
-    nombre_esperado = f"4009010_PLN_TEST_CAD_v0.1{extension}"
+    nombre_esperado = f"PLN_TEST_CAD_v0.1_{SHA_CONTENIDO[:12]}{extension}"
     assert getattr(resultado, campo) == f"/static/planos/{nombre_esperado}"
-    assert (directorio_planos / nombre_esperado).read_bytes() == b"contenido-cad"
+    assert (directorio_planos / nombre_esperado).read_bytes() == CONTENIDO
+    registro = db.query(PlanoArchivo).filter_by(id_plano=plano.id_plano).one()
+    assert (registro.tipo, registro.sha256, registro.tamano_bytes, registro.vigente) == (
+        tipo.upper(), SHA_CONTENIDO, len(CONTENIDO), True
+    )
 
 
 @pytest.mark.parametrize(
@@ -95,7 +105,7 @@ def test_carga_cad_rechaza_extension_o_tipo_invalido(db, tipo, nombre):
     plano = crear_plano(db)
 
     with pytest.raises(HTTPException) as error:
-        subir_archivo_cad_por_tipo(plano.id_plano, tipo, archivo(nombre), db)
+        subir_archivo_cad_por_tipo(plano.id_plano, tipo, archivo(nombre), db, USUARIO)
 
     assert error.value.status_code == 400
 
@@ -105,7 +115,7 @@ def test_carga_cad_bloqueada_en_op_liberada(db, directorio_planos, tipo, nombre)
     plano = crear_plano(db, estado_diseno="LIBERADA")
 
     with pytest.raises(HTTPException) as error:
-        subir_archivo_cad_por_tipo(plano.id_plano, tipo, archivo(nombre), db)
+        subir_archivo_cad_por_tipo(plano.id_plano, tipo, archivo(nombre), db, USUARIO)
 
     assert error.value.status_code == 409
     assert list(directorio_planos.iterdir()) == []

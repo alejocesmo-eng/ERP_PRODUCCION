@@ -586,14 +586,40 @@ def actualizar_proyecto(id_proyecto: UUID, proyecto_up: ProyectoUpdate, db: Sess
 
     try:
         if proyecto_up.detalles is not None:
-            # Eliminación limpia con flush previa a la reinserción
-            db.query(PedidoDetalle).filter(PedidoDetalle.pedido_id == id_proyecto).delete()
+            # Cada línea se actualiza en su sitio por detalle_id (conserva el id y el vínculo con
+            # su OP); las líneas sin detalle_id son nuevas y las ausentes se eliminan, salvo que
+            # tengan OP asociada (ON DELETE RESTRICT en ordenes_produccion.id_detalle_pedido).
+            existentes = {
+                linea.detalle_id: linea
+                for linea in db.query(PedidoDetalle).filter(PedidoDetalle.pedido_id == id_proyecto).all()
+            }
+            ids_recibidos = {item.detalle_id for item in proyecto_up.detalles if item.detalle_id}
+            ajenos = ids_recibidos - set(existentes)
+            if ajenos:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Líneas que no pertenecen a este pedido: {', '.join(sorted(map(str, ajenos)))}.",
+                )
+            ausentes = [linea for detalle_id, linea in existentes.items() if detalle_id not in ids_recibidos]
+            ops_de_ausentes = db.query(OrdenProduccion.codigo_op, OrdenProduccion.id_detalle_pedido).filter(
+                OrdenProduccion.id_detalle_pedido.in_([linea.detalle_id for linea in ausentes])
+            ).all() if ausentes else []
+            if ops_de_ausentes:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "No se puede eliminar una línea de pedido con OP asociada "
+                        f"(OP {', '.join(sorted(codigo for codigo, _ in ops_de_ausentes))}). "
+                        "Conserve la línea en la edición."
+                    ),
+                )
+            for linea in ausentes:
+                db.delete(linea)
             db.flush()
-            
+
             for item in proyecto_up.detalles:
                 art_stock = articulos_stock.get(item.id_articulo) if item.origen == ORIGEN_STOCK_PT else None
-                nuevo_det = PedidoDetalle(
-                    pedido_id=id_proyecto,
+                valores = dict(
                     codigo_producto=art_stock.codigo_sku if art_stock else item.codigo_producto,
                     descripcion=art_stock.nombre if art_stock else item.descripcion,
                     tipo=item.tipo or "pieza",
@@ -601,13 +627,24 @@ def actualizar_proyecto(id_proyecto: UUID, proyecto_up: ProyectoUpdate, db: Sess
                     id_articulo=item.id_articulo if art_stock else None,
                     cantidad_solicitada=item.cantidad_solicitada,
                     unidad=(art_stock.unidad_medida or "UND") if art_stock else (item.unidad or "UND"),
-                    cantidad_asignada=0,
-                    cantidad_pendiente=item.cantidad_solicitada,
                     prioridad=item.prioridad or "MEDIA",
                     fecha_compromiso=item.fecha_compromiso or proyecto.fecha_compromiso,
-                    observaciones=" | ".join(filter(None, [item.requisitos_especificos, item.observaciones])) or None
+                    observaciones=" | ".join(filter(None, [item.requisitos_especificos, item.observaciones])) or None,
                 )
-                db.add(nuevo_det)
+                if item.detalle_id:
+                    linea = existentes[item.detalle_id]
+                    for campo, valor in valores.items():
+                        setattr(linea, campo, valor)
+                    linea.cantidad_pendiente = max(item.cantidad_solicitada - (linea.cantidad_asignada or 0), 0)
+                else:
+                    db.add(PedidoDetalle(
+                        pedido_id=id_proyecto,
+                        cantidad_asignada=0,
+                        cantidad_pendiente=item.cantidad_solicitada,
+                        **valores,
+                    ))
+            db.flush()
+            db.expire(proyecto, ["detalles"])
 
         if proyecto.detalles and len(proyecto.detalles) > 0:
             proyecto.detalle_producto = proyecto.detalles[0].descripcion

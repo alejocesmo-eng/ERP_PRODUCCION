@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from datetime import datetime, timezone
 
@@ -6,6 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.api.v1 import planos as planos_api
 from app.api.v1.calidad import InspeccionCalidadCreate, registrar_inspeccion_calidad
 from app.api.v1.ordenes import liberar_orden_produccion, obtener_expediente_op
 from app.api.v1.proyectos import obtener_expediente_pedido
@@ -26,6 +28,8 @@ from app.db.models import (
     PedidoDetalle,
     Permiso,
     Plano,
+    PlanoArchivo,
+    Producto,
     Proyecto,
     RegistroTiemposProduccion,
     Rol,
@@ -44,13 +48,16 @@ from app.db.models_produccion import (
 
 
 @pytest.fixture
-def db():
+def db(tmp_path, monkeypatch):
+    monkeypatch.setattr(planos_api, "DIRECTORIO_STATIC_PLANOS", str(tmp_path))
     engine = create_engine("sqlite:///:memory:")
     tablas = [
+        Producto.__table__,
         Proyecto.__table__,
         Cliente.__table__,
         PedidoDetalle.__table__,
         Plano.__table__,
+        PlanoArchivo.__table__,
         OTDetalle.__table__,
         OrdenProduccion.__table__,
         BOMListaMateriales.__table__,
@@ -74,6 +81,7 @@ def db():
     ]
     Base.metadata.create_all(engine, tables=tablas)
     session = sessionmaker(bind=engine)()
+    session.info["directorio"] = tmp_path
     # Asignación de la migración 16: DISENO libera OP
     session.add_all([
         Rol(id_rol="DISENO", nombre_rol="Diseño"),
@@ -94,6 +102,7 @@ def crear_expediente(db, con_pdf=True, estado_bom="EN_ALMACEN", aprobado=False):
     id_plano = uuid.uuid4()
     id_op = uuid.uuid4()
     id_detalle = uuid.uuid4()
+    producto = Producto(id_producto=uuid.uuid4(), codigo_rn="RN-088-001-000001", descripcion="Conjunto de prueba")
     proyecto = Proyecto(
         id_proyecto=id_proyecto,
         numero_pedido="PED-2026-88",
@@ -106,6 +115,7 @@ def crear_expediente(db, con_pdf=True, estado_bom="EN_ALMACEN", aprobado=False):
     plano = Plano(
         id_plano=id_plano,
         id_proyecto=id_proyecto,
+        id_producto=producto.id_producto,
         codigo_op="4001234",
         codigo_plano="PLN-88-A",
         revision="REV-02",
@@ -121,6 +131,7 @@ def crear_expediente(db, con_pdf=True, estado_bom="EN_ALMACEN", aprobado=False):
         id_op=id_op,
         id_proyecto=id_proyecto,
         id_plano=id_plano,
+        id_producto=producto.id_producto,
         codigo_op="4001234",
         cantidad_fabricar=3,
     )
@@ -145,13 +156,28 @@ def crear_expediente(db, con_pdf=True, estado_bom="EN_ALMACEN", aprobado=False):
         ot_id=id_plano,
         cantidad_asignada=3,
     )
-    db.add_all([proyecto, plano, op, material, detalle, relacion])
+    db.add_all([producto, proyecto, plano, op, material, detalle, relacion])
+    if con_pdf:
+        # PDF vigente en planos_archivos con su archivo en disco (condición 1 de la liberación)
+        contenido = b"%PDF plano PLN-88-A"
+        sha256 = hashlib.sha256(contenido).hexdigest()
+        (db.info["directorio"] / "PLN-88-A.pdf").write_bytes(contenido)
+        db.add(PlanoArchivo(
+            id_plano=id_plano,
+            tipo="PDF",
+            ruta="/static/planos/PLN-88-A.pdf",
+            nombre_original="PLN-88-A.pdf",
+            tamano_bytes=len(contenido),
+            sha256=sha256,
+            revision="REV-02",
+            vigente=True,
+        ))
     db.commit()
     return op
 
 
 def test_expediente_retorna_pedido_piezas_bom_y_quality_gate(db):
-    crear_expediente(db)
+    crear_expediente(db, aprobado=True)
 
     expediente = obtener_expediente_op(
         "4001234",

@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -6,21 +7,25 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.api.v1 import planos as planos_api
 from app.api.v1.planos import PlanoUpdateRequest, actualizar_plano
 from app.db.database import Base
-from app.db.models import BOMListaMateriales, Plano, Proyecto
+from app.db.models import BOMListaMateriales, EstadoPlanoEnum, Plano, PlanoArchivo, Proyecto
 
 
 @pytest.fixture
-def db():
+def db(tmp_path, monkeypatch):
+    monkeypatch.setattr(planos_api, "DIRECTORIO_STATIC_PLANOS", str(tmp_path))
     engine = create_engine("sqlite:///:memory:")
     tables = [
         Proyecto.__table__,
         Plano.__table__,
         BOMListaMateriales.__table__,
+        PlanoArchivo.__table__,
     ]
     Base.metadata.create_all(engine, tables=tables)
     session = sessionmaker(bind=engine)()
+    session.info["directorio"] = tmp_path
     try:
         yield session
     finally:
@@ -29,7 +34,11 @@ def db():
         engine.dispose()
 
 
-def crear_plano_en_diseno(db, archivo_pdf_url=None, estado_bom=None):
+PDF_PRUEBA = b"%PDF plano PLN-TEST-RN004"
+
+
+def crear_plano_en_diseno(db, con_pdf=True, estado_bom=None, aprobado=True):
+    """Plano en diseño; con_pdf registra un PDF vigente en planos_archivos con su archivo en disco."""
     proyecto = Proyecto(
         id_proyecto=uuid.uuid4(),
         numero_pedido="PED-TEST-RN004",
@@ -45,10 +54,25 @@ def crear_plano_en_diseno(db, archivo_pdf_url=None, estado_bom=None):
         codigo_op="4009001",
         codigo_plano="PLN-TEST-RN004",
         estado_diseno="EN_DISENO",
-        archivo_pdf_url=archivo_pdf_url,
         fecha_inicio_diseno=datetime.now(timezone.utc) - timedelta(minutes=90),
     )
+    if aprobado:
+        plano.estado = EstadoPlanoEnum.APROBADO
+        plano.aprobado_por = "lider.diseno@prueba.test"
+        plano.fecha_aprobacion = datetime.now(timezone.utc) - timedelta(minutes=5)
     db.add_all([proyecto, plano])
+    if con_pdf:
+        (db.info["directorio"] / "PLN-TEST-RN004.pdf").write_bytes(PDF_PRUEBA)
+        plano.archivo_pdf_url = "/static/planos/PLN-TEST-RN004.pdf"
+        db.add(PlanoArchivo(
+            id_plano=plano.id_plano,
+            tipo="PDF",
+            ruta="/static/planos/PLN-TEST-RN004.pdf",
+            nombre_original="PLN-TEST-RN004.pdf",
+            tamano_bytes=len(PDF_PRUEBA),
+            sha256=hashlib.sha256(PDF_PRUEBA).hexdigest(),
+            vigente=True,
+        ))
     if estado_bom:
         db.add(BOMListaMateriales(
             plano_id=plano.id_plano,
@@ -63,26 +87,31 @@ def crear_plano_en_diseno(db, archivo_pdf_url=None, estado_bom=None):
 
 
 @pytest.mark.parametrize(
-    ("archivo_pdf_url", "estado_bom"),
+    ("con_pdf", "estado_bom", "aprobado", "texto"),
     [
-        (None, "SOLICITADO"),
-        ("   ", "SOLICITADO"),
-        ("/static/planos/op.pdf", "SIN_SOLICITAR"),
-        ("/static/planos/op.pdf", None),
+        (False, "SOLICITADO", True, "no tiene un PDF vigente"),
+        (True, "SIN_SOLICITAR", True, "BOM sin solicitar"),
+        (True, None, True, "BOM sin solicitar"),
+        (True, "SOLICITADO", False, "APROBADO"),
     ],
+    ids=["sin_pdf_vigente", "bom_sin_solicitar", "sin_bom", "plano_sin_aprobar"],
 )
-def test_entrega_diseno_rechaza_sin_pdf_o_bom_radicada(db, archivo_pdf_url, estado_bom):
-    plano = crear_plano_en_diseno(db, archivo_pdf_url, estado_bom)
+def test_entrega_diseno_rechaza_sin_pdf_sin_aprobar_o_sin_bom_radicada(db, con_pdf, estado_bom, aprobado, texto):
+    plano = crear_plano_en_diseno(db, con_pdf, estado_bom, aprobado)
 
     with pytest.raises(HTTPException) as error:
         actualizar_plano(plano.id_plano, PlanoUpdateRequest(estado_diseno="LISTA_PARA_LIBERAR"), db)
 
     assert error.value.status_code == 400
-    assert "RN-OP-004" in error.value.detail
+    assert texto in error.value.detail
+    db.rollback()  # fin de la petición: get_db cierra la sesión sin commit
+    db.refresh(plano)
+    assert plano.estado_diseno == "EN_DISENO"
 
 
-def test_entrega_diseno_cierra_cronometro_con_pdf_y_bom_radicada(db):
-    plano = crear_plano_en_diseno(db, "/static/planos/op.pdf", "SOLICITADO")
+@pytest.mark.parametrize("estado_bom", ["SOLICITADO", "EN_COMPRA"])
+def test_entrega_diseno_pasa_con_bom_radicada_y_cierra_cronometro(db, estado_bom):
+    plano = crear_plano_en_diseno(db, True, estado_bom)
 
     actualizado = actualizar_plano(plano.id_plano, PlanoUpdateRequest(estado_diseno="LISTA_PARA_LIBERAR"), db)
 
@@ -91,8 +120,19 @@ def test_entrega_diseno_cierra_cronometro_con_pdf_y_bom_radicada(db):
     assert actualizado.tiempo_total_diseno_minutos >= 89
 
 
+def test_entrega_diseno_verifica_el_hash_del_pdf(db):
+    plano = crear_plano_en_diseno(db, True, "SOLICITADO")
+    (db.info["directorio"] / "PLN-TEST-RN004.pdf").write_bytes(b"%PDF alterado")
+
+    with pytest.raises(HTTPException) as error:
+        actualizar_plano(plano.id_plano, PlanoUpdateRequest(estado_diseno="LISTA_PARA_LIBERAR"), db)
+
+    assert error.value.status_code == 409
+    assert "sha256" in error.value.detail
+
+
 def test_liberada_conserva_gate_de_stock_completo(db):
-    plano = crear_plano_en_diseno(db, "/static/planos/op.pdf", "SOLICITADO")
+    plano = crear_plano_en_diseno(db, True, "SOLICITADO")
 
     with pytest.raises(HTTPException) as error:
         actualizar_plano(plano.id_plano, PlanoUpdateRequest(estado_diseno="LIBERADA"), db)

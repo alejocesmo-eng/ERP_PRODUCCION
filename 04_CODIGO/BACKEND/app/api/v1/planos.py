@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 import shutil
@@ -7,15 +8,20 @@ from uuid import UUID, uuid4
 from datetime import datetime, date, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 import jwt
 
 from app.db.database import get_db
-from app.db.models import BOMListaMateriales, EstadoPlanoEnum, Plano, Proyecto
-from app.api.deps import requerir_roles
-from app.api.v1.quality_gate import ESTADOS_BOM_LIBERABLES, validar_gate_calidad
+from app.db.models import BOMListaMateriales, EstadoPlanoEnum, Plano, PlanoArchivo, Proyecto
+from app.api.deps import obtener_usuario_actual, requerir_roles
+from app.api.v1.quality_gate import (
+    ESTADOS_BOM_LIBERABLES,
+    revision_posterior_a_aprobacion,
+    validar_entrega_diseno,
+    validar_liberacion_op,
+)
 from app.services.auditoria import agregar_evento_trazabilidad
 
 router = APIRouter()
@@ -36,10 +42,31 @@ FORMATOS_CAD = {
     "step": ("archivo_step_url", (".step", ".stp"), ".step"),
     "dxf": ("archivo_dxf_url", (".dxf",), ".dxf"),
 }
+TAMANO_BLOQUE_CARGA = 1024 * 1024
 
 
-def _guardar_archivo_cad(db: Session, plano: Plano, archivo: UploadFile, tipo: str) -> Plano:
-    """Persiste el archivo CAD con prefijo OP_PLANO_VERSION y actualiza su columna."""
+def _tipo_por_extension(nombre: Optional[str]) -> str:
+    nombre = (nombre or "").lower()
+    for tipo, (_, extensiones, _) in FORMATOS_CAD.items():
+        if nombre.endswith(extensiones):
+            return tipo
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Formato no permitido. Use .pdf, .step/.stp o .dxf.",
+    )
+
+
+def _obtener_plano_para_carga(db: Session, id_plano: UUID) -> Plano:
+    # Bloquea la fila del plano: dos cargas simultáneas del mismo plano se serializan
+    plano = db.query(Plano).filter(Plano.id_plano == id_plano).with_for_update().first()
+    if not plano:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plano no encontrado.")
+    return plano
+
+
+def _guardar_archivo_cad(db: Session, plano: Plano, archivo: UploadFile, tipo: str, usuario_actual: dict) -> Plano:
+    """Guarda el archivo con sha256 y tamaño en planos_archivos (migración 19).
+    El vigente anterior del mismo tipo pasa a histórico; la columna archivo_*_url sigue al vigente."""
     if tipo not in FORMATOS_CAD:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tipo CAD inválido. Use pdf, step o dxf.")
     # Inmutabilidad post-liberación: el paquete técnico liberado queda congelado
@@ -56,35 +83,59 @@ def _guardar_archivo_cad(db: Session, plano: Plano, archivo: UploadFile, tipo: s
             detail=f"Formato inválido para {tipo.upper()}. Extensiones admitidas: {', '.join(extensiones)}.",
         )
 
-    prefijo = f"{plano.codigo_op}_{plano.codigo_plano}_{plano.version}"
-    nombre_archivo = re.sub(r"[^A-Za-z0-9._-]", "_", prefijo) + ext_final
-    ruta_fisica = os.path.join(DIRECTORIO_STATIC_PLANOS, nombre_archivo)
+    # Se escribe en un temporal calculando sha256 y tamaño; el nombre final incluye el hash
+    # para que una carga nueva no sobrescriba el archivo del histórico.
+    os.makedirs(DIRECTORIO_STATIC_PLANOS, exist_ok=True)
+    ruta_temporal = os.path.join(DIRECTORIO_STATIC_PLANOS, f".carga_{uuid4().hex}.tmp")
+    calculo = hashlib.sha256()
+    tamano_bytes = 0
+    try:
+        with open(ruta_temporal, "wb") as destino:
+            while bloque := archivo.file.read(TAMANO_BLOQUE_CARGA):
+                calculo.update(bloque)
+                tamano_bytes += len(bloque)
+                destino.write(bloque)
+        if tamano_bytes == 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El archivo está vacío.")
+        sha256 = calculo.hexdigest()
+        prefijo = f"{plano.codigo_plano}_{plano.version}_{sha256[:12]}"
+        nombre_archivo = re.sub(r"[^A-Za-z0-9._-]", "_", prefijo) + ext_final
+        os.replace(ruta_temporal, os.path.join(DIRECTORIO_STATIC_PLANOS, nombre_archivo))
+    finally:
+        if os.path.exists(ruta_temporal):
+            os.remove(ruta_temporal)
 
-    with open(ruta_fisica, "wb") as buffer:
-        shutil.copyfileobj(archivo.file, buffer)
-
-    setattr(plano, campo, f"/static/planos/{nombre_archivo}")
-    db.commit()
+    ruta = f"/static/planos/{nombre_archivo}"
+    tipo_archivo = tipo.upper()
+    vigente = db.query(PlanoArchivo).filter(
+        PlanoArchivo.id_plano == plano.id_plano,
+        PlanoArchivo.tipo == tipo_archivo,
+        PlanoArchivo.vigente.is_(True),
+    ).first()
+    try:
+        # El mismo archivo ya vigente (mismo contenido y misma ruta) no crea otra entrada en el histórico
+        if not (vigente and vigente.sha256 == sha256 and vigente.ruta == ruta):
+            if vigente:
+                vigente.vigente = False
+                db.flush()
+            db.add(PlanoArchivo(
+                id_plano=plano.id_plano,
+                tipo=tipo_archivo,
+                ruta=ruta,
+                nombre_original=os.path.basename(archivo.filename)[:255],
+                tamano_bytes=tamano_bytes,
+                sha256=sha256,
+                revision=plano.version,
+                vigente=True,
+                subido_por=usuario_actual["email"],
+            ))
+        setattr(plano, campo, ruta)
+        db.commit()
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="No se pudo registrar el archivo del plano.") from error
     db.refresh(plano)
     return plano
-
-
-def validar_entrega_diseno(db: Session, plano: Plano) -> None:
-    """RN-OP-004: el dibujante solo entrega la OP con plano PDF y BOM radicada."""
-    if not plano.archivo_pdf_url or not plano.archivo_pdf_url.strip():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="RN-OP-004: 🔒 Requiere plano PDF y solicitud de material radicada (falta el plano PDF).",
-        )
-    estados_bom = [
-        item.estado_abastecimiento
-        for item in db.query(BOMListaMateriales).filter(BOMListaMateriales.plano_id == plano.id_plano).all()
-    ]
-    if not estados_bom or "SIN_SOLICITAR" in estados_bom:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="RN-OP-004: 🔒 Requiere plano PDF y solicitud de material radicada (BOM sin solicitar).",
-        )
 
 
 def _como_utc(valor: datetime) -> datetime:
@@ -131,8 +182,10 @@ class BOMItemResponse(BaseModel):
 
 class PlanoResponse(BaseModel):
     id_plano: UUID
-    id_proyecto: UUID
-    codigo_op: str
+    # Opcionales desde la migración 18: el plano pertenece al producto
+    id_proyecto: Optional[UUID] = None
+    id_producto: Optional[UUID] = None
+    codigo_op: Optional[str] = None
     codigo_plano: str
     version: str
     dibujante_asignado: Optional[str] = None
@@ -153,6 +206,11 @@ class PlanoResponse(BaseModel):
     fecha_ultima_revision: Optional[datetime] = None
     creado_en: datetime
     bom_items: List["BOMItemResponse"] = Field(default_factory=list)
+
+    @computed_field
+    @property
+    def revisar(self) -> bool:
+        return revision_posterior_a_aprobacion(self.fecha_ultima_revision, self.fecha_aprobacion)
 
     class Config:
         from_attributes = True
@@ -283,10 +341,10 @@ def crear_planos(plano_in: PlanoWriteRequest, db: Session = Depends(get_db)):
                     **datos_bom,
                 ))
                 db.flush()
-            if plano.estado_diseno in ESTADOS_ENTREGA_DISENO:
+            if plano.estado_diseno == "LISTA_PARA_LIBERAR":
                 validar_entrega_diseno(db, plano)
-            if plano.estado_diseno == "LIBERADA":
-                validar_gate_calidad(db, plano)
+            elif plano.estado_diseno == "LIBERADA":
+                validar_liberacion_op(db, [plano])
             planos_creados.append(plano)
         db.commit()
         for plano in planos_creados:
@@ -360,10 +418,11 @@ def actualizar_plano(
                 ))
     try:
         db.flush()
-        if plano.estado_diseno != estado_anterior and plano.estado_diseno in ESTADOS_ENTREGA_DISENO:
+        # Entrega de Diseño: compuerta de entrega; plano LIBERADA: compuerta de liberación
+        if plano.estado_diseno != estado_anterior and plano.estado_diseno == "LISTA_PARA_LIBERAR":
             validar_entrega_diseno(db, plano)
-        if plano.estado_diseno == "LIBERADA":
-            validar_gate_calidad(db, plano)
+        elif plano.estado_diseno != estado_anterior and plano.estado_diseno == "LIBERADA":
+            validar_liberacion_op(db, [plano])
 
         # Cronómetro de diseño: una sola OP EN_DISENO por dibujante; iniciar otra pausa la anterior
         ahora = datetime.now(timezone.utc)
@@ -485,28 +544,28 @@ def servir_plano_pdf_seguro(token: str, db: Session = Depends(get_db)):
 
 
 @router.post("/upload-pdf/{id_plano}", response_model=PlanoResponse)
-def subir_pdf_plano(id_plano: UUID, archivo: UploadFile = File(...), db: Session = Depends(get_db)):
-    plano = db.query(Plano).filter(Plano.id_plano == id_plano).first()
-    if not plano:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plano no encontrado.")
-
-    return _guardar_archivo_cad(db, plano, archivo, "pdf")
+def subir_pdf_plano(
+    id_plano: UUID,
+    archivo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
+    """Carga por extensión: acepta PDF, STEP y DXF (la mesa de Diseño envía aquí los tres)."""
+    tipo = _tipo_por_extension(archivo.filename)
+    plano = _obtener_plano_para_carga(db, id_plano)
+    return _guardar_archivo_cad(db, plano, archivo, tipo, usuario_actual)
 
 @router.post("/upload-cad/{id_plano}", response_model=PlanoResponse)
-def subir_cad_plano(id_plano: UUID, archivo: UploadFile = File(...), db: Session = Depends(get_db)):
-    plano = db.query(Plano).filter(Plano.id_plano == id_plano).first()
-    if not plano:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plano no encontrado.")
-
-    ext = (archivo.filename or "").lower()
-    if ext.endswith('.step') or ext.endswith('.stp'):
-        tipo = "step"
-    elif ext.endswith('.dxf'):
-        tipo = "dxf"
-    else:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Formato inválido. Solo .step, .stp o .dxf.")
-
-    return _guardar_archivo_cad(db, plano, archivo, tipo)
+def subir_cad_plano(
+    id_plano: UUID,
+    archivo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
+    """Carga por extensión: .pdf, .step/.stp o .dxf."""
+    tipo = _tipo_por_extension(archivo.filename)
+    plano = _obtener_plano_para_carga(db, id_plano)
+    return _guardar_archivo_cad(db, plano, archivo, tipo, usuario_actual)
 
 @router.post("/upload-cad/{id_plano}/{tipo}", response_model=PlanoResponse)
 def subir_archivo_cad_por_tipo(
@@ -514,13 +573,11 @@ def subir_archivo_cad_por_tipo(
     tipo: str,
     archivo: UploadFile = File(...),
     db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     """Carga multiformato: tipo = pdf | step | dxf (.pdf, .step/.stp, .dxf)."""
-    plano = db.query(Plano).filter(Plano.id_plano == id_plano).first()
-    if not plano:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plano no encontrado.")
-
-    return _guardar_archivo_cad(db, plano, archivo, tipo.lower())
+    plano = _obtener_plano_para_carga(db, id_plano)
+    return _guardar_archivo_cad(db, plano, archivo, tipo.lower(), usuario_actual)
 
 @router.get("/descargar-cad/{id_plano}/{tipo}")
 def descargar_cad_plano(id_plano: UUID, tipo: str, db: Session = Depends(get_db)):

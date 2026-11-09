@@ -3,6 +3,7 @@ from uuid import UUID
 from datetime import datetime, date
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
@@ -16,6 +17,7 @@ from app.db.models import (
     OrdenProduccion,
     PedidoDetalle,
     Plano,
+    Producto,
     Proyecto,
     RegistroTiemposProduccion,
     SolicitudCompra,
@@ -25,10 +27,12 @@ from app.db.models_calidad import InspeccionCalidad
 from app.db.models_produccion import OperacionOT, RegistroTiempoOperario, SubLoteOperacion
 from app.api.deps import obtener_usuario_actual, requerir_roles, rol_tiene_permiso
 from app.api.v1.quality_gate import (
-    planos_de_op,
+    archivos_vigentes,
+    motivos_liberacion_op,
     planos_por_revisar,
-    validar_gate_calidad,
-    validar_regla_liberacion,
+    planos_vigentes_de_producto,
+    revision_posterior_a_aprobacion,
+    validar_liberacion_op,
 )
 from app.services.auditoria import agregar_evento_trazabilidad
 
@@ -78,13 +82,10 @@ def obtener_expediente_op(
     if not proyecto:
         raise HTTPException(status_code=409, detail="La Orden de Producción no tiene un pedido comercial válido.")
 
-    if op.id_plano:
-        planos = db.query(Plano).filter(Plano.id_plano == op.id_plano).all()
-    else:
-        planos = db.query(Plano).filter(
-            Plano.id_proyecto == op.id_proyecto,
-            Plano.codigo_op == op.codigo_op,
-        ).all()
+    # Misma selección que la liberación: planos vigentes del producto de la OP (sin otro criterio)
+    planos = planos_vigentes_de_producto(db, op.id_producto) if op.id_producto else []
+    archivos_por_plano = archivos_vigentes(db, planos)
+    producto = db.query(Producto).filter(Producto.id_producto == op.id_producto).first() if op.id_producto else None
 
     plano_ids = [plano.id_plano for plano in planos]
     ot_detalles = db.query(OTDetalle).filter(OTDetalle.ot_id.in_(plano_ids)).all() if plano_ids else []
@@ -152,6 +153,9 @@ def obtener_expediente_op(
 
     planos_expediente = []
     for plano in planos:
+        # Archivos: los vigentes de planos_archivos por tipo
+        vigentes = archivos_por_plano.get(plano.id_plano, {})
+        ruta_vigente = {tipo: archivo.ruta for tipo, archivo in vigentes.items()}
         planos_expediente.append({
             "id_plano": str(plano.id_plano),
             "codigo_plano": plano.codigo_plano,
@@ -160,9 +164,29 @@ def obtener_expediente_op(
             "dibujante_asignado": plano.dibujante_asignado,
             "unidad_planta": plano.unidad_planta,
             "material_requerido": plano.material_requerido,
-            "archivo_url": plano.archivo_url,
+            "archivo_url": ruta_vigente.get("PDF"),
+            "archivo_pdf_url": ruta_vigente.get("PDF"),
+            "archivo_step_url": ruta_vigente.get("STEP"),
+            "archivo_dxf_url": ruta_vigente.get("DXF"),
+            "archivos": {
+                tipo: {
+                    "ruta": archivo.ruta,
+                    "nombre_original": archivo.nombre_original,
+                    "tamano_bytes": archivo.tamano_bytes,
+                    "sha256": archivo.sha256,
+                    "revision": archivo.revision,
+                    "subido_por": archivo.subido_por,
+                    "subido_en": _fecha_iso(archivo.subido_en),
+                }
+                for tipo, archivo in vigentes.items()
+            },
             "observaciones_tecnicas": plano.observaciones_tecnicas,
             "fecha_entrega_produccion": _fecha_iso(plano.fecha_entrega_produccion),
+            "estado": _valor_enum(plano.estado),
+            "aprobado_por": plano.aprobado_por,
+            "fecha_aprobacion": _fecha_iso(plano.fecha_aprobacion),
+            "fecha_ultima_revision": _fecha_iso(plano.fecha_ultima_revision),
+            "revisar": revision_posterior_a_aprobacion(plano.fecha_ultima_revision, plano.fecha_aprobacion),
             "piezas": piezas_por_plano.get(plano.id_plano, []),
             "resumen_bom": bom_por_plano.get(plano.id_plano, []),
         })
@@ -180,26 +204,10 @@ def obtener_expediente_op(
     else:
         estado_bom = "SIN_SOLICITAR"
 
-    gate_aprobado = bool(
-        planos
-        and all(plano.archivo_url and plano.archivo_url.strip() for plano in planos)
-        and lineas_bom
-        and all(linea.estado_abastecimiento in {"EN_ALMACEN", "ENTREGADO"} for linea in lineas_bom)
-    )
-    motivos_gate = []
-    if not planos:
-        motivos_gate.append("La OP no tiene planos asociados.")
-    elif any(not plano.archivo_url or not plano.archivo_url.strip() for plano in planos):
-        motivos_gate.append("Faltan planos PDF.")
-    if not lineas_bom:
-        motivos_gate.append("La OP no tiene líneas de materiales abastecidas.")
-    else:
-        pendientes = sorted({
-            linea.codigo_material for linea in lineas_bom
-            if linea.estado_abastecimiento not in {"EN_ALMACEN", "ENTREGADO"}
-        })
-        if pendientes:
-            motivos_gate.append(f"Materiales pendientes en almacén: {', '.join(pendientes)}.")
+    # Misma regla que la liberación (validar_liberacion_op) sobre el mismo conjunto de planos
+    motivos_gate = motivos_liberacion_op(db, planos) if op.id_producto else [MENSAJE_OP_SIN_PRODUCTO]
+    gate_aprobado = not motivos_gate
+    plano_principal = next((plano for plano in planos if plano.id_plano == op.id_plano), planos[0] if planos else None)
 
     operaciones = (
         db.query(OperacionOT).filter(OperacionOT.id_plano.in_(plano_ids)).all()
@@ -309,13 +317,20 @@ def obtener_expediente_op(
             "estado_entregas": estado_entregas,
             "cantidad_entregada": cantidad_entregada,
         },
-        "disenador_responsable": planos[0].dibujante_asignado if planos else None,
-        "unidad_planta": planos[0].unidad_planta if planos else None,
+        "producto": {
+            "id_producto": str(producto.id_producto),
+            "codigo_rn": producto.codigo_rn,
+            "codigo_anterior": producto.codigo_anterior,
+            "descripcion": producto.descripcion,
+            "estado": producto.estado,
+        } if producto else None,
+        "disenador_responsable": plano_principal.dibujante_asignado if plano_principal else None,
+        "unidad_planta": plano_principal.unidad_planta if plano_principal else None,
         "plano_principal": {
-            "archivo_url": planos[0].archivo_url,
-            "codigo_plano": planos[0].codigo_plano,
-            "revision": planos[0].revision,
-        } if planos else None,
+            "archivo_url": next(p["archivo_pdf_url"] for p in planos_expediente if p["id_plano"] == str(plano_principal.id_plano)),
+            "codigo_plano": plano_principal.codigo_plano,
+            "revision": plano_principal.revision,
+        } if plano_principal else None,
         "quality_gate": {
             "aprobado": gate_aprobado,
             "motivos": motivos_gate,
@@ -343,26 +358,39 @@ def obtener_expediente_op(
     }
 
 
-def autorizar_liberacion(db: Session, usuario_actual: dict, planos: List[Plano], motivo: Optional[str]) -> Optional[str]:
+MENSAJE_OP_SIN_PRODUCTO = (
+    "La OP no tiene producto asignado (id_producto): no se puede liberar. "
+    "Cree la OP desde una línea de pedido con producto RN."
+)
+
+
+def autorizar_liberacion(
+    db: Session, usuario_actual: dict, id_producto: Optional[UUID], motivo: Optional[str]
+) -> tuple[Optional[str], List[Plano]]:
     """Comprobación común de las rutas que ponen una OP en LIBERADA.
-    PERM_OP_LIBERAR exige la regla de liberación; PERM_ADMIN_ALL la salta solo con motivo.
-    Devuelve el motivo cuando la liberación es una excepción de administrador."""
+    PERM_OP_LIBERAR exige la regla de liberación sobre los planos vigentes del producto de la OP;
+    PERM_ADMIN_ALL la salta solo con motivo. Sin id_producto no se libera (ni por excepción).
+    Devuelve el motivo de la excepción de administrador (o None) y los planos evaluados."""
     rol = usuario_actual.get("rol")
     motivo_limpio = (motivo or "").strip()
-    if rol_tiene_permiso(db, rol, PERMISO_ADMIN_TOTAL) and len(motivo_limpio) >= LONGITUD_MINIMA_MOTIVO:
-        return motivo_limpio
-    if rol_tiene_permiso(db, rol, PERMISO_LIBERAR_OP):
-        validar_regla_liberacion(db, planos)
-        return None
-    if rol_tiene_permiso(db, rol, PERMISO_ADMIN_TOTAL):
+    admin_con_motivo = rol_tiene_permiso(db, rol, PERMISO_ADMIN_TOTAL) and len(motivo_limpio) >= LONGITUD_MINIMA_MOTIVO
+    if not admin_con_motivo and not rol_tiene_permiso(db, rol, PERMISO_LIBERAR_OP):
+        if rol_tiene_permiso(db, rol, PERMISO_ADMIN_TOTAL):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"{PERMISO_ADMIN_TOTAL} solo libera la OP saltando la regla con un motivo de al menos {LONGITUD_MINIMA_MOTIVO} caracteres.",
+            )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"{PERMISO_ADMIN_TOTAL} solo libera la OP saltando la regla con un motivo de al menos {LONGITUD_MINIMA_MOTIVO} caracteres.",
+            detail=f"Liberar la OP requiere el permiso {PERMISO_LIBERAR_OP}.",
         )
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail=f"Liberar la OP requiere el permiso {PERMISO_LIBERAR_OP}.",
-    )
+    if not id_producto:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=MENSAJE_OP_SIN_PRODUCTO)
+    planos = planos_vigentes_de_producto(db, id_producto)
+    if admin_con_motivo:
+        return motivo_limpio, planos
+    validar_liberacion_op(db, planos)
+    return None, planos
 
 
 def registrar_excepcion_admin(db: Session, usuario_actual: dict, codigo_op: str, estado_anterior, estado_nuevo, motivo: str) -> None:
@@ -394,8 +422,7 @@ def liberar_orden_produccion(
     if not op:
         raise HTTPException(status_code=404, detail="No se encontró la Orden de Producción indicada.")
 
-    planos = planos_de_op(db, op.id_proyecto, op.codigo_op, op.id_plano)
-    motivo_excepcion = autorizar_liberacion(db, usuario_actual, planos, datos.motivo if datos else None)
+    motivo_excepcion, planos = autorizar_liberacion(db, usuario_actual, op.id_producto, datos.motivo if datos else None)
     revisar = planos_por_revisar(planos)
 
     estado_anterior = _valor_enum(op.estado)
@@ -461,7 +488,9 @@ class ItemPedidoCompuesto(BaseModel):
 
 class OrdenProduccionCreate(BaseModel):
     codigo_op: str
-    id_proyecto: UUID
+    # Línea de pedido de la que sale el producto de la OP (una OP por producto)
+    detalle_id: UUID
+    id_proyecto: Optional[UUID] = None
     id_plano: Optional[UUID] = None
     cantidad_programada: Optional[int] = 1
     observaciones: Optional[str] = None
@@ -617,18 +646,42 @@ def crear_orden_produccion(
     db: Session = Depends(get_db),
     usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
-    """PM-03: Crear una Orden de Producción. Por defecto queda en BORRADOR; si se pide un
-    estado liberado, aplica la misma comprobación de liberación que las demás rutas."""
-    proj = db.query(Proyecto).filter(Proyecto.id_proyecto == op_in.id_proyecto).first()
+    """PM-03: Crear una Orden de Producción desde una línea de pedido: la OP toma el producto
+    (id_producto) de la línea y el pedido de su pedido_id. Por defecto queda en BORRADOR; si se
+    pide un estado liberado, aplica la misma comprobación de liberación que las demás rutas."""
+    linea = db.query(PedidoDetalle).filter(PedidoDetalle.detalle_id == op_in.detalle_id).first()
+    if not linea:
+        raise HTTPException(status_code=404, detail="La línea de pedido indicada (detalle_id) no existe.")
+    if not linea.id_producto:
+        raise HTTPException(
+            status_code=400,
+            detail="La línea de pedido no tiene producto asignado (id_producto): asigne el producto RN antes de crear la OP.",
+        )
+    if op_in.id_proyecto and op_in.id_proyecto != linea.pedido_id:
+        raise HTTPException(status_code=400, detail="La línea de pedido no pertenece al pedido indicado (id_proyecto).")
+    # Una OP activa por línea de pedido: solo una OP CANCELADA libera la línea (migración 20)
+    op_activa = db.query(OrdenProduccion).filter(
+        OrdenProduccion.id_detalle_pedido == linea.detalle_id,
+        OrdenProduccion.estado != EstadoOPEnum.CANCELADA,
+    ).first()
+    if op_activa:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"La línea de pedido ya tiene una OP activa ({op_activa.codigo_op}). Cancélela para crear otra.",
+        )
+    proj = db.query(Proyecto).filter(Proyecto.id_proyecto == linea.pedido_id).first()
     if not proj:
         raise HTTPException(status_code=404, detail="El proyecto/pedido comercial indicado no existe.")
 
-    # Validar plano si viene especificado
+    # Plano de referencia de la OP: el indicado (del mismo producto) o el primero vigente del producto
+    planos_producto = planos_vigentes_de_producto(db, linea.id_producto)
     plano = None
     if op_in.id_plano:
         plano = db.query(Plano).filter(Plano.id_plano == op_in.id_plano).first()
-    if not plano:
-        plano = db.query(Plano).filter(Plano.id_proyecto == op_in.id_proyecto).first()
+        if plano and plano.id_producto != linea.id_producto:
+            raise HTTPException(status_code=400, detail="El plano indicado no pertenece al producto de la línea de pedido.")
+    if not plano and planos_producto:
+        plano = planos_producto[0]
 
     try:
         estado_inicial = EstadoOPEnum(op_in.estado or EstadoOPEnum.BORRADOR.value)
@@ -636,14 +689,13 @@ def crear_orden_produccion(
         raise HTTPException(status_code=400, detail=f"Estado de OP no válido: {op_in.estado}.") from error
 
     # Si el estado pedido es liberado y no cumple la regla, no se crea la OP
-    planos = planos_de_op(db, proj.id_proyecto, op_in.codigo_op, plano.id_plano if plano else None)
     motivo_excepcion = None
     revisar = []
     if estado_inicial in ESTADOS_OP_LIBERADOS:
-        motivo_excepcion = autorizar_liberacion(db, usuario_actual, planos, op_in.motivo)
+        motivo_excepcion, planos = autorizar_liberacion(db, usuario_actual, linea.id_producto, op_in.motivo)
         revisar = planos_por_revisar(planos)
     elif estado_inicial == EstadoOPEnum.LISTA_PARA_LIBERAR:
-        validar_gate_calidad(db, plano)
+        validar_liberacion_op(db, planos_producto)
 
     # Validar si ya existe una OP con ese código
     op_existente = db.query(OrdenProduccion).filter(OrdenProduccion.codigo_op == op_in.codigo_op).first()
@@ -654,6 +706,8 @@ def crear_orden_produccion(
         codigo_op=op_in.codigo_op,
         id_proyecto=proj.id_proyecto,
         id_plano=plano.id_plano if plano else None,
+        id_producto=linea.id_producto,
+        id_detalle_pedido=linea.detalle_id,
         cantidad_fabricar=op_in.cantidad_programada or proj.cantidad or 1,
         estado=estado_inicial,
         # Indicador RN-OP-004 (chk_rn_op_004): solo una OP liberada queda con reserva al 100%
@@ -675,12 +729,21 @@ def crear_orden_produccion(
             usuario=usuario_actual["email"],
             area=usuario_actual["rol"],
             estado_nuevo=_valor_enum(nueva_op.estado),
-            motivo=f"id_proyecto={proj.id_proyecto}; pedido={proj.numero_pedido}",
+            motivo=f"id_proyecto={proj.id_proyecto}; pedido={proj.numero_pedido}; detalle_id={linea.detalle_id}; id_producto={linea.id_producto}",
         )
         if motivo_excepcion:
             registrar_excepcion_admin(db, usuario_actual, nueva_op.codigo_op, None, _valor_enum(nueva_op.estado), motivo_excepcion)
         db.commit()
         db.refresh(nueva_op)
+    except IntegrityError as error:
+        db.rollback()
+        if "ux_ordenes_produccion_detalle_activa" in str(error.orig):
+            # Dos creaciones simultáneas para la misma línea: el índice único parcial lo impide
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="La línea de pedido ya tiene una OP activa. Cancélela para crear otra.",
+            ) from error
+        raise HTTPException(status_code=500, detail=f"Error al registrar la orden de producción: {str(error)}") from error
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al registrar la orden de producción: {str(e)}")
@@ -752,15 +815,14 @@ def actualizar_estado_produccion(
         except ValueError as error:
             raise HTTPException(status_code=400, detail=f"Estado de OP no válido: {nuevo_estado}.") from error
         if estado_enum in ESTADOS_OP_LIBERADOS:
-            planos_gate = planos_de_op(db, op_db.id_proyecto, op_db.codigo_op, op_db.id_plano)
-            motivo_excepcion = autorizar_liberacion(db, usuario_actual, planos_gate, op_up.motivo)
+            motivo_excepcion, planos_gate = autorizar_liberacion(db, usuario_actual, op_db.id_producto, op_up.motivo)
             revisar = planos_por_revisar(planos_gate)
             op_db.reserva_stock_100 = True
         elif estado_enum == EstadoOPEnum.LISTA_PARA_LIBERAR:
-            plano_gate = db.query(Plano).filter(Plano.id_plano == op_db.id_plano).first() if op_db.id_plano else (
-                db.query(Plano).filter(Plano.id_proyecto == op_db.id_proyecto).first()
-            )
-            validar_gate_calidad(db, plano_gate)
+            # Misma regla de liberación sobre los planos vigentes del producto de la OP
+            if not op_db.id_producto:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=MENSAJE_OP_SIN_PRODUCTO)
+            validar_liberacion_op(db, planos_vigentes_de_producto(db, op_db.id_producto))
         op_db.estado = estado_enum
         
     if op_up.observaciones is not None:
