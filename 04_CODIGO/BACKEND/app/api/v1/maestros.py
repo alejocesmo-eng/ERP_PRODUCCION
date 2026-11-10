@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import text
+from sqlalchemy import or_, text
 from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,7 @@ from app.db.models import (
     UnidadMedida,
     Usuario,
 )
+from app.services.socios import normalizar_nit
 
 router = APIRouter()
 ROLES_LECTURA = ["ADMIN", "VENTAS", "DISENO", "ALMACEN", "PRODUCCION", "CALIDAD"]
@@ -39,6 +40,13 @@ class SocioNegocioCreate(BaseModel):
     cuenta_contable_por_cobrar: Optional[str] = Field(default=None, max_length=100)
     cuenta_contable_por_pagar: Optional[str] = Field(default=None, max_length=100)
     estado_activo: bool = True
+
+    # SCRUM-22: sin NIT válido no hay codigo_socio, así que no se crea el socio
+    @field_validator("nit_cedula")
+    @classmethod
+    def validar_nit(cls, valor):
+        normalizar_nit(valor)
+        return valor.strip().upper()
 
     @field_validator("email")
     @classmethod
@@ -99,6 +107,7 @@ class UnidadMedidaCreate(BaseModel):
 def _serializar_socio(socio: SocioNegocio):
     return {
         "id_socio": socio.id_socio,
+        "codigo_socio": socio.codigo_socio,
         "nit_cedula": socio.nit_cedula,
         "razon_social": socio.razon_social,
         "es_cliente": socio.es_cliente,
@@ -176,10 +185,17 @@ def _guardar(db: Session, entidad, mensaje: str):
 def listar_socios(
     activos: bool = True,
     tipo: Optional[str] = Query(default=None, pattern="^(CLIENTE|PROVEEDOR)$"),
+    nit: Optional[str] = None,
     db: Session = Depends(get_db),
     usuario: dict = Depends(requerir_roles(ROLES_LECTURA)),
 ):
     consulta = db.query(SocioNegocio)
+    if nit is not None:
+        # Búsqueda por NIT en cualquier formato (con puntos o dígito de verificación)
+        try:
+            consulta = consulta.filter(SocioNegocio.codigo_socio == normalizar_nit(nit))
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from None
     if activos:
         consulta = consulta.filter(SocioNegocio.estado_activo.is_(True))
     if tipo == "CLIENTE":
@@ -195,11 +211,14 @@ def crear_socio(
     db: Session = Depends(get_db),
     usuario: dict = Depends(requerir_roles(["ADMIN"])),
 ):
-    nit = datos.nit_cedula.strip().upper()
-    if db.query(SocioNegocio).filter(SocioNegocio.nit_cedula == nit).first():
+    nit = datos.nit_cedula
+    codigo = normalizar_nit(nit)
+    if db.query(SocioNegocio).filter(
+        or_(SocioNegocio.nit_cedula == nit, SocioNegocio.codigo_socio == codigo)
+    ).first():
         raise HTTPException(status_code=409, detail="El NIT o cédula ya está registrado.")
     valores = datos.model_dump()
-    valores["nit_cedula"] = nit
+    valores["codigo_socio"] = codigo
     valores["razon_social"] = datos.razon_social.strip()
     socio = SocioNegocio(**valores)
     return _serializar_socio(_guardar(db, socio, "No se pudo registrar el socio de negocio."))
@@ -215,15 +234,17 @@ def actualizar_socio(
     socio = db.query(SocioNegocio).filter(SocioNegocio.id_socio == id_socio).first()
     if not socio:
         raise HTTPException(status_code=404, detail="Socio de negocio no encontrado.")
-    nit = datos.nit_cedula.strip().upper()
+    nit = datos.nit_cedula
+    codigo = normalizar_nit(nit)
     duplicado = db.query(SocioNegocio).filter(
-        SocioNegocio.nit_cedula == nit,
+        or_(SocioNegocio.nit_cedula == nit, SocioNegocio.codigo_socio == codigo),
         SocioNegocio.id_socio != id_socio,
     ).first()
     if duplicado:
         raise HTTPException(status_code=409, detail="El NIT o cédula ya está registrado.")
     for campo, valor in datos.model_dump().items():
         setattr(socio, campo, valor.strip() if isinstance(valor, str) else valor)
+    socio.codigo_socio = codigo
     return _serializar_socio(_guardar(db, socio, "No se pudo actualizar el socio de negocio."))
 
 

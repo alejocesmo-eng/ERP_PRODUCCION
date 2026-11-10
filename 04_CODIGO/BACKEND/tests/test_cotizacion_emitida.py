@@ -61,7 +61,7 @@ def token(rol="VENTAS"):
 def crear_cotizacion(Sesion, estado):
     s = Sesion()
     socio = SocioNegocio(
-        id_socio=uuid.uuid4(), codigo_socio="CLI-EMI-1", nit_cedula="900111222-3",
+        id_socio=uuid.uuid4(), codigo_socio="900111222", nit_cedula="900111222-3",
         razon_social="Cliente de prueba", es_cliente=True,
     )
     cotizacion = Cotizacion(

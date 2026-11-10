@@ -235,6 +235,7 @@ def cotizacion_stock(id_pt, numero="COT-2026-900", cantidad=4):
     return {
         "numero_cotizacion": numero,
         "razon_social": "Cliente Cotizante Ficticio",
+        "nit": "900555444-1",  # SCRUM-22: no se crean clientes sin NIT
         "posiciones": [{
             "numero_producto": "SKU-FALSO",
             "descripcion": "texto falso",

@@ -18,6 +18,7 @@ from app.db.models import (
     EstadoCotizacionEnum,
     ArticuloInventario
 )
+from app.services.socios import codigo_socio_o_none, normalizar_nit
 from app.services.stock_pt import CATEGORIA_PT, ORIGEN_STOCK_PT
 
 router = APIRouter(prefix="/ventas/cotizaciones", tags=["Cotizaciones Comerciales"])
@@ -109,17 +110,29 @@ def crear_cotizacion(
             except (ValueError, AttributeError):
                 socio = None
 
-        if not socio and data.codigo_cliente:
-            socio = db.query(SocioNegocio).filter(SocioNegocio.codigo_socio == data.codigo_cliente).first()
+        # SCRUM-22: codigo_socio es el NIT solo con números; codigo_cliente y nit se comparan normalizados
+        codigo_por_codigo = codigo_socio_o_none(data.codigo_cliente)
+        codigo_por_nit = codigo_socio_o_none(data.nit)
 
-        if not socio and data.nit:
-            socio = db.query(SocioNegocio).filter(SocioNegocio.nit_cedula == data.nit).first()
+        if not socio and codigo_por_codigo:
+            socio = db.query(SocioNegocio).filter(SocioNegocio.codigo_socio == codigo_por_codigo).first()
+
+        if not socio and codigo_por_nit:
+            socio = db.query(SocioNegocio).filter(SocioNegocio.codigo_socio == codigo_por_nit).first()
 
         if not socio:
+            # Cliente nuevo: sin NIT válido no se crea (antes se inventaban CLI-/NIT- aleatorios)
+            nit_cliente = data.nit if codigo_por_nit else (data.codigo_cliente if codigo_por_codigo else None)
+            if not nit_cliente:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No se puede crear un cliente sin NIT. Indique el NIT del cliente (solo números, "
+                           "con dígito de verificación opcional tras un guion)."
+                )
             socio = SocioNegocio(
                 id_socio=uuid.uuid4(),
-                codigo_socio=data.codigo_cliente or f"CLI-{uuid.uuid4().hex[:6].upper()}",
-                nit_cedula=data.nit or f"NIT-{uuid.uuid4().hex[:8].upper()}",
+                codigo_socio=normalizar_nit(nit_cliente),
+                nit_cedula=nit_cliente.strip().upper(),
                 razon_social=data.razon_social or "Cliente Sin Razón Social",
                 es_cliente=True,
                 es_proveedor=False,

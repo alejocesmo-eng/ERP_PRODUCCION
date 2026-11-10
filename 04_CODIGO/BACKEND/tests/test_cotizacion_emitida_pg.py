@@ -88,7 +88,8 @@ def test_la_base_acepta_emitida_y_conserva_los_demas_estados(ctx):
 def test_enviar_borrador_al_cliente_la_guarda_emitida(ctx):
     client, sesion = ctx
     sufijo = uuid.uuid4().hex[:10].upper()
-    codigo_cliente = f"CLI-T23-{sufijo}"
+    # SCRUM-22: codigo_socio es el NIT solo con números (sin dígito de verificación)
+    codigo_cliente = f"6{uuid.uuid4().int % 10**8:08d}"
 
     # Flujo normal de Ventas: el cliente nuevo se registra en socios_negocio y luego la cotización
     creada = client.post(
@@ -96,7 +97,7 @@ def test_enviar_borrador_al_cliente_la_guarda_emitida(ctx):
         json={
             "codigo_cliente": codigo_cliente,
             "razon_social": "Cliente prueba migración 23",
-            "nit": f"T23{sufijo}",
+            "nit": f"{codigo_cliente}-1",
             "contacto_email": "compras@cliente.test",
             "numero_cotizacion": f"COT-T23-{sufijo}",
             "posiciones": [{"descripcion": "Eje de prueba", "cantidad": 1, "precio_unitario": 1000}],

@@ -64,6 +64,7 @@ from app.db.models_produccion import (
     TipoNotificacionEnum,
     TipoUnidadPlantaEnum,
 )
+from app.services.socios import normalizar_nit
 
 
 def crear_instancia_segura(modelo: Type[Any], **kwargs: Any) -> Any:
@@ -398,6 +399,7 @@ def _crear_maestros(db: Session) -> Dict[str, Any]:
             SocioNegocio,
             ("nit_cedula",),
             {
+                "codigo_socio": normalizar_nit(socio_data["nit_cedula"]),
                 "direccion": "Zona Industrial, Colombia",
                 "telefono": "+57 601 555 0101",
                 "estado_activo": True,

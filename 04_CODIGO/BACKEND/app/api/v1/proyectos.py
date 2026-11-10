@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, validator
 from app.api.deps import requerir_roles
 from app.services.auditoria import agregar_evento_trazabilidad
 from app.db.database import get_db
+from app.services.socios import codigo_socio_o_none
 from app.services.stock_pt import ORIGEN_STOCK_PT, validar_lineas_stock, crear_picking_para_pedido
 from app.db.models import (
     BOMListaMateriales,
@@ -379,12 +380,14 @@ def obtener_expediente_pedido(id_proyecto: UUID, db: Session = Depends(get_db)):
         .filter(Cliente.razon_social == proyecto.cliente_nombre)
         .first()
     )
+    # SCRUM-22: el socio se ubica por su NIT normalizado (codigo_socio), sea cual sea el formato
     nit_rut = cliente.nit_rut if cliente else None
+    codigo_socio = codigo_socio_o_none(nit_rut)
     socio = (
         db.query(SocioNegocio)
-        .filter(SocioNegocio.nit_cedula == nit_rut)
+        .filter(SocioNegocio.codigo_socio == codigo_socio)
         .first()
-        if nit_rut else None
+        if codigo_socio else None
     )
 
     def estado_insumo(plano_id):

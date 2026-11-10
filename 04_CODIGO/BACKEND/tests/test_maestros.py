@@ -57,7 +57,6 @@ def db():
         engine.dispose()
 
 
-@pytest.mark.skip(reason="pendiente definición NIT para códigos de proveedor; ver commit 7f3cb89")
 def test_crear_editar_listar_y_desactivar_socio(db):
     socio = crear_socio(
         SocioNegocioCreate(
@@ -74,6 +73,7 @@ def test_crear_editar_listar_y_desactivar_socio(db):
     )
 
     assert socio["email"] == "contacto@empresa.com"
+    assert socio["codigo_socio"] == "900123456"
     assert socio["es_cliente"] and socio["es_proveedor"]
     assert len(listar_socios(db=db, usuario={"rol": "ADMIN"})) == 1
 

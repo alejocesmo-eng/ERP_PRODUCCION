@@ -67,6 +67,11 @@ VERIFICACIONES = (
         "UNION ALL SELECT 1 FROM pg_constraint WHERE conname = 'chk_cotizaciones_estado' "
         "AND pg_get_constraintdef(oid) LIKE '%EMITIDA%'",
     ),
+    (
+        "codigo_socio = NIT solo numeros en socios_negocio (migracion 24)",
+        "SELECT 1 FROM pg_constraint WHERE conrelid = 'public.socios_negocio'::regclass "
+        "AND conname = 'ck_socios_negocio_codigo_nit'",
+    ),
 )
 
 
@@ -185,7 +190,10 @@ def _verificar() -> None:
                 faltantes.append(descripcion)
         if faltantes:
             fallar("Verificacion incompleta en sgi_sandbox: " + "; ".join(faltantes))
-        print("Verificacion correcta: historial append-only, busqueda de productos y estado EMITIDA instalados.")
+        print(
+            "Verificacion correcta: historial append-only, busqueda de productos, estado EMITIDA "
+            "y codigo_socio por NIT instalados."
+        )
     finally:
         conexion.close()
 
