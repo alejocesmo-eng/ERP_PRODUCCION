@@ -1,10 +1,11 @@
 # tests/test_puesto_cnc.py
 """
-Suite de Pruebas Automatizadas Asíncronas (pytest + httpx)
+Suite de Pruebas Automatizadas Asíncronas (pytest + httpx2)
 Validación de Puesto de Trabajo CNC, Cronómetro Dual y Manejo de Excepciones (ADR-001 / TC-PROD-001).
 """
 import pytest
-import httpx
+# httpx2 (requirements-test.txt) es el cliente que usa Starlette 1.8; misma API que httpx
+import httpx2 as httpx
 from uuid import uuid4
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
