@@ -10,6 +10,7 @@ transacción que se revierte al terminar.
 """
 import os
 import uuid
+from datetime import timedelta
 
 import pytest
 from fastapi import FastAPI
@@ -20,6 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.v1 import proyectos
+from app.core.security import create_access_token
 from app.db.database import get_db
 from app.db.models import OrdenProduccion, PedidoDetalle, Producto, Proyecto
 
@@ -79,8 +81,13 @@ def linea(detalle_id=None, descripcion="Línea", cantidad=1, codigo="PROD"):
     return cuerpo
 
 
+def token(rol="VENTAS"):
+    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
+    return {"Authorization": f"Bearer {t}"}
+
+
 def editar(client, pedido, detalles):
-    return client.patch(f"/api/v1/proyectos/{pedido.id_proyecto}", json={"detalles": detalles})
+    return client.patch(f"/api/v1/proyectos/{pedido.id_proyecto}", json={"detalles": detalles}, headers=token())
 
 
 def lineas(sesion, pedido):
