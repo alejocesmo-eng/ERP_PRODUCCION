@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from typing import List
-from app.api.deps import requerir_roles
+from app.api.deps import obtener_usuario_actual, requerir_roles
 
 router = APIRouter()
 
@@ -35,7 +35,7 @@ CATALOGO_MATERIALES = [
 ]
 
 @router.get("/", response_model=List[MaterialSchema])
-def listar_materiales():
+def listar_materiales(usuario_actual: dict = Depends(obtener_usuario_actual)):
     """
     Consulta todo el catálogo maestro de materiales e insertos.
     Apto para cualquier rol del sistema.

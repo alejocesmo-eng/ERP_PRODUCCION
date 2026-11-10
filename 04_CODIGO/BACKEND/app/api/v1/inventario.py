@@ -275,7 +275,7 @@ def crear_centro_almacen(
 
 
 @router.get("/categorias")
-def listar_categorias(db: Session = Depends(get_db)):
+def listar_categorias(db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
     categorias = db.query(CategoriaInventario).order_by(CategoriaInventario.nombre.asc()).all()
     if categorias:
         return categorias
