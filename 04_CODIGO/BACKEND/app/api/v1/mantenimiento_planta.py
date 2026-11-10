@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, validator
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.api.deps import obtener_usuario_actual
 from app.db.database import get_db
 from app.db.models import (
     CentroTrabajo,
@@ -118,7 +119,7 @@ def _registrar_repuestos(db: Session, orden: OrdenMantenimiento, equipo: EquipoP
 
 
 @router.get("/planta/equipos")
-def listar_equipos_planta(db: Session = Depends(get_db)):
+def listar_equipos_planta(db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
     equipos = db.query(EquipoPlanta).order_by(EquipoPlanta.codigo_maquina).all()
     ahora = datetime.now(timezone.utc)
     horas_activas = {}
@@ -151,7 +152,7 @@ def listar_equipos_planta(db: Session = Depends(get_db)):
 
 
 @router.post("/planta/equipos", status_code=status.HTTP_201_CREATED)
-def crear_equipo_planta(equipo_in: EquipoCreate, db: Session = Depends(get_db)):
+def crear_equipo_planta(equipo_in: EquipoCreate, db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
     codigo = equipo_in.codigo_maquina.strip().upper()
     if db.query(EquipoPlanta).filter(EquipoPlanta.codigo_maquina == codigo).first():
         raise HTTPException(status_code=409, detail="Ya existe un equipo con ese código.")
@@ -175,7 +176,7 @@ def crear_equipo_planta(equipo_in: EquipoCreate, db: Session = Depends(get_db)):
 
 
 @router.patch("/planta/equipos/{id_equipo}")
-def actualizar_equipo_planta(id_equipo: UUID, equipo_in: EquipoCreate, db: Session = Depends(get_db)):
+def actualizar_equipo_planta(id_equipo: UUID, equipo_in: EquipoCreate, db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
     equipo = db.query(EquipoPlanta).filter(EquipoPlanta.id_equipo == id_equipo).first()
     if not equipo:
         raise HTTPException(status_code=404, detail="No existe el equipo de planta.")
@@ -203,7 +204,7 @@ def actualizar_equipo_planta(id_equipo: UUID, equipo_in: EquipoCreate, db: Sessi
 
 
 @router.get("/planta/ordenes")
-def listar_ordenes_mantenimiento(db: Session = Depends(get_db)):
+def listar_ordenes_mantenimiento(db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
     return [
         {
             "id_otm": str(orden.id_otm),
@@ -225,7 +226,7 @@ def listar_ordenes_mantenimiento(db: Session = Depends(get_db)):
 
 
 @router.post("/planta/ordenes", status_code=status.HTTP_201_CREATED)
-def crear_orden_mantenimiento(orden_in: OrdenMantenimientoCreate, db: Session = Depends(get_db)):
+def crear_orden_mantenimiento(orden_in: OrdenMantenimientoCreate, db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
     equipo = db.query(EquipoPlanta).filter(EquipoPlanta.id_equipo == orden_in.id_equipo).with_for_update().first()
     if not equipo:
         raise HTTPException(status_code=404, detail="No existe el equipo de planta.")
@@ -255,7 +256,7 @@ def crear_orden_mantenimiento(orden_in: OrdenMantenimientoCreate, db: Session = 
 
 
 @router.post("/planta/ordenes/{id_otm}/repuestos")
-def solicitar_repuestos_orden_mantenimiento(id_otm: UUID, db: Session = Depends(get_db)):
+def solicitar_repuestos_orden_mantenimiento(id_otm: UUID, db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
     orden = db.query(OrdenMantenimiento).filter(
         OrdenMantenimiento.id_otm == id_otm
     ).with_for_update().first()
@@ -292,6 +293,7 @@ def actualizar_estado_orden_mantenimiento(
     id_otm: UUID,
     estado_in: EstadoMantenimientoUpdate,
     db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     orden = db.query(OrdenMantenimiento).filter(OrdenMantenimiento.id_otm == id_otm).with_for_update().first()
     if not orden:

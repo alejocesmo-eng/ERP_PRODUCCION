@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 from pydantic import BaseModel, Field, validator
 
+from app.api.deps import obtener_usuario_actual
 from app.db.database import get_db
 from app.db.models import MantenimientoMaquina, MantenimientoPiezaDet, Plano, Proyecto
 
@@ -92,7 +93,7 @@ class PiezaLevantamientoItem(BaseModel):
 # =============================================================================
 
 @router.get("/monitor-kits")
-def listar_monitor_kits(db: Session = Depends(get_db)):
+def listar_monitor_kits(db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
     """
     Retorna el listado de proyectos de mantenimiento real desde PostgreSQL.
     """
@@ -134,7 +135,7 @@ def listar_monitor_kits(db: Session = Depends(get_db)):
 
 
 @router.get("/{id_mantenimiento}/piezas")
-def obtener_piezas_mantenimiento(id_mantenimiento: int, db: Session = Depends(get_db)):
+def obtener_piezas_mantenimiento(id_mantenimiento: int, db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
     """
     Retorna la lista granular de piezas de un proyecto de mantenimiento en vivo.
     """
@@ -158,7 +159,8 @@ def obtener_piezas_mantenimiento(id_mantenimiento: int, db: Session = Depends(ge
 def agregar_piezas_levantamiento(
     id_mantenimiento: int, 
     piezas: List[PiezaLevantamientoItem], 
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     """
     Guarda las piezas del levantamiento técnico. Si el cliente ya confirmó (P5), bloquea con 403.
@@ -198,7 +200,7 @@ def agregar_piezas_levantamiento(
 
 
 @router.patch("/{id_mantenimiento}/confirmar-cotizacion")
-def confirmar_cotizacion_mantenimiento(id_mantenimiento: int, db: Session = Depends(get_db)):
+def confirmar_cotizacion_mantenimiento(id_mantenimiento: int, db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
     """
     Aprobación del Cliente. Congela piezas y vincula/crea la OT.
     """
@@ -246,7 +248,7 @@ def confirmar_cotizacion_mantenimiento(id_mantenimiento: int, db: Session = Depe
 
 
 @router.post("/nuevo", status_code=status.HTTP_201_CREATED)
-def crear_nuevo_mantenimiento(mant_in: MantenimientoCreate, db: Session = Depends(get_db)):
+def crear_nuevo_mantenimiento(mant_in: MantenimientoCreate, db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
     """
     Registra el ingreso de una máquina a taller para mantenimiento/overhaul.
     """
@@ -320,7 +322,8 @@ def crear_nuevo_mantenimiento(mant_in: MantenimientoCreate, db: Session = Depend
 def actualizar_mantenimiento(
     id_mantenimiento: int,
     datos: MantenimientoUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     """
     Actualiza la fase o propiedades de un proyecto de mantenimiento.
