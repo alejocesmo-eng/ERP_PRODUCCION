@@ -8,6 +8,7 @@ SQLite en memoria con override de get_db y una aplicación FastAPI mínima con e
 de proyectos (no se importa app.main) para no tocar ninguna base real.
 """
 import uuid
+from datetime import timedelta
 
 import pytest
 from fastapi import FastAPI
@@ -17,6 +18,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.v1 import proyectos
+from app.core.security import create_access_token
 from app.db.database import Base, get_db
 from app.db.models import OrdenProduccion, OTDetalle, PedidoDetalle, Plano, Proyecto
 
@@ -96,8 +98,13 @@ def crear_op(s, pedido, codigo, detalle=None, plano=None):
     return op
 
 
+def token(rol="VENTAS"):
+    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
+    return {"Authorization": f"Bearer {t}"}
+
+
 def expediente(client, pedido):
-    respuesta = client.get(f"/api/v1/proyectos/{pedido.id_proyecto}/expediente")
+    respuesta = client.get(f"/api/v1/proyectos/{pedido.id_proyecto}/expediente", headers=token())
     assert respuesta.status_code == 200, respuesta.text
     return respuesta.json()
 

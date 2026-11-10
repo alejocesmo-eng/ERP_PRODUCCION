@@ -124,7 +124,7 @@ def cuerpo_pedido(numero, detalles):
 
 
 def crear_pedido(client, numero, detalles):
-    r = client.post("/api/v1/proyectos/", json=cuerpo_pedido(numero, detalles))
+    r = client.post("/api/v1/proyectos/", json=cuerpo_pedido(numero, detalles), headers=token("VENTAS"))
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -302,7 +302,7 @@ def test_ca5_linea_stock_guarda_origen_sku_y_sin_ot_detalles(ctx, catalogo):
     s = Sesion()
     assert s.query(func.count()).select_from(OTDetalle).scalar() == 0
     s.close()
-    listado = client.get("/api/v1/proyectos/").json()
+    listado = client.get("/api/v1/proyectos/", headers=token("VENTAS")).json()
     det = listado[0]["detalles"][0]
     assert det["estado_asignacion"] == "DESDE_STOCK"
     assert det["cantidad_asignada"] == 3 and det["cantidad_pendiente"] == 0
@@ -310,7 +310,7 @@ def test_ca5_linea_stock_guarda_origen_sku_y_sin_ot_detalles(ctx, catalogo):
 
 def test_ca8_exceso_responde_400_con_detail_objeto_sin_datos_sensibles(ctx, catalogo):
     client, _ = ctx
-    r = client.post("/api/v1/proyectos/", json=cuerpo_pedido("PED-8A", [linea_stock(catalogo["pt"], 11)]))
+    r = client.post("/api/v1/proyectos/", json=cuerpo_pedido("PED-8A", [linea_stock(catalogo["pt"], 11)]), headers=token("VENTAS"))
     assert r.status_code == 400
     det = r.json()["detail"]
     assert isinstance(det, dict)
@@ -325,13 +325,13 @@ def test_ca8_suma_por_sku_al_crear(ctx, catalogo):
     client, Sesion = ctx
     id_pt = crear_articulo(Sesion, "PT-100", "PRODUCTO_TERMINADO", 100)
     r = client.post("/api/v1/proyectos/", json=cuerpo_pedido(
-        "PED-8B", [linea_stock(id_pt, 80), linea_stock(id_pt, 80)]))
+        "PED-8B", [linea_stock(id_pt, 80), linea_stock(id_pt, 80)]), headers=token("VENTAS"))
     assert r.status_code == 400
     assert r.json()["detail"]["codigo"] == "STOCK_INSUFICIENTE"
     assert r.json()["detail"]["disponible"] == 100
     assert contar(Sesion, Proyecto) == 0
     r = client.post("/api/v1/proyectos/", json=cuerpo_pedido(
-        "PED-8B2", [linea_stock(id_pt, 50), linea_stock(id_pt, 50)]))
+        "PED-8B2", [linea_stock(id_pt, 50), linea_stock(id_pt, 50)]), headers=token("VENTAS"))
     assert r.status_code == 201
 
 
@@ -340,7 +340,7 @@ def test_ca8_suma_por_sku_al_editar(ctx, catalogo):
     id_pt = crear_articulo(Sesion, "PT-100", "PRODUCTO_TERMINADO", 100)
     ped = crear_pedido(client, "PED-8C", [linea_stock(id_pt, 10)])
     r = client.patch(f"/api/v1/proyectos/{ped['id_proyecto']}", json={
-        "detalles": [linea_stock(id_pt, 80), linea_stock(id_pt, 80)]})
+        "detalles": [linea_stock(id_pt, 80), linea_stock(id_pt, 80)]}, headers=token("VENTAS"))
     assert r.status_code == 400
     assert r.json()["detail"]["codigo"] == "STOCK_INSUFICIENTE"
     s = Sesion()
@@ -370,17 +370,17 @@ def test_ca8_suma_por_sku_al_confirmar(ctx, catalogo):
 
 def test_ca8_articulo_no_pt_responde_400(ctx, catalogo):
     client, _ = ctx
-    r = client.post("/api/v1/proyectos/", json=cuerpo_pedido("PED-8D", [linea_stock(catalogo["mp"], 1)]))
+    r = client.post("/api/v1/proyectos/", json=cuerpo_pedido("PED-8D", [linea_stock(catalogo["mp"], 1)]), headers=token("VENTAS"))
     assert r.status_code == 400
 
 
 def test_ca8_articulo_inexistente_o_sin_id_responde_400(ctx, catalogo):
     client, _ = ctx
-    r = client.post("/api/v1/proyectos/", json=cuerpo_pedido("PED-8E", [linea_stock(uuid.uuid4(), 1)]))
+    r = client.post("/api/v1/proyectos/", json=cuerpo_pedido("PED-8E", [linea_stock(uuid.uuid4(), 1)]), headers=token("VENTAS"))
     assert r.status_code == 400
     sin_id = linea_stock(catalogo["pt"], 1)
     sin_id["id_articulo"] = None
-    r = client.post("/api/v1/proyectos/", json=cuerpo_pedido("PED-8F", [sin_id]))
+    r = client.post("/api/v1/proyectos/", json=cuerpo_pedido("PED-8F", [sin_id]), headers=token("VENTAS"))
     assert r.status_code == 400
 
 
@@ -392,7 +392,7 @@ def test_ca8_desviacion_cantidad_invalida_responde_422_no_400(ctx, catalogo, can
     fija el comportamiento real; Direccion/revisor deciden si se acepta el 422 o se cambia a 400.
     """
     client, Sesion = ctx
-    r = client.post("/api/v1/proyectos/", json=cuerpo_pedido("PED-8G", [linea_stock(catalogo["pt"], cantidad)]))
+    r = client.post("/api/v1/proyectos/", json=cuerpo_pedido("PED-8G", [linea_stock(catalogo["pt"], cantidad)]), headers=token("VENTAS"))
     assert r.status_code == 422, r.text
     assert contar(Sesion, Proyecto) == 0
 
@@ -405,7 +405,7 @@ def test_ca4_editar_pedido_confirmado_responde_400_y_no_cambia_detalles(ctx, cat
     client, Sesion = ctx
     ped = crear_pedido(client, "PED-4", [linea_stock(catalogo["pt"], 3)])
     assert client.patch(f"/api/v1/proyectos/{ped['id_proyecto']}/confirmar", headers=token("VENTAS")).status_code == 200
-    r = client.patch(f"/api/v1/proyectos/{ped['id_proyecto']}", json={"detalles": [linea_stock(catalogo["pt"], 1)]})
+    r = client.patch(f"/api/v1/proyectos/{ped['id_proyecto']}", json={"detalles": [linea_stock(catalogo["pt"], 1)]}, headers=token("VENTAS"))
     assert r.status_code == 400
     s = Sesion()
     lineas = s.query(PedidoDetalle).filter(PedidoDetalle.pedido_id == uuid.UUID(ped["id_proyecto"])).all()
@@ -487,7 +487,7 @@ def test_ca7_pedido_sobre_plano_sin_regresion(ctx, catalogo):
     d = ped["detalles"][0]
     assert d["origen"] == "PLANO" and d["id_articulo"] is None
     assert d["codigo_producto"] == "PZA-001" and d["cantidad_pendiente"] == 2
-    r = client.patch(f"/api/v1/proyectos/{ped['id_proyecto']}", json={"detalles": [linea_plano("Pieza editada", 5)]})
+    r = client.patch(f"/api/v1/proyectos/{ped['id_proyecto']}", json={"detalles": [linea_plano("Pieza editada", 5)]}, headers=token("VENTAS"))
     assert r.status_code == 200
     assert r.json()["detalles"][0]["descripcion"] == "Pieza editada"
     assert r.json()["detalles"][0]["origen"] == "PLANO"
@@ -496,7 +496,7 @@ def test_ca7_pedido_sobre_plano_sin_regresion(ctx, catalogo):
     assert rc.json()["confirmado"] is True and rc.json()["picking"] is None
     assert contar(Sesion, OrdenPicking) == 0
     assert contar(Sesion, OrdenProduccion) == 0
-    listado = client.get("/api/v1/proyectos/").json()
+    listado = client.get("/api/v1/proyectos/", headers=token("VENTAS")).json()
     assert listado[0]["detalles"][0]["estado_asignacion"] == "SIN_ASIGNAR"
 
 
@@ -508,7 +508,7 @@ def test_ca7_origen_explicito_plano_con_id_articulo_se_descarta(ctx, catalogo):
 
 def test_origen_invalido_responde_422(ctx, catalogo):
     client, _ = ctx
-    r = client.post("/api/v1/proyectos/", json=cuerpo_pedido("PED-OR", [linea_plano() | {"origen": "OTRO"}]))
+    r = client.post("/api/v1/proyectos/", json=cuerpo_pedido("PED-OR", [linea_plano() | {"origen": "OTRO"}]), headers=token("VENTAS"))
     assert r.status_code == 422
 
 
@@ -527,7 +527,7 @@ def test_pedido_mixto_picking_solo_con_lineas_de_stock(ctx, catalogo):
     assert s.query(func.count()).select_from(OTDetalle).scalar() == 0
     assert s.query(func.count()).select_from(OrdenProduccion).scalar() == 0
     s.close()
-    estados = {d["origen"]: d["estado_asignacion"] for d in client.get("/api/v1/proyectos/").json()[0]["detalles"]}
+    estados = {d["origen"]: d["estado_asignacion"] for d in client.get("/api/v1/proyectos/", headers=token("VENTAS")).json()[0]["detalles"]}
     assert estados == {"PLANO": "SIN_ASIGNAR", "STOCK_PT": "DESDE_STOCK"}
 
 

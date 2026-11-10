@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.db.database import get_db
-from app.api.deps import requerir_roles
+from app.api.deps import obtener_usuario_actual, requerir_roles
 from app.services.auditoria import agregar_evento_trazabilidad
 from app.db.models import (
     Cotizacion,
@@ -74,7 +74,7 @@ class EnviarCotizacionMailIn(BaseModel):
 # =============================================================================
 
 @router.get("/")
-def listar_cotizaciones(db: Session = Depends(get_db)):
+def listar_cotizaciones(db: Session = Depends(get_db), usuario: dict = Depends(obtener_usuario_actual)):
     """
     Retorna el listado completo de cotizaciones emitidas para ProyectosView.jsx
     """
@@ -233,7 +233,11 @@ def crear_cotizacion(
         )
 
 @router.get("/{id_cotizacion}")
-def obtener_detalle_cotizacion(id_cotizacion: uuid.UUID, db: Session = Depends(get_db)):
+def obtener_detalle_cotizacion(
+    id_cotizacion: uuid.UUID,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(obtener_usuario_actual),
+):
     """
     Retorna el expediente completo de una cotización con su cliente y posiciones para el visor formal.
     """

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from pydantic import BaseModel, Field, validator
 
-from app.api.deps import requerir_roles
+from app.api.deps import obtener_usuario_actual, requerir_roles
 from app.services.auditoria import agregar_evento_trazabilidad
 from app.db.database import get_db
 from app.services.socios import codigo_socio_o_none
@@ -263,7 +263,7 @@ class ProyectoResponse(BaseModel):
 # =============================================================================
 
 @router.get("/", response_model=List[ProyectoResponse])
-def listar_proyectos(db: Session = Depends(get_db)):
+def listar_proyectos(db: Session = Depends(get_db), usuario: dict = Depends(obtener_usuario_actual)):
     proyectos_db = db.query(Proyecto).order_by(Proyecto.creado_en.desc()).all()
     
     for p in proyectos_db:
@@ -296,7 +296,11 @@ def listar_proyectos(db: Session = Depends(get_db)):
 
 
 @router.get("/{id_proyecto}/expediente")
-def obtener_expediente_pedido(id_proyecto: UUID, db: Session = Depends(get_db)):
+def obtener_expediente_pedido(
+    id_proyecto: UUID,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(obtener_usuario_actual),
+):
     proyecto = db.query(Proyecto).filter(Proyecto.id_proyecto == id_proyecto).first()
     if not proyecto:
         raise HTTPException(status_code=404, detail="Pedido comercial no encontrado.")
@@ -542,7 +546,11 @@ def obtener_expediente_pedido(id_proyecto: UUID, db: Session = Depends(get_db)):
 
 
 @router.post("/", response_model=ProyectoResponse, status_code=status.HTTP_201_CREATED)
-def crear_proyecto(proyecto_in: ProyectoCreate, db: Session = Depends(get_db)):
+def crear_proyecto(
+    proyecto_in: ProyectoCreate,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(obtener_usuario_actual),
+):
     codigo_ref = proyecto_in.codigo_proyecto or proyecto_in.numero_pedido or "PED-001"
     articulos_stock = validar_lineas_stock(db, proyecto_in.detalles or [])
 
@@ -601,7 +609,12 @@ def crear_proyecto(proyecto_in: ProyectoCreate, db: Session = Depends(get_db)):
 
 
 @router.patch("/{id_proyecto}", response_model=ProyectoResponse)
-def actualizar_proyecto(id_proyecto: UUID, proyecto_up: ProyectoUpdate, db: Session = Depends(get_db)):
+def actualizar_proyecto(
+    id_proyecto: UUID,
+    proyecto_up: ProyectoUpdate,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(obtener_usuario_actual),
+):
     proyecto = db.query(Proyecto).filter(Proyecto.id_proyecto == id_proyecto).first()
     if not proyecto:
         raise HTTPException(status_code=404, detail="Pedido comercial no encontrado.")
