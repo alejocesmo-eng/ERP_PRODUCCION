@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 
+from app.api.deps import obtener_usuario_actual
 from app.db.database import get_db
 from app.db.models import CentroTrabajo, EquipoPlanta, OrdenProduccion
 from app.db.models_produccion import OperacionOT, RegistroTiempoOperario, SubLoteOperacion
@@ -19,7 +20,7 @@ class ReasignarSublote(BaseModel):
 
 
 @router.get("/carga-maquinas")
-def obtener_carga_maquinas(db: Session = Depends(get_db)):
+def obtener_carga_maquinas(db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
     operaciones = (
         db.query(OperacionOT)
         .options(
@@ -195,6 +196,7 @@ def reasignar_sublote(
     id_sublote: UUID,
     asignacion: ReasignarSublote,
     db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     sublote = (
         db.query(SubLoteOperacion)

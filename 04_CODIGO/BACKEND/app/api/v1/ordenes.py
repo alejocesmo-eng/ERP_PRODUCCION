@@ -598,7 +598,8 @@ def obtener_componentes_pedido(db: Session, numero_pedido: str) -> List[ItemPedi
 
 @router.get("/", response_model=List[OrdenProduccionVistaResponse])
 def listar_ordenes_produccion(
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     """PM-03: Listar todas las Órdenes de Producción en Planta."""
     ordenes_db = db.query(OrdenProduccion).all()

@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.api.deps import obtener_usuario_actual
 from app.db.database import get_db
 from app.db.models import (
     Plano, 
@@ -369,7 +370,8 @@ def listar_sublotes(
     area: Optional[str] = Query(None),
     maquina: Optional[str] = Query(None),
     operario_nombre: Optional[str] = Query(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     """Consulta trabajos activos y pendientes ordenados por operario, estación y prioridad."""
     query = db.query(SubLoteOperacion).options(joinedload(SubLoteOperacion.operacion))
@@ -423,7 +425,7 @@ def listar_sublotes(
 
 
 @cola_router.post("/sublotes/reordenar", status_code=status.HTTP_200_OK)
-def reordenar_sublotes(payload: ReordenarSublotesSchema, db: Session = Depends(get_db)):
+def reordenar_sublotes(payload: ReordenarSublotesSchema, db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
     """Guarda atómicamente la secuencia de espera de un operario en una estación."""
     consulta = db.query(SubLoteOperacion).filter(
         SubLoteOperacion.operario_nombre == payload.operario_nombre,
@@ -464,6 +466,7 @@ def actualizar_estado_sublote(
     id_sublote: UUID,
     payload: EstadoSubloteUpdateSchema,
     db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
     sublote = db.query(SubLoteOperacion).filter(
         SubLoteOperacion.id_sublote == id_sublote
@@ -503,7 +506,7 @@ def actualizar_estado_sublote(
 
 
 @cola_router.post("/sublotes/crear", status_code=status.HTTP_201_CREATED)
-def crear_sublote_programado(data: SubLoteCrearSchema, db: Session = Depends(get_db)):
+def crear_sublote_programado(data: SubLoteCrearSchema, db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
     """Permite al Líder fraccionar una OT en sub-lotes asignados a máquinas/operarios."""
     operacion = db.query(OperacionOT).filter(
         OperacionOT.id_plano == data.id_plano,
@@ -562,7 +565,7 @@ def crear_sublote_programado(data: SubLoteCrearSchema, db: Session = Depends(get
 
 
 @cola_router.post("/sublotes/finalizar", status_code=status.HTTP_200_OK)
-def finalizar_sublote(payload: FinalizarSubloteSchema, db: Session = Depends(get_db)):
+def finalizar_sublote(payload: FinalizarSubloteSchema, db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
     sublote = db.query(SubLoteOperacion).filter(
         SubLoteOperacion.id_sublote == payload.id_sublote
     ).with_for_update().first()
