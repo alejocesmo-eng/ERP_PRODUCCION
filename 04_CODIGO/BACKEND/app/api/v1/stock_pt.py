@@ -9,6 +9,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.api.deps import requerir_roles
+from app.core.roles import ROLES_STOCK_PT
 from app.db.database import get_db
 from app.db.models import ArticuloInventario
 from app.services.stock_pt import CATEGORIA_PT, saldo_pt
@@ -52,7 +53,7 @@ def listar_stock_pt(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
-    _usuario: dict = Depends(requerir_roles(["ADMIN", "VENTAS", "ALMACEN"])),
+    _usuario: dict = Depends(requerir_roles(ROLES_STOCK_PT)),
 ):
     """Solo ítems con categoría PRODUCTO_TERMINADO (filtro fijo). No reserva ni modifica saldos."""
     consulta = db.query(ArticuloInventario).filter(ArticuloInventario.categoria == CATEGORIA_PT)

@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from pydantic import BaseModel, Field, validator
 
 from app.api.deps import obtener_usuario_actual, requerir_roles
+from app.core.roles import ROLES_VENTAS
 from app.services.auditoria import agregar_evento_trazabilidad
 from app.db.database import get_db
 from app.services.socios import codigo_socio_o_none
@@ -723,7 +724,7 @@ def _respuesta_confirmado(proyecto: Proyecto, picking: Optional[OrdenPicking]) -
 def confirmar_proyecto(
     id_proyecto: UUID,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN", "VENTAS"])),
+    usuario: dict = Depends(requerir_roles(ROLES_VENTAS)),
 ):
     # Transacción única: bloqueo del pedido, revalidación de saldo con FOR UPDATE ordenado
     # por id_articulo, creación del picking y confirmación en un solo commit (OT-2026-008).

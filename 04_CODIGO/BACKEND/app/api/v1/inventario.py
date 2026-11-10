@@ -8,6 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.deps import obtener_usuario_actual, requerir_roles
+from app.core.roles import ROLES_CALIDAD_LOTE, ROLES_GESTION_ALMACEN, ROLES_SOLO_ADMIN
 from app.db.database import get_db
 from app.db.models import (
     ArticuloInventario,
@@ -238,7 +239,7 @@ def listar_centros_almacen(
 def crear_centro_almacen(
     centro_in: CentroAlmacenCreate,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_SOLO_ADMIN)),
 ):
     codigo = centro_in.codigo_centro.strip().upper()
     almacenes = list(dict.fromkeys(
@@ -292,7 +293,7 @@ def listar_categorias(db: Session = Depends(get_db), usuario_actual: dict = Depe
 def crear_categoria(
     categoria_in: CategoriaCreate,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN", "ALMACEN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_GESTION_ALMACEN)),
 ):
     codigo = categoria_in.codigo.strip().upper().replace(" ", "_")
     if db.query(CategoriaInventario).filter(CategoriaInventario.codigo == codigo).first():
@@ -319,7 +320,7 @@ def crear_categoria(
 def registrar_articulo(
     articulo_in: ArticuloCreate,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN", "ALMACEN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_GESTION_ALMACEN)),
 ):
     codigo_sku = articulo_in.codigo_sku.strip()
     if db.query(ArticuloInventario).filter(ArticuloInventario.codigo_sku == codigo_sku).first():
@@ -500,7 +501,7 @@ def actualizar_estado_calidad_lote(
     id_lote: int,
     actualizacion: CalidadLoteUpdate,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN", "CALIDAD"])),
+    usuario: dict = Depends(requerir_roles(ROLES_CALIDAD_LOTE)),
 ):
     lote = db.query(LoteMaterial).filter(LoteMaterial.id == id_lote).with_for_update().first()
     if not lote:

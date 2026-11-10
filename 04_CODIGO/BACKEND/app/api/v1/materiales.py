@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from typing import List
 from app.api.deps import obtener_usuario_actual, requerir_roles
+from app.core.roles import ROLES_GESTION_ALMACEN
 
 router = APIRouter()
 
@@ -45,7 +46,7 @@ def listar_materiales(usuario_actual: dict = Depends(obtener_usuario_actual)):
 @router.post("/", response_model=MaterialSchema, status_code=status.HTTP_201_CREATED)
 def crear_material(
     material: MaterialSchema,
-    usuario: dict = Depends(requerir_roles(["ADMIN", "ALMACEN"]))
+    usuario: dict = Depends(requerir_roles(ROLES_GESTION_ALMACEN))
 ):
     """
     Agrega un nuevo material al catálogo maestro.

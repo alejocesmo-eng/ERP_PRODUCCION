@@ -7,6 +7,7 @@ from datetime import datetime
 import uuid
 
 from app.api.deps import requerir_roles
+from app.core.roles import ROLES_HISTORIAL_CONSULTA, ROLES_SUSPENDER
 from app.db.database import get_db
 from app.db.models import HistorialAccionesDocumento
 
@@ -62,7 +63,7 @@ def obtener_historial_documento(
     tipo_entidad: str,
     identificador: str,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN", "VENTAS", "DISENO", "ALMACEN", "PRODUCCION", "CALIDAD", "MANTENIMIENTO"])),
+    usuario: dict = Depends(requerir_roles(ROLES_HISTORIAL_CONSULTA)),
 ):
     registros = db.query(HistorialAccionesDocumento).filter(
         HistorialAccionesDocumento.tipo_entidad == tipo_entidad.upper(),
@@ -89,7 +90,7 @@ def obtener_historial_documento(
 def suspender_documento(
     req: SuspensionRequest,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN", "VENTAS", "DISENO", "PRODUCCION", "CALIDAD", "MANTENIMIENTO"])),
+    usuario: dict = Depends(requerir_roles(ROLES_SUSPENDER)),
 ):
     if not req.motivo or not req.motivo.strip():
         raise HTTPException(status_code=400, detail="El motivo de la suspensión es obligatorio.")
@@ -116,7 +117,7 @@ def suspender_documento(
 def reactivar_documento(
     req: ReactivacionRequest,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN", "VENTAS", "DISENO", "PRODUCCION", "CALIDAD", "MANTENIMIENTO"])),
+    usuario: dict = Depends(requerir_roles(ROLES_SUSPENDER)),
 ):
     registrar_evento_historial(
         db=db,

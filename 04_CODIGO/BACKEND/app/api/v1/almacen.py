@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.deps import requerir_roles
+from app.core.roles import ROLES_GESTION_ALMACEN
 from app.db.database import get_db
 from app.db.models import (
     ArticuloInventario,
@@ -86,7 +87,7 @@ def _decimal(value) -> Decimal:
 def registrar_recepcion_compra(
     entrada: EntradaConFacturaCreate,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN", "ALMACEN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_GESTION_ALMACEN)),
 ):
     solicitud = db.query(SolicitudCompra).filter(
         SolicitudCompra.id_solicitud == entrada.id_solicitud
@@ -237,7 +238,7 @@ def registrar_recepcion_compra(
 def registrar_salida_almacen(
     salida: SalidaAlmacenCreate,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN", "ALMACEN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_GESTION_ALMACEN)),
 ):
     articulo = db.query(ArticuloInventario).filter(
         ArticuloInventario.codigo_sku == salida.codigo_sku
@@ -496,7 +497,7 @@ def registrar_salida_almacen(
 def registrar_traslado_almacen(
     traslado: TrasladoAlmacenCreate,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN", "ALMACEN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_GESTION_ALMACEN)),
 ):
     lote = db.query(LoteMaterial).filter(
         LoteMaterial.codigo_lote == traslado.codigo_lote

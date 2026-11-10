@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from typing import List, Optional
 from app.api.deps import requerir_roles
+from app.core.roles import ROLES_TRAZABILIDAD
 
 router = APIRouter()
 
@@ -65,7 +66,7 @@ BASE_TRAZABILIDAD = {
 @router.get("/proyecto/{id_proyecto}", response_model=ArbolTrazabilidadSchema)
 def consultar_trazabilidad_proyecto(
     id_proyecto: str,
-    usuario: dict = Depends(requerir_roles(["ADMIN", "VENTAS", "DISENO", "ALMACEN", "PRODUCCION", "CALIDAD"]))
+    usuario: dict = Depends(requerir_roles(ROLES_TRAZABILIDAD))
 ):
     """
     Búsqueda genealógica completa por ID de Proyecto.
@@ -82,7 +83,7 @@ def consultar_trazabilidad_proyecto(
 @router.get("/buscar", response_model=List[dict])
 def busqueda_multicriterio(
     criterio: str,
-    usuario: dict = Depends(requerir_roles(["ADMIN", "VENTAS", "DISENO", "ALMACEN", "PRODUCCION", "CALIDAD"]))
+    usuario: dict = Depends(requerir_roles(ROLES_TRAZABILIDAD))
 ):
     """
     Motor de búsqueda rápida multicriterio por código de plano, número de retal (RET-XXXXXX), lote de material o número de OP.

@@ -16,6 +16,7 @@ import jwt
 from app.db.database import get_db
 from app.db.models import BOMListaMateriales, EstadoPlanoEnum, Plano, PlanoArchivo, Proyecto
 from app.api.deps import obtener_usuario_actual, requerir_roles
+from app.core.roles import ROLES_APROBAR_PLANO, ROLES_REVISION_PLANO
 from app.api.v1.quality_gate import (
     ESTADOS_BOM_LIBERABLES,
     revision_posterior_a_aprobacion,
@@ -582,7 +583,7 @@ def aprobar_plano(
     id_plano: UUID,
     datos: Optional[JustificacionPlanoRequest] = None,
     db: Session = Depends(get_db),
-    usuario_actual: dict = Depends(requerir_roles(["DISENO"])),
+    usuario_actual: dict = Depends(requerir_roles(ROLES_APROBAR_PLANO)),
 ):
     """Aprobación de Diseño: condición 3 de la regla de liberación de la OP.
     La justificación es opcional y queda en el historial del plano."""
@@ -634,7 +635,7 @@ def registrar_revision_plano(
     id_plano: UUID,
     datos: Optional[JustificacionPlanoRequest] = None,
     db: Session = Depends(get_db),
-    usuario_actual: dict = Depends(requerir_roles(["DISENO"])),
+    usuario_actual: dict = Depends(requerir_roles(ROLES_REVISION_PLANO)),
 ):
     """Revisión de Diseño sin cambio de versión: exige justificación y fija
     fecha_ultima_revision, de modo que un plano ya aprobado queda marcado como Revisar."""

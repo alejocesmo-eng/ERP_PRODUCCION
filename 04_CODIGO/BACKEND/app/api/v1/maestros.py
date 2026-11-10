@@ -9,6 +9,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.deps import obtener_usuario_actual, requerir_roles
+from app.core.roles import ROLES_GESTION_ALMACEN, ROLES_LECTURA, ROLES_SOLO_ADMIN
 from app.db.database import get_db
 from app.db.models import (
     AreaTrabajadorEnum,
@@ -25,7 +26,6 @@ from app.db.models import (
 from app.services.socios import normalizar_nit
 
 router = APIRouter()
-ROLES_LECTURA = ["ADMIN", "VENTAS", "DISENO", "ALMACEN", "PRODUCCION", "CALIDAD"]
 
 
 class SocioNegocioCreate(BaseModel):
@@ -209,7 +209,7 @@ def listar_socios(
 def crear_socio(
     datos: SocioNegocioCreate,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_SOLO_ADMIN)),
 ):
     nit = datos.nit_cedula
     codigo = normalizar_nit(nit)
@@ -229,7 +229,7 @@ def actualizar_socio(
     id_socio: UUID,
     datos: SocioNegocioCreate,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_SOLO_ADMIN)),
 ):
     socio = db.query(SocioNegocio).filter(SocioNegocio.id_socio == id_socio).first()
     if not socio:
@@ -252,7 +252,7 @@ def actualizar_socio(
 def desactivar_socio(
     id_socio: UUID,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_SOLO_ADMIN)),
 ):
     socio = db.query(SocioNegocio).filter(SocioNegocio.id_socio == id_socio).first()
     if not socio:
@@ -281,7 +281,7 @@ def listar_personal(
 @router.get("/personal/usuarios-disponibles")
 def listar_usuarios_disponibles(
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_SOLO_ADMIN)),
 ):
     vinculados = db.query(TrabajadorUsuario.id_usuario_sistema).filter(
         TrabajadorUsuario.id_usuario_sistema.is_not(None)
@@ -299,7 +299,7 @@ def listar_usuarios_disponibles(
 def crear_trabajador(
     datos: TrabajadorCreate,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_SOLO_ADMIN)),
 ):
     cedula = datos.cedula.strip()
     if db.query(TrabajadorUsuario).filter(TrabajadorUsuario.cedula == cedula).first():
@@ -318,7 +318,7 @@ def actualizar_trabajador(
     id_trabajador: UUID,
     datos: TrabajadorCreate,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_SOLO_ADMIN)),
 ):
     trabajador = db.query(TrabajadorUsuario).filter(
         TrabajadorUsuario.id_trabajador == id_trabajador
@@ -346,7 +346,7 @@ def actualizar_trabajador(
 def eliminar_trabajador(
     id_trabajador: UUID,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_SOLO_ADMIN)),
 ):
     trabajador = db.query(TrabajadorUsuario).filter(
         TrabajadorUsuario.id_trabajador == id_trabajador
@@ -381,7 +381,7 @@ def listar_estructura_financiera(
 def crear_elemento_financiero(
     datos: EstructuraFinancieraCreate,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_SOLO_ADMIN)),
 ):
     codigo = datos.codigo.strip().upper()
     if db.query(EstructuraFinanciera).filter(EstructuraFinanciera.codigo == codigo).first():
@@ -404,7 +404,7 @@ def actualizar_elemento_financiero(
     id_elemento: UUID,
     datos: EstructuraFinancieraCreate,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_SOLO_ADMIN)),
 ):
     elemento = db.query(EstructuraFinanciera).filter(
         EstructuraFinanciera.id_elemento == id_elemento
@@ -435,7 +435,7 @@ def actualizar_elemento_financiero(
 def desactivar_elemento_financiero(
     id_elemento: UUID,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_SOLO_ADMIN)),
 ):
     elemento = db.query(EstructuraFinanciera).filter(
         EstructuraFinanciera.id_elemento == id_elemento
@@ -474,7 +474,7 @@ def listar_categorias(
 def crear_categoria(
     datos: CategoriaCreate,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN", "ALMACEN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_GESTION_ALMACEN)),
 ):
     codigo = datos.codigo.strip().upper().replace(" ", "_")
     if db.query(CategoriaInventario).filter(CategoriaInventario.codigo == codigo).first():
@@ -494,7 +494,7 @@ def actualizar_categoria(
     id_categoria: UUID,
     datos: CategoriaCreate,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN", "ALMACEN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_GESTION_ALMACEN)),
 ):
     categoria = db.query(CategoriaInventario).filter(
         CategoriaInventario.id_categoria == id_categoria
@@ -518,7 +518,7 @@ def actualizar_categoria(
 def eliminar_categoria(
     id_categoria: UUID,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN", "ALMACEN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_GESTION_ALMACEN)),
 ):
     categoria = db.query(CategoriaInventario).filter(
         CategoriaInventario.id_categoria == id_categoria
@@ -552,7 +552,7 @@ def listar_unidades_medida(
 def crear_unidad_medida(
     datos: UnidadMedidaCreate,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN", "ALMACEN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_GESTION_ALMACEN)),
 ):
     codigo = datos.codigo.strip().upper()
     if db.query(UnidadMedida).filter(UnidadMedida.codigo == codigo).first():
@@ -571,7 +571,7 @@ def actualizar_unidad_medida(
     id_unidad: UUID,
     datos: UnidadMedidaCreate,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN", "ALMACEN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_GESTION_ALMACEN)),
 ):
     unidad = db.query(UnidadMedida).filter(UnidadMedida.id_unidad == id_unidad).first()
     if not unidad:
@@ -594,7 +594,7 @@ def actualizar_unidad_medida(
 def desactivar_unidad_medida(
     id_unidad: UUID,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN", "ALMACEN"])),
+    usuario: dict = Depends(requerir_roles(ROLES_GESTION_ALMACEN)),
 ):
     unidad = db.query(UnidadMedida).filter(UnidadMedida.id_unidad == id_unidad).first()
     if not unidad:

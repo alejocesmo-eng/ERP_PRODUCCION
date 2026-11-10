@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.db.database import get_db
 from app.api.deps import obtener_usuario_actual, requerir_roles
+from app.core.roles import ROLES_VENTAS
 from app.services.auditoria import agregar_evento_trazabilidad
 from app.db.models import (
     Cotizacion,
@@ -98,7 +99,7 @@ def listar_cotizaciones(db: Session = Depends(get_db), usuario: dict = Depends(o
 def crear_cotizacion(
     data: CotizacionCreateIn,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN", "VENTAS"])),
+    usuario: dict = Depends(requerir_roles(ROLES_VENTAS)),
 ):
     try:
         socio = None
@@ -285,7 +286,7 @@ def enviar_cotizacion_cliente(
     id_cotizacion: uuid.UUID,
     data: EnviarCotizacionMailIn,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN", "VENTAS"])),
+    usuario: dict = Depends(requerir_roles(ROLES_VENTAS)),
 ):
     """
     Registra el envío formal de la oferta al cliente y actualiza el estado a EMITIDA.
@@ -307,7 +308,7 @@ def enviar_cotizacion_cliente(
 def aprobar_cotizacion_y_generar_pedido(
     id_cotizacion: uuid.UUID,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requerir_roles(["ADMIN", "VENTAS"])),
+    usuario: dict = Depends(requerir_roles(ROLES_VENTAS)),
 ):
     cot = (
         db.query(Cotizacion)

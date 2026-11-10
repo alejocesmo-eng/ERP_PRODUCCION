@@ -26,6 +26,7 @@ from app.db.models import (
 from app.db.models_calidad import InspeccionCalidad
 from app.db.models_produccion import OperacionOT, RegistroTiempoOperario, SubLoteOperacion
 from app.api.deps import obtener_usuario_actual, requerir_roles, rol_tiene_permiso
+from app.core.roles import ROLES_ACTUALIZAR_OP, ROLES_EXPEDIENTE_OP
 from app.api.v1.quality_gate import (
     archivos_vigentes,
     motivos_liberacion_op,
@@ -39,8 +40,6 @@ from app.services.historial_planos import historial_por_plano
 
 router = APIRouter()
 
-ROLES_EXPEDIENTE = ["ADMIN", "VENTAS", "DISENO", "ALMACEN", "PRODUCCION", "CALIDAD"]
-ROLES_ACTUALIZAR_OP = ["ADMIN", "PRODUCCION"]
 PERMISO_LIBERAR_OP = "PERM_OP_LIBERAR"
 PERMISO_ADMIN_TOTAL = "PERM_ADMIN_ALL"
 LONGITUD_MINIMA_MOTIVO = 10
@@ -84,7 +83,7 @@ def _serializar_inspeccion(inspeccion):
 def obtener_expediente_op(
     codigo_op: str,
     db: Session = Depends(get_db),
-    usuario_actual: dict = Depends(requerir_roles(ROLES_EXPEDIENTE)),
+    usuario_actual: dict = Depends(requerir_roles(ROLES_EXPEDIENTE_OP)),
 ):
     op = db.query(OrdenProduccion).filter(OrdenProduccion.codigo_op == codigo_op).first()
     if not op:
