@@ -34,6 +34,15 @@ def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # Usuario desactivado: no recibe token. Se informa solo después de validar la clave, para
+    # no revelar qué cuentas existen. activo admite NULL (filas antiguas): solo False es inactivo.
+    if usuario.activo is False:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Usuario inactivo. Contacte al administrador.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     access_token = security.create_access_token(
         data={"sub": usuario.email, "rol": usuario.id_rol}
     )
