@@ -59,3 +59,15 @@ def pytest_runtest_setup(item):
 backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
+
+
+# Las pruebas de rutas fabrican tokens de usuarios ficticios (create_access_token) que no existen
+# en su base de prueba. obtener_usuario_actual revisa en cada petición que el usuario exista y esté
+# activo; aquí se da por vigente salvo en las pruebas marcadas usuario_real, que verifican esa
+# revisión contra la base (tests/test_token_usuario_desactivado.py).
+@pytest.fixture(autouse=True)
+def _usuario_del_token_vigente(request, monkeypatch):
+    if request.node.get_closest_marker("usuario_real"):
+        return
+    from app.api import deps
+    monkeypatch.setattr(deps, "usuario_vigente", lambda db, email: True)

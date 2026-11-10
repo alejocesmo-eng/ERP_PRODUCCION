@@ -3,11 +3,19 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 from app.core.security import SECRET_KEY, ALGORITHM
-from app.db.models import RolPermiso
+from app.db.database import get_db
+from app.db.models import RolPermiso, Usuario
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
 
-def obtener_usuario_actual(token: str = Depends(oauth2_scheme)):
+
+def usuario_vigente(db: Session, email: str) -> bool:
+    """El usuario del token sigue existiendo y no está desactivado (activo NULL cuenta como activo)."""
+    fila = db.query(Usuario.activo).filter(Usuario.email == email).first()
+    return fila is not None and fila.activo is not False
+
+
+def obtener_usuario_actual(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Credenciales de autenticación no válidas",
@@ -19,9 +27,13 @@ def obtener_usuario_actual(token: str = Depends(oauth2_scheme)):
         rol: str = payload.get("rol")
         if email is None or rol is None:
             raise credentials_exception
-        return {"email": email, "rol": rol}
     except JWTError:
         raise credentials_exception
+    # El JWT no tiene estado: se revisa el usuario en cada petición para que desactivarlo
+    # (o eliminarlo) invalide de inmediato sus tokens vigentes.
+    if not usuario_vigente(db, email):
+        raise credentials_exception
+    return {"email": email, "rol": rol}
 
 def requerir_roles(roles_permitidos: list[str]):
     def rol_checker(usuario_actual: dict = Depends(obtener_usuario_actual)):
