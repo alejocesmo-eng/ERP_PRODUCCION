@@ -1,6 +1,7 @@
 // src/components/modals/ModalNuevaCotizacion.jsx
 import React, { useState, useEffect } from 'react';
 import API from '../../services/api';
+import ModalCatalogoStockPT from './ModalCatalogoStockPT';
 
 const TIPOS_FABRICACION = [
   { valor: 'BAJO_PLANO', etiqueta: '📐 Bajo Plano' },
@@ -12,13 +13,37 @@ const TIPOS_FABRICACION = [
 const NOTA_VISITA_TECNICA =
   '📌 NOTA TÉCNICA: El tiempo de fabricación comenzará a regir únicamente una vez se cuente con la información técnica completa y validada. Se requiere agendar visita técnica en las instalaciones del cliente para el respectivo levantamiento dimensional y diagnóstico por parte de nuestro personal y la confirmación explicita del cliente.';
 
-export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuardada, onAbrirCrearSocio }) {
-  if (!isOpen) return null;
+// PENDIENTE BACKEND: no existen tabla ni endpoint de sedes del cliente. Mientras tanto se arman
+// sedes de prueba a partir del socio (la principal usa su dirección real). Cuando exista
+// GET /maestros/socios/{id_socio}/sedes, reemplazar esta función por la consulta.
+const SEDES_DE_PRUEBA = true;
+const cargarSedesDePrueba = (socio) => [
+  {
+    id_sede: `prueba-${socio.id_socio}-1`,
+    nombre: 'Sede principal',
+    direccion: socio.direccion || 'Dirección no registrada',
+    ciudad: socio.ciudad || '',
+    es_prueba: true
+  },
+  {
+    id_sede: `prueba-${socio.id_socio}-2`,
+    nombre: 'Planta / bodega alterna',
+    direccion: 'Dirección de prueba — pendiente de maestro de sedes',
+    ciudad: '',
+    es_prueba: true
+  }
+];
 
+const nitDeSocio = (socio) => socio.nit_cedula || socio.nit_rut || socio.nit || '';
+const codigoDeSocio = (socio) => socio.codigo_socio || socio.codigo_cliente || '';
+
+export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuardada, onAbrirCrearSocio }) {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [listaSocios, setListaSocios] = useState([]);
   const [modoVistaPrevia, setModoVistaPrevia] = useState(false);
+  const [sedes, setSedes] = useState([]);
+  const [catalogoStockAbierto, setCatalogoStockAbierto] = useState(false);
 
   const fechaHoyStr = new Date().toISOString().split('T')[0];
   const anioActual = new Date().getFullYear();
@@ -33,6 +58,7 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
     contacto: '',
     telefono: '',
     email: '',
+    id_sede: '',
     direccion: '',
     ciudad: 'Medellín / Funza',
     referencia_global: '',
@@ -65,7 +91,7 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
   useEffect(() => {
     const cargarDatosIniciales = async () => {
       try {
-        const resSocios = await API.get('/socios-negocio/?tipo=CLIENTE');
+        const resSocios = await API.get('/maestros/socios', { params: { tipo: 'CLIENTE' } });
         if (Array.isArray(resSocios.data)) {
           setListaSocios(resSocios.data);
         }
@@ -95,28 +121,64 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
     cargarDatosIniciales();
   }, [anioActual]);
 
-  const handleSeleccionarSocio = (codigoSeleccionado) => {
-    const socioEncontrado = listaSocios.find(
-      s => (s.codigo_socio || s.codigo_cliente) === codigoSeleccionado
-    );
+  // El campo "NIT / código de cliente" busca por NIT o por código; al coincidir queda de solo lectura.
+  const handleSeleccionarSocio = (valorDigitado) => {
+    const valor = valorDigitado.trim().toUpperCase();
+    const socioEncontrado = valor
+      ? listaSocios.find(s => nitDeSocio(s).toUpperCase() === valor || codigoDeSocio(s).toUpperCase() === valor)
+      : null;
     if (socioEncontrado) {
+      const sedesSocio = SEDES_DE_PRUEBA ? cargarSedesDePrueba(socioEncontrado) : [];
+      const sedeUnica = sedesSocio.length === 1 ? sedesSocio[0] : null;
+      setSedes(sedesSocio);
       setCabecera(prev => ({
         ...prev,
-        id_socio: socioEncontrado.id_socio || null,
-        codigo_cliente: socioEncontrado.codigo_socio || socioEncontrado.codigo_cliente,
+        id_socio: socioEncontrado.id_socio ? String(socioEncontrado.id_socio) : null,
+        codigo_cliente: codigoDeSocio(socioEncontrado),
         razon_social: socioEncontrado.razon_social || socioEncontrado.nombre,
-        nit: socioEncontrado.nit_rut || socioEncontrado.nit || '',
+        nit: nitDeSocio(socioEncontrado),
         contacto: socioEncontrado.contacto_nombre || '',
         telefono: socioEncontrado.telefono || '',
         email: socioEncontrado.email || '',
-        direccion: socioEncontrado.direccion || '',
-        ciudad: socioEncontrado.ciudad || prev.ciudad,
+        id_sede: sedeUnica ? sedeUnica.id_sede : '',
+        direccion: sedeUnica ? sedeUnica.direccion : '',
+        ciudad: (sedeUnica && sedeUnica.ciudad) || socioEncontrado.ciudad || prev.ciudad,
         condiciones_pago: socioEncontrado.condiciones_pago || prev.condiciones_pago
       }));
     } else {
-      setCabecera(prev => ({ ...prev, id_socio: null, codigo_cliente: codigoSeleccionado }));
+      setSedes([]);
+      setCabecera(prev => ({ ...prev, id_socio: null, codigo_cliente: '', nit: valorDigitado, id_sede: '' }));
     }
   };
+
+  const handleCambiarCliente = () => {
+    setSedes([]);
+    setCabecera(prev => ({
+      ...prev,
+      id_socio: null,
+      codigo_cliente: '',
+      razon_social: '',
+      nit: '',
+      contacto: '',
+      telefono: '',
+      email: '',
+      id_sede: '',
+      direccion: ''
+    }));
+  };
+
+  const handleSeleccionarSede = (idSede) => {
+    const sede = sedes.find(s => s.id_sede === idSede);
+    setCabecera(prev => ({
+      ...prev,
+      id_sede: sede ? sede.id_sede : '',
+      direccion: sede ? sede.direccion : '',
+      ciudad: (sede && sede.ciudad) || prev.ciudad
+    }));
+  };
+
+  const clienteSeleccionado = Boolean(cabecera.id_socio);
+  const sedeElegida = sedes.find(s => s.id_sede === cabecera.id_sede) || null;
 
   const handleCambioCabecera = (campo, valor) => {
     setCabecera(prev => ({ ...prev, [campo]: valor }));
@@ -189,6 +251,44 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
     }
   };
 
+  // OT-2026-008: línea desde el catálogo de stock PT. Si el artículo ya está, suma la cantidad;
+  // si hay una línea vacía, la reutiliza. La consulta del saldo vive en ModalCatalogoStockPT.
+  const handleAgregarDesdeStock = (linea) => {
+    const indiceExistente = posiciones.findIndex(p => p.origen === 'STOCK_PT' && p.id_articulo === linea.id_articulo);
+    if (indiceExistente >= 0) {
+      const cantidadTotal = (Number(posiciones[indiceExistente].cantidad) || 0) + linea.cantidad;
+      setPosiciones(prev => prev.map((p, i) => (
+        i === indiceExistente ? { ...p, cantidad: cantidadTotal, saldo_vendible: linea.stock_disponible } : p
+      )));
+      return { numeroLinea: (indiceExistente + 1) * 10, cantidadTotal, consolidada: true };
+    }
+
+    const indiceVacia = posiciones.findIndex(p => p.origen !== 'STOCK_PT' && !p.descripcion && !Number(p.precio_unitario));
+    const nuevaLinea = {
+      id: indiceVacia >= 0 ? posiciones[indiceVacia].id : Date.now(),
+      numero_producto: linea.codigo_sku,
+      descripcion: linea.nombre,
+      especificaciones: '',
+      expandirNota: false,
+      tipo_fabricacion: 'ESTANDAR',
+      cantidad: linea.cantidad,
+      unidad: (linea.unidad_medida || 'UND').toUpperCase(),
+      precio_unitario: Math.round(linea.precio_unitario_valorado) || 0,
+      descuento_pct: 0,
+      tipo_impuesto: 'IVA_19',
+      vinculo_plano_catalogo: '',
+      origen: 'STOCK_PT',
+      id_articulo: linea.id_articulo,
+      saldo_vendible: linea.stock_disponible
+    };
+    if (indiceVacia >= 0) {
+      setPosiciones(prev => prev.map((p, i) => (i === indiceVacia ? nuevaLinea : p)));
+      return { numeroLinea: (indiceVacia + 1) * 10, cantidadTotal: linea.cantidad, consolidada: false };
+    }
+    setPosiciones(prev => [...prev, nuevaLinea]);
+    return { numeroLinea: (posiciones.length + 1) * 10, cantidadTotal: linea.cantidad, consolidada: false };
+  };
+
   const calcularSubtotalLinea = (item) => {
     const cant = Number(item.cantidad) || 0;
     const precio = Number(item.precio_unitario) || 0;
@@ -217,8 +317,19 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
     if (e) e.preventDefault();
     setErrorMsg('');
 
-    if (!cabecera.codigo_cliente) {
-      setErrorMsg('El Código de Cliente es obligatorio.');
+    if (!cabecera.nit.trim()) {
+      setErrorMsg('El NIT / código de cliente es obligatorio.');
+      return;
+    }
+
+    if (sedes.length > 0 && !cabecera.id_sede) {
+      setErrorMsg('Seleccione la sede de entrega del cliente.');
+      return;
+    }
+
+    const lineaSobreSaldo = posiciones.find(p => p.origen === 'STOCK_PT' && Number(p.cantidad) > Number(p.saldo_vendible));
+    if (lineaSobreSaldo) {
+      setErrorMsg(`La cantidad de ${lineaSobreSaldo.numero_producto} supera su saldo vendible (${lineaSobreSaldo.saldo_vendible} ${lineaSobreSaldo.unidad}).`);
       return;
     }
 
@@ -229,7 +340,7 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
 
     // 1. Armar payload base sin id_socio por defecto
     const payload = {
-      codigo_cliente: cabecera.codigo_cliente,
+      codigo_cliente: cabecera.codigo_cliente || null,
       razon_social: cabecera.razon_social || 'Cliente Comercial',
       nit: cabecera.nit || '',
       contacto_nombre: cabecera.contacto || '',
@@ -255,9 +366,17 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
         descuento_pct: Number(p.descuento_pct) || 0,
         unidad: p.unidad || 'UND',
         tipo_impuesto: p.tipo_impuesto || 'IVA_19',
-        vinculo_plano_catalogo: p.tipo_fabricacion || null
+        vinculo_plano_catalogo: p.tipo_fabricacion || null,
+        origen: p.origen === 'STOCK_PT' ? 'STOCK_PT' : 'PLANO',
+        id_articulo: p.origen === 'STOCK_PT' ? p.id_articulo : null
       }))
     };
+
+    // PENDIENTE BACKEND: la cotización aún no guarda la sede; solo se envía su dirección.
+    // Las sedes de prueba no tienen id real, así que no se envía id_sede.
+    if (sedeElegida && !sedeElegida.es_prueba) {
+      payload.id_sede = sedeElegida.id_sede;
+    }
 
     // 2. SOLO adjuntar id_socio si es un UUID estricto de 36 caracteres (ej. de la base de datos)
     if (cabecera.id_socio && typeof cabecera.id_socio === 'string' && cabecera.id_socio.length === 36) {
@@ -272,7 +391,7 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
         onCotizacionGuardada(res.data || {
           id_cotizacion: Date.now().toString(),
           numero_cotizacion: cabecera.numero_cotizacion,
-          id_socio: cabecera.razon_social || cabecera.codigo_cliente,
+          id_socio: cabecera.razon_social || cabecera.nit,
           fecha_emision: cabecera.fecha_emision,
           valor_total: Math.round(totalCotizacion),
           estado: 'BORRADOR'
@@ -294,6 +413,9 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
       setLoading(false);
     }
   };
+
+  // Va después de los hooks para respetar su orden entre renders.
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-3 backdrop-blur-sm">
@@ -344,6 +466,7 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
                     <div><span className="font-bold text-blue-900">Fecha Compromiso Entrega:</span> <strong className="text-blue-900">{cabecera.fecha_compromiso}</strong></div>
                     <div><span className="font-bold text-slate-600">Cliente:</span> {cabecera.razon_social || 'Sin razón social'}</div>
                     <div><span className="font-bold text-slate-600">Contacto:</span> {cabecera.contacto || 'Sin contacto'}</div>
+                    <div><span className="font-bold text-slate-600">Sede de entrega:</span> {sedeElegida ? sedeElegida.nombre : 'No especificada'}</div>
                     <div><span className="font-bold text-slate-600">Dirección:</span> {cabecera.direccion || 'No especificada'}</div>
                   </div>
                   <div className="space-y-1 text-right sm:text-left">
@@ -484,16 +607,40 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
 
               {/* Fila 1 de Datos Maestros */}
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
-                <div>
-                  <label className="block text-[10px] font-bold text-blue-900">Cód. Cliente *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="CLI-1001"
-                    value={cabecera.codigo_cliente}
-                    onChange={e => handleSeleccionarSocio(e.target.value.toUpperCase())}
-                    className="w-full rounded border border-blue-400 bg-blue-50/50 p-1.5 font-mono font-bold text-blue-900 focus:bg-white"
-                  />
+                <div className="col-span-2">
+                  <label htmlFor="cot-nit-cliente" className="block text-[10px] font-bold text-blue-900">NIT / código de cliente *</label>
+                  <div className="flex gap-1">
+                    <input
+                      id="cot-nit-cliente"
+                      type="text"
+                      required
+                      list="cot-lista-clientes"
+                      autoComplete="off"
+                      placeholder="890900123 o CLI-1001"
+                      value={cabecera.nit}
+                      readOnly={clienteSeleccionado}
+                      onChange={e => handleSeleccionarSocio(e.target.value)}
+                      className={`w-full rounded border p-1.5 font-mono font-bold ${
+                        clienteSeleccionado
+                          ? 'border-slate-300 bg-slate-100 text-slate-700 cursor-not-allowed'
+                          : 'border-blue-400 bg-blue-50/50 text-blue-900 focus:bg-white'
+                      }`}
+                    />
+                    {clienteSeleccionado && (
+                      <button
+                        type="button"
+                        onClick={handleCambiarCliente}
+                        className="shrink-0 rounded border border-slate-300 bg-white px-2 text-[10px] font-bold text-slate-700 hover:bg-slate-100 cursor-pointer"
+                      >
+                        Cambiar
+                      </button>
+                    )}
+                  </div>
+                  <datalist id="cot-lista-clientes">
+                    {listaSocios.map(s => (
+                      <option key={s.id_socio} value={nitDeSocio(s) || codigoDeSocio(s)}>{s.razon_social}</option>
+                    ))}
+                  </datalist>
                 </div>
                 <div className="col-span-2">
                   <label className="block text-[10px] font-bold text-slate-700">Razón Social *</label>
@@ -504,16 +651,6 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
                     value={cabecera.razon_social}
                     onChange={e => handleCambioCabecera('razon_social', e.target.value)}
                     className="w-full rounded border border-slate-300 bg-white p-1.5 font-bold text-slate-800"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-600">NIT / Identificación</label>
-                  <input
-                    type="text"
-                    placeholder="890900123"
-                    value={cabecera.nit}
-                    onChange={e => handleCambioCabecera('nit', e.target.value)}
-                    className="w-full rounded border border-slate-300 bg-white p-1.5 font-mono"
                   />
                 </div>
                 <div>
@@ -562,7 +699,7 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
               </div>
 
               {/* Fila 2 de Datos Maestros */}
-              <div className="grid grid-cols-1 sm:grid-cols-5 gap-2 pt-1 border-t border-slate-200">
+              <div className="grid grid-cols-1 sm:grid-cols-6 gap-2 pt-1 border-t border-slate-200">
                 <div>
                   <label className="block text-[10px] font-bold text-blue-900">N° Cotización (Consecutivo) *</label>
                   <input
@@ -573,14 +710,41 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
                     className="w-full rounded border border-blue-400 bg-white p-1.5 font-mono font-black text-blue-900 uppercase"
                   />
                 </div>
+                <div>
+                  <label htmlFor="cot-sede" className="flex items-center gap-1 text-[10px] font-bold text-slate-600">
+                    Sede de entrega{sedes.length > 0 && ' *'}
+                    {sedes.some(s => s.es_prueba) && (
+                      <span className="rounded border border-amber-300 bg-amber-100 px-1 text-[9px] font-extrabold uppercase text-amber-900">
+                        Prueba · pendiente
+                      </span>
+                    )}
+                  </label>
+                  <select
+                    id="cot-sede"
+                    value={cabecera.id_sede}
+                    disabled={sedes.length === 0}
+                    required={sedes.length > 0}
+                    onChange={e => handleSeleccionarSede(e.target.value)}
+                    className="w-full rounded border border-slate-300 bg-white p-1.5 font-semibold disabled:bg-slate-100 disabled:text-slate-500"
+                  >
+                    <option value="">{sedes.length === 0 ? 'Seleccione un cliente' : 'Seleccione la sede…'}</option>
+                    {sedes.map(s => (
+                      <option key={s.id_sede} value={s.id_sede}>{s.nombre}</option>
+                    ))}
+                  </select>
+                </div>
                 <div className="sm:col-span-2">
-                  <label className="block text-[10px] font-bold text-slate-600">Dirección y Planta de Entrega</label>
+                  <label htmlFor="cot-direccion" className="block text-[10px] font-bold text-slate-600">Dirección de entrega</label>
                   <input
+                    id="cot-direccion"
                     type="text"
-                    placeholder="CR 60 47 96 SUR, Principal Belén"
+                    placeholder={sedes.length > 0 ? 'Sale de la sede elegida' : 'CR 60 47 96 SUR, Principal Belén'}
                     value={cabecera.direccion}
+                    readOnly={sedes.length > 0}
                     onChange={e => handleCambioCabecera('direccion', e.target.value)}
-                    className="w-full rounded border border-slate-300 bg-white p-1.5"
+                    className={`w-full rounded border border-slate-300 p-1.5 ${
+                      sedes.length > 0 ? 'bg-slate-100 text-slate-700 cursor-not-allowed' : 'bg-white'
+                    }`}
                   />
                 </div>
                 <div>
@@ -628,17 +792,20 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
                 <tbody className="divide-y divide-slate-200 text-slate-800">
                   {posiciones.map((pos, idx) => {
                     const esPorDefinir = pos.tipo_fabricacion === 'POR_DEFINIR';
+                    const esStock = pos.origen === 'STOCK_PT';
+                    const excedeSaldo = esStock && Number(pos.cantidad) > Number(pos.saldo_vendible);
                     return (
                       <React.Fragment key={pos.id}>
-                        <tr className="hover:bg-slate-50">
+                        <tr className={esStock ? 'bg-emerald-50/40 hover:bg-emerald-50' : 'hover:bg-slate-50'}>
                           <td className="p-1.5 text-center font-mono text-slate-400">{(idx + 1) * 10}</td>
                           <td className="p-1.5">
                             <input
                               type="text"
                               placeholder="A-01"
                               value={pos.numero_producto}
+                              readOnly={esStock}
                               onChange={e => handleCambioPosicion(pos.id, 'numero_producto', e.target.value)}
-                              className="w-full rounded border border-slate-300 p-1 font-mono font-bold text-blue-700"
+                              className={`w-full rounded border border-slate-300 p-1 font-mono font-bold text-blue-700 ${esStock ? 'bg-slate-100' : ''}`}
                             />
                           </td>
                           <td className="p-1.5">
@@ -647,11 +814,20 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
                               required
                               placeholder="BUJE Ø 50 X Ø 25 X 20 MM..."
                               value={pos.descripcion}
+                              readOnly={esStock}
                               onChange={e => handleCambioPosicion(pos.id, 'descripcion', e.target.value)}
-                              className="w-full rounded border border-slate-300 p-1 font-semibold text-slate-800 uppercase"
+                              className={`w-full rounded border border-slate-300 p-1 font-semibold text-slate-800 uppercase ${esStock ? 'bg-slate-100' : ''}`}
                             />
                           </td>
                           <td className="p-1.5">
+                            {esStock ? (
+                              <div className="rounded border border-emerald-300 bg-emerald-50 p-1 font-bold text-emerald-900">
+                                📦 Desde stock PT
+                                <span className="block text-[10px] font-semibold text-emerald-800">
+                                  Saldo vendible: {pos.saldo_vendible} {pos.unidad}
+                                </span>
+                              </div>
+                            ) : (
                             <select
                               value={pos.tipo_fabricacion}
                               onChange={e => handleCambioPosicion(pos.id, 'tipo_fabricacion', e.target.value)}
@@ -665,23 +841,30 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
                                 <option key={t.valor} value={t.valor}>{t.etiqueta}</option>
                               ))}
                             </select>
+                            )}
                           </td>
                           <td className="p-1.5">
                             <input
                               type="number"
                               min="1"
+                              max={esStock ? pos.saldo_vendible : undefined}
                               required
                               value={pos.cantidad}
                               onChange={e => handleCambioPosicion(pos.id, 'cantidad', e.target.value)}
-                              className="w-full rounded border border-slate-300 p-1 text-center font-bold text-slate-900"
+                              aria-invalid={excedeSaldo ? 'true' : undefined}
+                              title={excedeSaldo ? `Máximo vendible: ${pos.saldo_vendible} ${pos.unidad}` : undefined}
+                              className={`w-full rounded border p-1 text-center font-bold ${
+                                excedeSaldo ? 'border-red-500 bg-red-50 text-red-800' : 'border-slate-300 text-slate-900'
+                              }`}
                             />
                           </td>
                           <td className="p-1.5">
                             <input
                               type="text"
                               value={pos.unidad}
+                              readOnly={esStock}
                               onChange={e => handleCambioPosicion(pos.id, 'unidad', e.target.value)}
-                              className="w-full rounded border border-slate-300 p-1 text-center uppercase"
+                              className={`w-full rounded border border-slate-300 p-1 text-center uppercase ${esStock ? 'bg-slate-100' : ''}`}
                             />
                           </td>
                           <td className="p-1.5">
@@ -776,13 +959,20 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
               </table>
             </div>
 
-            <div className="flex justify-between items-center">
+            <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={handleAgregarPosicion}
                 className="rounded bg-slate-100 border border-slate-300 px-3 py-1 font-bold text-slate-700 hover:bg-slate-200 cursor-pointer"
               >
                 ➕ Agregar Línea de Artículo
+              </button>
+              <button
+                type="button"
+                onClick={() => setCatalogoStockAbierto(true)}
+                className="rounded border border-emerald-700 bg-emerald-50 px-3 py-1 font-bold text-emerald-800 hover:bg-emerald-100 cursor-pointer"
+              >
+                📦 Agregar desde stock
               </button>
             </div>
 
@@ -847,6 +1037,16 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
           </form>
         )}
       </div>
+
+      <ModalCatalogoStockPT
+        abierto={catalogoStockAbierto}
+        modo="cotizacion"
+        lineasAgregadas={posiciones
+          .filter(p => p.origen === 'STOCK_PT')
+          .map(p => ({ id_articulo: p.id_articulo, sku: p.numero_producto, cantidad: p.cantidad }))}
+        onAgregar={handleAgregarDesdeStock}
+        onCerrar={() => setCatalogoStockAbierto(false)}
+      />
     </div>
   );
 }
