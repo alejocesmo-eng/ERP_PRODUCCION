@@ -414,3 +414,24 @@ def test_aprobacion_de_plano_solo_rol_diseno(ctx, rol):
     assert respuesta.status_code == 403
     sesion.expire_all()
     assert sesion.get(Plano, plano.id_plano).estado != EstadoPlanoEnum.APROBADO
+
+
+@pytest.mark.parametrize("estado", [EstadoOPEnum.CANCELADA, EstadoOPEnum.CERRADA])
+@pytest.mark.parametrize("ruta", ["liberar", "patch"])
+@pytest.mark.parametrize("rol, motivo", [("DISENO", None), ("ADMIN", "Urgencia del cliente autorizada por Dirección")],
+                         ids=["diseno", "excepcion_admin"])
+def test_op_cancelada_o_cerrada_no_se_libera(ctx, estado, ruta, rol, motivo):
+    client, sesion = ctx
+    # Cumple las tres condiciones de la regla: el único motivo de rechazo es el estado
+    op = crear_op(sesion)
+    op.estado = estado
+    sesion.commit()
+
+    respuesta = (liberar if ruta == "liberar" else liberar_patch)(client, op, rol, motivo)
+
+    assert respuesta.status_code == 409, respuesta.text
+    assert f"está {estado.value}" in respuesta.json()["detail"]
+    assert estado_op(sesion, op.codigo_op) == estado
+    assert reserva_stock(sesion, op.codigo_op) is not True
+    assert eventos(sesion, op.codigo_op, "OP_LIBERADA") == []
+    assert eventos(sesion, op.codigo_op, "OP_LIBERADA_EXCEPCION_ADMIN") == []

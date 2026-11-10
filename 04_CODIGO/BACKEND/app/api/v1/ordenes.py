@@ -45,6 +45,17 @@ PERMISO_LIBERAR_OP = "PERM_OP_LIBERAR"
 PERMISO_ADMIN_TOTAL = "PERM_ADMIN_ALL"
 LONGITUD_MINIMA_MOTIVO = 10
 ESTADOS_OP_LIBERADOS = {EstadoOPEnum.LIBERADA, EstadoOPEnum.LIBERADA_PRODUCCION}
+# Una OP cancelada o cerrada no vuelve a liberarse por ninguna ruta, tampoco con excepción ADMIN
+ESTADOS_OP_NO_LIBERABLES = {EstadoOPEnum.CANCELADA, EstadoOPEnum.CERRADA}
+
+
+def validar_op_liberable(op) -> None:
+    estado = _valor_enum(op.estado)
+    if estado in {e.value for e in ESTADOS_OP_NO_LIBERABLES}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"La OP {op.codigo_op} está {estado}: no se puede liberar.",
+        )
 
 
 def _valor_enum(valor):
@@ -426,6 +437,7 @@ def liberar_orden_produccion(
     if not op:
         raise HTTPException(status_code=404, detail="No se encontró la Orden de Producción indicada.")
 
+    validar_op_liberable(op)
     motivo_excepcion, planos = autorizar_liberacion(db, usuario_actual, op.id_producto, datos.motivo if datos else None)
     revisar = planos_por_revisar(planos)
 
@@ -820,6 +832,7 @@ def actualizar_estado_produccion(
         except ValueError as error:
             raise HTTPException(status_code=400, detail=f"Estado de OP no válido: {nuevo_estado}.") from error
         if estado_enum in ESTADOS_OP_LIBERADOS:
+            validar_op_liberable(op_db)
             motivo_excepcion, planos_gate = autorizar_liberacion(db, usuario_actual, op_db.id_producto, op_up.motivo)
             revisar = planos_por_revisar(planos_gate)
             op_db.reserva_stock_100 = True
