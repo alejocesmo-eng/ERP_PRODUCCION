@@ -47,7 +47,8 @@ def obtener_indicadores_sgi(
 
     # 3. KPI-OP-01: Eficacia de Liberación con Stock 100% (RN-OP-004)
     total_ops = db.query(func.count(OrdenProduccion.id_op)).scalar() or 1
-    ops_stock_100 = db.query(func.count(OrdenProduccion.id_op)).filter(OrdenProduccion.stock_disponible_100 == True).scalar() or 0
+    # reserva_stock_100 es la columna de la OP (models.py); la fija la liberación en ordenes.py
+    ops_stock_100 = db.query(func.count(OrdenProduccion.id_op)).filter(OrdenProduccion.reserva_stock_100 == True).scalar() or 0
     kpi_op_val = round((ops_stock_100 / total_ops) * 100, 1)
 
     # 4. KPI-NC-01: Control de No Conformidades Cerradas (CAPA)
