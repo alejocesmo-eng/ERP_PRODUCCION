@@ -3,6 +3,20 @@ import API, { mensajeError } from '../../services/api';
 import VisorPlanoModal from '../VisorPlanoModal';
 import VistaGrafoCostos from '../../views/nivel2/VistaGrafoCostos';
 import LineaTiempoPlano from '../LineaTiempoPlano';
+import {
+  ROLES_APROBAR_PLANO,
+  ROLES_EXPEDIENTE_ALMACEN,
+  ROLES_EXPEDIENTE_CALIDAD,
+  ROLES_EXPEDIENTE_DISENO,
+  ROLES_EXPEDIENTE_PRODUCCION,
+  ROLES_EXPEDIENTE_VENTAS,
+  rolConocido,
+  rolEn
+} from '../../config/roles';
+import { tienePermiso, usePermisos } from '../../services/permisos';
+
+// Costos directos e indirectos del expediente (migración 25)
+const PERMISO_COSTOS_EXPEDIENTE = 'PERM_EXPEDIENTE_COSTOS_VER';
 
 const PESTANAS = [
   { id: 'piezas', etiqueta: '📋 Despiece de Piezas / Kit' },
@@ -58,13 +72,13 @@ function obtenerRolSesion(usuario) {
       const base64 = segmento.replace(/-/g, '+').replace(/_/g, '/');
       const relleno = '='.repeat((4 - (base64.length % 4)) % 4);
       const claims = JSON.parse(window.atob(base64 + relleno));
-      if (claims.rol) return normalizarTexto(claims.rol);
+      if (claims.rol) return rolConocido(claims.rol) || normalizarTexto(claims.rol);
     } catch {
       return '';
     }
   }
   const rol = normalizarTexto(usuario?.rol || usuario?.id_rol);
-  if (['ADMIN', 'VENTAS', 'DISENO', 'ALMACEN', 'PRODUCCION', 'CALIDAD'].includes(rol)) return rol;
+  if (rolConocido(usuario?.rol || usuario?.id_rol)) return rolConocido(usuario?.rol || usuario?.id_rol);
   const area = normalizarTexto(usuario?.area);
   return ({
     VENTAS: 'VENTAS',
@@ -122,13 +136,17 @@ export default function ExpedienteOpModal({
   const [cargandoCostos, setCargandoCostos] = useState(false);
   const [errorCostos, setErrorCostos] = useState('');
   const rol = obtenerRolSesion(usuario);
+  const permisosRol = usePermisos();
+  const veCostos = tienePermiso(permisosRol, PERMISO_COSTOS_EXPEDIENTE);
+  const pestanas = useMemo(() => PESTANAS.filter((item) => item.id !== 'costos' || veCostos), [veCostos]);
 
   const permisos = useMemo(() => ({
-    ventas: rol === 'ADMIN' || rol === 'VENTAS',
-    diseno: rol === 'ADMIN' || rol === 'DISENO',
-    almacen: rol === 'ADMIN' || rol === 'ALMACEN',
-    produccion: rol === 'ADMIN' || rol === 'PRODUCCION',
-    calidad: rol === 'ADMIN' || rol === 'CALIDAD'
+    ventas: rolEn(rol, ROLES_EXPEDIENTE_VENTAS),
+    diseno: rolEn(rol, ROLES_EXPEDIENTE_DISENO),
+    almacen: rolEn(rol, ROLES_EXPEDIENTE_ALMACEN),
+    produccion: rolEn(rol, ROLES_EXPEDIENTE_PRODUCCION),
+    calidad: rolEn(rol, ROLES_EXPEDIENTE_CALIDAD),
+    aprobarPlano: rolEn(rol, ROLES_APROBAR_PLANO)
   }), [rol]);
 
   useEffect(() => {
@@ -160,7 +178,7 @@ export default function ExpedienteOpModal({
   }, [abierto, codigoOp]);
 
   useEffect(() => {
-    if (!abierto || pestana !== 'costos' || !codigoOp) return undefined;
+    if (!abierto || pestana !== 'costos' || !veCostos || !codigoOp) return undefined;
     let activo = true;
     setCargandoCostos(true);
     setErrorCostos('');
@@ -180,7 +198,7 @@ export default function ExpedienteOpModal({
     return () => {
       activo = false;
     };
-  }, [abierto, codigoOp, pestana]);
+  }, [abierto, codigoOp, pestana, veCostos]);
 
   if (!abierto) return null;
 
@@ -327,7 +345,7 @@ export default function ExpedienteOpModal({
                                 >
                                   📜 Historial ({(plano.historial || []).length})
                                 </AccionButton>
-                                {rol === 'DISENO' && (!aprobado || plano.revisar) && (
+                                {permisos.aprobarPlano && (!aprobado || plano.revisar) && (
                                   <AccionButton
                                     onClick={() => aprobarPlano(plano)}
                                     disabled={Boolean(aprobandoPlano)}
@@ -344,7 +362,7 @@ export default function ExpedienteOpModal({
                     </table>
                   </div>
                 )}
-                {rol === 'DISENO' && planos.some((plano) => plano.estado !== 'APROBADO' || plano.revisar) && (
+                {permisos.aprobarPlano && planos.some((plano) => plano.estado !== 'APROBADO' || plano.revisar) && (
                   <label className="mt-1 flex items-center gap-1 text-[10px] font-bold text-slate-700">
                     Justificación de la aprobación (opcional)
                     <input
@@ -373,7 +391,7 @@ export default function ExpedienteOpModal({
           </header>
 
           <div className="flex flex-wrap gap-1 border-b border-slate-200 bg-slate-50 px-3 pt-2">
-            {PESTANAS.map((item) => (
+            {pestanas.map((item) => (
               <button
                 key={item.id}
                 type="button"
@@ -394,7 +412,7 @@ export default function ExpedienteOpModal({
                 ⚠ Planos con revisión posterior a la aprobación de Diseño: {planosRevisar.join(', ')}. Verifique que la revisión vigente sea la aprobada.
               </p>
             )}
-            {pestana === 'costos' && (
+            {pestana === 'costos' && veCostos && (
               <div className="space-y-3">
                 {cargandoCostos && <p className="rounded bg-slate-50 p-4 text-center font-semibold text-slate-600">Cargando costos reales…</p>}
                 {errorCostos && <p role="alert" className="rounded border border-red-200 bg-red-50 p-3 font-semibold text-red-800">{errorCostos}</p>}

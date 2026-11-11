@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import API, { mensajeError } from '../../services/api';
 import VisorPlanoModal from '../../components/VisorPlanoModal';
 import LineaTiempoPlano from '../../components/LineaTiempoPlano';
+import { ROLES_APERTURA_ASIGNACION_DISENO, ROLES_DIBUJANTE, rolEn } from '../../config/roles';
 
 export default function DisenoPlanosView() {
   // BLOQUE 1: ESTADOS PRINCIPALES DEL MÓDULO PM-02 Y ROL DEL USUARIO
@@ -147,8 +148,7 @@ export default function DisenoPlanosView() {
 
   const isDibujante = () => {
     if (!usuarioActual) return false;
-    const rol = (usuarioActual.rol || '').toUpperCase();
-    return rol === 'DISENO' || rol === 'DIBUJANTE';
+    return rolEn(usuarioActual.rol, ROLES_DIBUJANTE);
   };
 
   const cargarPlanosYPedidos = async () => {
@@ -253,9 +253,9 @@ export default function DisenoPlanosView() {
   // RESTRICCIÓN DE APERTURA Y ASIGNACIÓN
   const tienePermisoAperturaYAsignacion = () => {
     if (!usuarioActual) return true;
-    const rol = (usuarioActual.rol || '').toLowerCase();
+    // LIDER_DISENO abre y asigna; JEFE_PRODUCCION recibe planos, no los asigna
     const area = (usuarioActual.area || '').toLowerCase();
-    return rol.includes('admin') || rol.includes('jefe') || area.includes('diseño') || area.includes('diseno');
+    return rolEn(usuarioActual.rol, ROLES_APERTURA_ASIGNACION_DISENO) || area.includes('diseño') || area.includes('diseno');
   };
 
   const esAreaAutorizadaParaPaso = (areaRequerida) => {

@@ -1,6 +1,8 @@
 // src/views/nivel2/RemanentesSobrantesView.jsx
 import React, { useState, useEffect } from 'react';
 import API from '../../services/api';
+import { obtenerSesion } from '../../services/sesion';
+import { ROLES_MOVIMIENTOS_REMANENTES, rolEn } from '../../config/roles';
 
 export default function RemanentesSobrantesView() {
   // CONTROL DE NAVEGACIÓN INTERNA
@@ -46,8 +48,10 @@ export default function RemanentesSobrantesView() {
   const [fotoPreview, setFotoPreview] = useState(null);
 
   // CONTROL RBAC ROLES
-  const usuarioSesion = JSON.parse(localStorage.getItem('usuario') || '{"rol":"Almacen","nombre":"Operario Almacén"}');
-  const esAutorizadoMovimientos = ['ADMIN', 'ALMACEN', 'PRODUCCION'].includes((usuarioSesion.rol || '').toUpperCase());
+  // Rol desde el token (services/sesion.js); sin sesión no hay rol ni movimientos.
+  // El backend valida cada movimiento por su cuenta.
+  const usuarioSesion = obtenerSesion();
+  const esAutorizadoMovimientos = Boolean(usuarioSesion) && rolEn(usuarioSesion.rol, ROLES_MOVIMIENTOS_REMANENTES);
 
   useEffect(() => {
     cargarListaRetales();
@@ -141,7 +145,7 @@ export default function RemanentesSobrantesView() {
         diametro_ext_mm: Number(retalForm.diametro_ext_mm) || 0,
         diametro_int_mm: Number(retalForm.diametro_int_mm) || 0,
         peso_kg: Number(retalForm.peso_kg) || 0,
-        registrado_por: usuarioSesion.nombre || 'Operario Almacén'
+        registrado_por: usuarioSesion?.nombre || usuarioSesion?.email
       };
 
       const res = await API.post('/almacen/retales/nuevo', payload);

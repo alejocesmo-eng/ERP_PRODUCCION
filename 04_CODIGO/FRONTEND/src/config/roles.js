@@ -1,0 +1,46 @@
+// src/config/roles.js
+// Roles de PRISMA (SCRUM-27, reglas/roles-catalogo.md) y grupos que usa la interfaz para mostrar
+// u ocultar acciones. Copian los grupos de BACKEND/app/core/roles.py: el backend valida cada
+// ruta por su cuenta, esto solo evita ofrecer botones que responderían 403.
+// Durante la transición ADMIN está en todos los grupos y los roles anteriores (DISENO,
+// PRODUCCION, CALIDAD) siguen donde estaban. Donde ya hay un permiso en rol_permisos se usa
+// services/permisos.js en lugar de estos grupos.
+
+export const ROLES_CATALOGO = [
+  'ADMIN', 'VENTAS', 'CALIDAD_PRODUCTO', 'GESTION_CALIDAD', 'ALMACEN', 'JEFE_PRODUCCION',
+  'LIDER_PRODUCCION', 'OPERARIO', 'COSTOS', 'MANTENIMIENTO', 'LIDER_DISENO', 'DIBUJANTE',
+  'GERENCIA', 'SECRETARIA_GERENCIA', 'LIDER_LOGISTICA', 'DIRECTOR_PRODUCCION'
+];
+export const ROLES_ANTERIORES = ['DISENO', 'PRODUCCION', 'CALIDAD'];
+
+// Expediente de OP (ExpedienteOpModal)
+export const ROLES_EXPEDIENTE_VENTAS = ['ADMIN', 'VENTAS'];
+// Cargar plano, solicitar BOM y liberar la OP (la liberación la decide PERM_OP_LIBERAR en el backend)
+export const ROLES_EXPEDIENTE_DISENO = ['ADMIN', 'LIDER_DISENO', 'DIBUJANTE', 'DISENO'];
+export const ROLES_EXPEDIENTE_ALMACEN = ['ADMIN', 'ALMACEN'];
+// Asignar centro de trabajo y marcar la OP terminada para inspección
+export const ROLES_EXPEDIENTE_PRODUCCION = ['ADMIN', 'JEFE_PRODUCCION', 'LIDER_PRODUCCION', 'PRODUCCION'];
+export const ROLES_EXPEDIENTE_CALIDAD = ['ADMIN', 'CALIDAD_PRODUCTO', 'CALIDAD'];
+// POST /planos/{id}/aprobar (ROLES_APROBAR_PLANO)
+export const ROLES_APROBAR_PLANO = ['ADMIN', 'LIDER_DISENO', 'DISENO'];
+
+// Diseño (DisenoPlanosView)
+export const ROLES_DIBUJANTE = ['DIBUJANTE', 'DISENO'];
+export const ROLES_APERTURA_ASIGNACION_DISENO = ['ADMIN', 'LIDER_DISENO'];
+
+// Movimientos de remanentes y sobrantes (RemanetesSobrantesView)
+export const ROLES_MOVIMIENTOS_REMANENTES = ['ADMIN', 'ALMACEN', 'JEFE_PRODUCCION', 'LIDER_PRODUCCION', 'PRODUCCION'];
+
+export function normalizarRol(rol) {
+  return String(rol || '').trim().toUpperCase();
+}
+
+// Rol reconocido (catálogo o anterior) o cadena vacía
+export function rolConocido(rol) {
+  const normalizado = normalizarRol(rol);
+  return ROLES_CATALOGO.includes(normalizado) || ROLES_ANTERIORES.includes(normalizado) ? normalizado : '';
+}
+
+export function rolEn(rol, grupo) {
+  return grupo.includes(normalizarRol(rol));
+}
