@@ -8,10 +8,13 @@ Prepara la base local sgi_sandbox para pruebas manuales de la aplicacion:
    Todas son idempotentes.
 3. Verifica el trigger del historial de planos, las extensiones pg_trgm y unaccent y la
    funcion sgi_normalizar.
-4. Datos de demostracion: crea los usuarios de prueba que falten (uno por rol, con los
-   correos de los botones "Acceso de Pruebas (Dev Mode)" del login) y sus roles. Los que
-   ya existen no se tocan, salvo con --restablecer-claves. La clave de demostracion sale de
-   SGI_SANDBOX_DEMO_PASSWORD y se guarda con bcrypt; sin esa variable se omite este paso.
+4. Datos de demostracion: los 16 usuarios de reglas/usuarios-demo.md (uno por rol, los mismos
+   del acceso rapido de Dev Mode del login). Crea los que falten; a los que ya existen les
+   devuelve el nombre, el rol y el estado activo de la tabla, sin tocar su clave salvo con
+   --restablecer-claves. Desactiva (no borra) las cuentas anteriores de cargar_semilla.py que
+   no son de demostracion; admin@sgi.com sigue activo como ADMIN tecnico. Los roles los crea
+   la migracion 25. La clave sale de SGI_SANDBOX_DEMO_PASSWORD y se guarda con bcrypt; sin
+   esa variable se omite este paso.
 
 Credenciales solo por variables de entorno, como el resto de scripts (ADR-005):
 SGI_TEST_PG_ADMIN_URL (sin clave) y PGPASSWORD. El script no imprime ni guarda credenciales.
@@ -22,9 +25,11 @@ de pedir confirmacion escribiendo su nombre.
 Uso, desde 04_CODIGO/BACKEND:
     python -m scripts.preparar_sandbox
     python -m scripts.preparar_sandbox --regenerar
-    python -m scripts.preparar_sandbox --usuarios-demo   # solo usuarios que falten
+    python -m scripts.preparar_sandbox --usuarios-demo   # solo los usuarios de demostracion
     python -m scripts.preparar_sandbox --usuarios-demo --restablecer-claves
-        # ademas devuelve a los usuarios demo existentes su clave, nombre, rol y estado activo
+        # ademas devuelve a los usuarios demo existentes su clave
+    python -m scripts.preparar_sandbox --usuarios-demo --base sgi_test_run
+        # los mismos usuarios en una copia sgi_test_* (para probar antes que en sgi_sandbox)
 """
 import argparse
 import os
@@ -81,30 +86,36 @@ VERIFICACIONES = (
 
 
 VARIABLE_CLAVE_DEMO = "SGI_SANDBOX_DEMO_PASSWORD"
-# Roles que usan los usuarios de demostracion (se crean solo si faltan; FK usuarios.id_rol)
-ROLES_DEMO = (
-    ("ADMIN", "Administrador General"),
-    ("JEFE_ING", "Jefe de Ingeniería"),
-    ("DISENO", "Dibujante"),
-    ("VENTAS", "Ventas"),
-    ("PRODUCCION", "Líder de Producción"),
-    ("ALMACEN", "Almacén y Compras"),
-    ("CALIDAD", "Calidad"),
-    ("OPERARIO", "Operario CNC"),
-    ("MANTENIMIENTO", "Mantenimiento de Planta"),
-)
-# Mismos correos que cargar_semilla.py y los botones de Dev Mode de LoginView.jsx
+# reglas/usuarios-demo.md: un usuario por rol del catalogo (los mismos del acceso rapido de
+# Dev Mode, FRONTEND/src/config/accesosDemo.js). ventas@, almacen@ y mantenimiento@ ya existian
+# en cargar_semilla.py y se reutilizan con el nombre de la tabla.
 USUARIOS_DEMO = (
-    ("admin@sgi.com", "Administrador SGI", "ADMIN"),
-    ("jefe_diseno@sgi.local", "Roberto Méndez - Jefe Diseño", "JEFE_ING"),
-    ("dibujante_1@sgi.local", "Carlos Ruiz - Dibujante 1", "DISENO"),
-    ("dibujante_2@sgi.local", "Ana María Silva - Dibujante 2", "DISENO"),
-    ("ventas@sgi.local", "Laura Gómez - Ventas", "VENTAS"),
-    ("lider_produccion@sgi.local", "Jorge Méndez - Líder Prod", "PRODUCCION"),
-    ("almacen@sgi.local", "Andrés Torres - Almacén", "ALMACEN"),
-    ("calidad@sgi.local", "Paula Rojas - Calidad", "CALIDAD"),
-    ("operario_1@sgi.local", "Luis Pérez - Operario 1", "OPERARIO"),
-    ("mantenimiento@sgi.local", "Diego Castro - Mantenimiento", "MANTENIMIENTO"),
+    ("admin@sgi.local", "Admin Demo", "ADMIN"),
+    ("ventas@sgi.local", "Vendedora Demo", "VENTAS"),
+    ("calidadprod@sgi.local", "Inspector Demo", "CALIDAD_PRODUCTO"),
+    ("gestioncal@sgi.local", "Gestión Calidad Demo", "GESTION_CALIDAD"),
+    ("almacen@sgi.local", "Almacenista Demo", "ALMACEN"),
+    ("jefeprod@sgi.local", "Jefe Producción Demo", "JEFE_PRODUCCION"),
+    ("liderprod@sgi.local", "Líder Producción Demo", "LIDER_PRODUCCION"),
+    ("operario@sgi.local", "Operario Demo", "OPERARIO"),
+    ("costos@sgi.local", "Costos Demo", "COSTOS"),
+    ("mantenimiento@sgi.local", "Mantenimiento Demo", "MANTENIMIENTO"),
+    ("liderdiseno@sgi.local", "Líder Diseño Demo", "LIDER_DISENO"),
+    ("dibujante@sgi.local", "Dibujante Demo", "DIBUJANTE"),
+    ("gerencia@sgi.local", "Gerencia Demo", "GERENCIA"),
+    ("secretaria@sgi.local", "Secretaria Demo", "SECRETARIA_GERENCIA"),
+    ("logistica@sgi.local", "Logística Demo", "LIDER_LOGISTICA"),
+    ("director@sgi.local", "Director Producción Demo", "DIRECTOR_PRODUCCION"),
+)
+# Cuentas de cargar_semilla.py que no son de demostracion: se desactivan, no se borran (el
+# historial conserva sus referencias). admin@sgi.com no esta: sigue como ADMIN tecnico.
+CUENTAS_ANTERIORES = (
+    "jefe_diseno@sgi.local",
+    "dibujante_1@sgi.local",
+    "dibujante_2@sgi.local",
+    "lider_produccion@sgi.local",
+    "operario_1@sgi.local",
+    "calidad@sgi.local",
 )
 
 
@@ -203,7 +214,7 @@ def _verificar() -> None:
         conexion.close()
 
 
-def _cargar_usuarios_demo(restablecer: bool = False) -> None:
+def _cargar_usuarios_demo(restablecer: bool = False, base: str = SANDBOX) -> None:
     clave = os.environ.get(VARIABLE_CLAVE_DEMO)
     if not clave:
         print(
@@ -212,14 +223,18 @@ def _cargar_usuarios_demo(restablecer: bool = False) -> None:
             "python -m scripts.preparar_sandbox --usuarios-demo."
         )
         return
-    conexion = conectar(SANDBOX)
+    conexion = conectar(base)
     try:
         cur = conexion.cursor()
-        cur.executemany(
-            "INSERT INTO roles (id_rol, nombre_rol) VALUES (%s, %s) ON CONFLICT (id_rol) DO NOTHING",
-            ROLES_DEMO,
-        )
-        creados = restablecidos = 0
+        roles = sorted({rol for _, _, rol in USUARIOS_DEMO})
+        cur.execute("SELECT id_rol FROM roles WHERE id_rol = ANY(%s)", (roles,))
+        faltan = sorted(set(roles) - {fila[0] for fila in cur.fetchall()})
+        if faltan:
+            fallar(
+                f"Faltan roles en {base}: {', '.join(faltan)}. Aplique la migracion 25: "
+                f"python -m scripts.aplicar_migracion {base} 25"
+            )
+        creados = actualizados = 0
         for fila in filas_usuarios_demo(clave):
             cur.execute(
                 "INSERT INTO usuarios (id_usuario, email, password_hash, nombre_completo, id_rol, activo, creado_en) "
@@ -228,20 +243,30 @@ def _cargar_usuarios_demo(restablecer: bool = False) -> None:
             )
             if cur.rowcount:
                 creados += 1
-            elif restablecer:
-                # Solo los correos de USUARIOS_DEMO y solo en sgi_sandbox (conectar(SANDBOX))
-                _, email, hash_clave, nombre, rol = fila
+                continue
+            # Ya existia: vuelve al nombre, rol y estado de usuarios-demo.md; la clave solo con
+            # --restablecer-claves. Solo correos de USUARIOS_DEMO y solo en sgi_sandbox o sgi_test_*.
+            _, email, hash_clave, nombre, rol = fila
+            if restablecer:
                 cur.execute(
                     "UPDATE usuarios SET password_hash = %s, nombre_completo = %s, id_rol = %s, activo = TRUE "
                     "WHERE email = %s",
                     (hash_clave, nombre, rol, email),
                 )
-                restablecidos += cur.rowcount
-        existentes = len(USUARIOS_DEMO) - creados
-        if restablecer:
-            print(f"Usuarios de demostracion: {creados} creados y {restablecidos} restablecidos (clave, nombre, rol y activo).")
-        else:
-            print(f"Usuarios de demostracion: {creados} creados y {existentes} ya existian (los existentes no se modifican).")
+            else:
+                cur.execute(
+                    "UPDATE usuarios SET nombre_completo = %s, id_rol = %s, activo = TRUE WHERE email = %s",
+                    (nombre, rol, email),
+                )
+            actualizados += cur.rowcount
+        cur.execute(
+            "UPDATE usuarios SET activo = FALSE WHERE email = ANY(%s) AND activo IS DISTINCT FROM FALSE",
+            (list(CUENTAS_ANTERIORES),),
+        )
+        desactivados = cur.rowcount
+        detalle = "clave, nombre, rol y activo" if restablecer else "nombre, rol y activo; la clave no se toca"
+        print(f"Usuarios de demostracion en {base}: {creados} creados y {actualizados} actualizados ({detalle}).")
+        print(f"Cuentas anteriores desactivadas (no borradas): {desactivados}.")
     finally:
         conexion.close()
 
@@ -255,21 +280,27 @@ def main() -> None:
     )
     parser.add_argument(
         "--restablecer-claves", action="store_true",
-        help="Con --usuarios-demo: devuelve a los usuarios demo existentes su clave, nombre, rol y estado activo.",
+        help="Con --usuarios-demo: devuelve tambien la clave a los usuarios demo existentes.",
+    )
+    parser.add_argument(
+        "--base", default=SANDBOX,
+        help=f"Con --usuarios-demo: {SANDBOX} (por defecto) o una copia sgi_test_*. Nunca sgi_db.",
     )
     argumentos = parser.parse_args()
     if argumentos.restablecer_claves and not argumentos.usuarios_demo:
         parser.error("--restablecer-claves solo se usa junto con --usuarios-demo.")
-    validar_nombre(SANDBOX, permitir_sandbox=True)
+    if argumentos.base != SANDBOX and not argumentos.usuarios_demo:
+        parser.error("--base solo se usa junto con --usuarios-demo.")
+    base = validar_nombre(argumentos.base, permitir_sandbox=True)
 
     if argumentos.usuarios_demo:
         admin = conectar_admin()
         try:
-            if not existe_base(admin.cursor(), SANDBOX):
-                fallar(f"No existe {SANDBOX}. Creela primero con: python -m scripts.preparar_sandbox")
+            if not existe_base(admin.cursor(), base):
+                fallar(f"No existe {base}. Creela primero (sgi_sandbox: python -m scripts.preparar_sandbox).")
         finally:
             admin.close()
-        _cargar_usuarios_demo(restablecer=argumentos.restablecer_claves)
+        _cargar_usuarios_demo(restablecer=argumentos.restablecer_claves, base=base)
         return
 
     _crear_sandbox(argumentos.regenerar)

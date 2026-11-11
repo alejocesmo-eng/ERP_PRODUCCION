@@ -1,7 +1,9 @@
 # tests/test_preparar_sandbox.py
 """
 Script preparar_sandbox sin base de datos: nombres permitidos, lista de migraciones que
-aplica y confirmación antes de regenerar. La creación de sgi_sandbox la ejecuta el usuario.
+aplica, confirmación antes de regenerar y usuarios de demostración (los 16 de
+reglas/usuarios-demo.md, iguales al acceso rápido del login, y cuentas anteriores
+desactivadas sin borrarlas). La creación de sgi_sandbox la ejecuta el usuario.
 """
 import re
 from pathlib import Path
@@ -9,6 +11,7 @@ from pathlib import Path
 import bcrypt
 import pytest
 
+from app.core import roles
 from scripts import _pg_pruebas, preparar_sandbox
 
 CLAVE_DEMO = "clave_demo_de_prueba"
@@ -80,20 +83,36 @@ def test_el_script_no_imprime_credenciales(capsys, monkeypatch):
 
 # --- Usuarios de demostración ---
 
-class CursorFalso:
-    """Registra las sentencias; ON CONFLICT DO NOTHING se simula con los correos ya existentes."""
+ACCESOS_DEMO = Path(__file__).resolve().parents[2] / "FRONTEND" / "src" / "config" / "accesosDemo.js"
+LOGIN = Path(__file__).resolve().parents[2] / "FRONTEND" / "src" / "views" / "LoginView.jsx"
+REUTILIZADAS = {"ventas@sgi.local", "almacen@sgi.local", "mantenimiento@sgi.local"}
 
-    def __init__(self, existentes=()):
+
+class CursorFalso:
+    """Registra las sentencias. INSERT: 0 filas si el correo ya existe. UPDATE de un usuario demo:
+    1 fila si existe. UPDATE de desactivación: tantas filas como cuentas anteriores activas."""
+
+    def __init__(self, existentes=(), roles=None, anteriores_activas=()):
         self.existentes = set(existentes)
+        self.roles = set(roles_demo() if roles is None else roles)
+        self.anteriores_activas = set(anteriores_activas)
         self.sentencias = []
         self.rowcount = 0
-
-    def executemany(self, sentencia, filas):
-        self.sentencias.append((sentencia, list(filas)))
+        self._filas = []
 
     def execute(self, sentencia, parametros=None):
         self.sentencias.append((sentencia, parametros))
-        self.rowcount = 0 if parametros and parametros[1] in self.existentes else 1
+        if sentencia.startswith("SELECT id_rol FROM roles"):
+            self._filas = [(rol,) for rol in parametros[0] if rol in self.roles]
+        elif sentencia.startswith("INSERT INTO usuarios"):
+            self.rowcount = 0 if parametros[1] in self.existentes else 1
+        elif "activo = FALSE" in sentencia:
+            self.rowcount = len(self.anteriores_activas & set(parametros[0]))
+        else:
+            self.rowcount = 1 if parametros[-1] in self.existentes else 0
+
+    def fetchall(self):
+        return self._filas
 
 
 class ConexionFalsa:
@@ -108,15 +127,39 @@ class ConexionFalsa:
         self.cerrada = True
 
 
-def test_los_usuarios_demo_cubren_los_botones_de_dev_mode_y_un_usuario_por_rol():
-    login = Path(__file__).resolve().parents[2] / "FRONTEND" / "src" / "views" / "LoginView.jsx"
-    botones = set(re.findall(r"email: '([^']+)'", login.read_text(encoding="utf-8")))
-    correos = {email for email, _, _ in preparar_sandbox.USUARIOS_DEMO}
-    roles_usuarios = {rol for _, _, rol in preparar_sandbox.USUARIOS_DEMO}
+def roles_demo():
+    return {rol for _, _, rol in preparar_sandbox.USUARIOS_DEMO}
 
-    assert botones and botones <= correos
-    assert {"ADMIN", "DISENO", "VENTAS", "PRODUCCION", "ALMACEN", "CALIDAD"} <= roles_usuarios
-    assert roles_usuarios <= {rol for rol, _ in preparar_sandbox.ROLES_DEMO}
+
+def actualizaciones(cursor):
+    return [(s, p) for s, p in cursor.sentencias if s.startswith("UPDATE usuarios SET") and "activo = FALSE" not in s]
+
+
+def test_los_16_usuarios_demo_son_los_de_usuarios_demo_md_uno_por_rol():
+    correos = [email for email, _, _ in preparar_sandbox.USUARIOS_DEMO]
+
+    assert len(correos) == len(set(correos)) == 16
+    assert sorted(rol for _, _, rol in preparar_sandbox.USUARIOS_DEMO) == sorted(roles.ROLES_CATALOGO)
+    assert all(email.endswith("@sgi.local") for email in correos)
+    assert REUTILIZADAS <= set(correos)
+
+
+def test_el_acceso_rapido_del_login_usa_exactamente_los_16_usuarios_demo():
+    botones = re.findall(r"email: '([^']+)'", ACCESOS_DEMO.read_text(encoding="utf-8"))
+
+    assert sorted(botones) == sorted(email for email, _, _ in preparar_sandbox.USUARIOS_DEMO)
+    # El login no repite correos: los toma del módulo, solo en desarrollo
+    login = LOGIN.read_text(encoding="utf-8")
+    assert "@sgi.local" not in login
+    assert "import.meta.env.DEV ? ACCESOS_DEMO : []" in login
+
+
+def test_las_cuentas_anteriores_se_desactivan_menos_el_admin_tecnico():
+    anteriores = set(preparar_sandbox.CUENTAS_ANTERIORES)
+
+    assert len(anteriores) == 6
+    assert "admin@sgi.com" not in anteriores
+    assert not anteriores & {email for email, _, _ in preparar_sandbox.USUARIOS_DEMO}
 
 
 def test_las_filas_guardan_hash_bcrypt_y_nunca_la_clave():
@@ -142,70 +185,61 @@ def test_sin_variable_de_clave_omite_los_usuarios_sin_conectar(monkeypatch, caps
     assert "omitidos" in capsys.readouterr().out
 
 
-def test_crea_solo_los_que_faltan_y_no_imprime_la_clave(monkeypatch, capsys):
+def test_sin_la_migracion_25_se_detiene_antes_de_crear_usuarios(monkeypatch):
     monkeypatch.setenv(preparar_sandbox.VARIABLE_CLAVE_DEMO, CLAVE_DEMO)
-    cursor = CursorFalso(existentes={"admin@sgi.com", "ventas@sgi.local"})
+    cursor = CursorFalso(roles={"ADMIN", "VENTAS", "ALMACEN", "MANTENIMIENTO", "OPERARIO"})
+    monkeypatch.setattr(preparar_sandbox, "conectar", lambda base: ConexionFalsa(cursor))
+
+    with pytest.raises(SystemExit):
+        preparar_sandbox._cargar_usuarios_demo()
+
+    assert not any(s.startswith(("INSERT", "UPDATE")) for s, _ in cursor.sentencias)
+
+
+def test_crea_los_que_faltan_reutiliza_los_existentes_y_desactiva_los_anteriores(monkeypatch, capsys):
+    monkeypatch.setenv(preparar_sandbox.VARIABLE_CLAVE_DEMO, CLAVE_DEMO)
+    cursor = CursorFalso(existentes=REUTILIZADAS, anteriores_activas={"dibujante_1@sgi.local", "calidad@sgi.local"})
     conexion = ConexionFalsa(cursor)
-    monkeypatch.setattr(preparar_sandbox, "conectar", lambda base: conexion)
+    bases = []
+    monkeypatch.setattr(preparar_sandbox, "conectar", lambda base: bases.append(base) or conexion)
 
     preparar_sandbox._cargar_usuarios_demo()
 
     salida = capsys.readouterr().out
-    total = len(preparar_sandbox.USUARIOS_DEMO)
-    assert f"{total - 2} creados y 2 ya existian" in salida
+    assert bases == ["sgi_sandbox"]
+    assert "13 creados y 3 actualizados" in salida
+    assert "desactivadas (no borradas): 2" in salida
     assert CLAVE_DEMO not in salida
     assert conexion.cerrada
-    roles, filas_roles = cursor.sentencias[0]
-    assert "ON CONFLICT (id_rol) DO NOTHING" in roles and len(filas_roles) == len(preparar_sandbox.ROLES_DEMO)
-    inserciones = cursor.sentencias[1:]
-    assert all("ON CONFLICT (email) DO NOTHING" in sentencia for sentencia, _ in inserciones)
-    assert all(CLAVE_DEMO not in parametros for _, parametros in inserciones)
-
-def test_los_usuarios_demo_incluyen_operario_y_mantenimiento():
-    roles = {rol for _, _, rol in preparar_sandbox.USUARIOS_DEMO}
-
-    assert {"OPERARIO", "MANTENIMIENTO"} <= roles
-    assert len({email for email, _, _ in preparar_sandbox.USUARIOS_DEMO}) == len(preparar_sandbox.USUARIOS_DEMO)
-
-
-class CursorRestablecer(CursorFalso):
-    """INSERT: 0 filas si el correo ya existe. UPDATE: 1 fila por correo existente."""
-
-    def execute(self, sentencia, parametros=None):
-        self.sentencias.append((sentencia, parametros))
-        if sentencia.startswith("INSERT INTO usuarios"):
-            self.rowcount = 0 if parametros[1] in self.existentes else 1
-        else:
-            self.rowcount = 1 if parametros[-1] in self.existentes else 0
+    # Los reutilizados toman nombre, rol y activo de la tabla, sin tocar la clave
+    nombres = {email: (nombre, rol) for email, nombre, rol in preparar_sandbox.USUARIOS_DEMO}
+    cambios = actualizaciones(cursor)
+    assert {p[-1] for _, p in cambios} == REUTILIZADAS
+    for sentencia, (nombre, rol, email) in cambios:
+        assert "password_hash" not in sentencia
+        assert (nombre, rol) == nombres[email]
+    # Desactivar, nunca borrar; solo las cuentas anteriores
+    assert not any("DELETE" in s for s, _ in cursor.sentencias)
+    desactivacion = [p for s, p in cursor.sentencias if "activo = FALSE" in s]
+    assert desactivacion == [(list(preparar_sandbox.CUENTAS_ANTERIORES),)]
+    assert all(CLAVE_DEMO not in str(p) for _, p in cursor.sentencias)
 
 
-def test_restablecer_actualiza_solo_los_usuarios_demo_existentes(monkeypatch, capsys):
+def test_restablecer_devuelve_tambien_la_clave(monkeypatch, capsys):
     monkeypatch.setenv(preparar_sandbox.VARIABLE_CLAVE_DEMO, CLAVE_DEMO)
-    existentes = {"admin@sgi.com", "dibujante_1@sgi.local"}
-    cursor = CursorRestablecer(existentes=existentes)
+    cursor = CursorFalso(existentes={"ventas@sgi.local", "admin@sgi.local"})
     monkeypatch.setattr(preparar_sandbox, "conectar", lambda base: ConexionFalsa(cursor))
 
     preparar_sandbox._cargar_usuarios_demo(restablecer=True)
 
-    actualizaciones = [(s, p) for s, p in cursor.sentencias if s.startswith("UPDATE usuarios")]
-    assert {p[-1] for _, p in actualizaciones} == existentes
-    for _, (hash_clave, _, rol, email) in actualizaciones:
+    cambios = actualizaciones(cursor)
+    assert {p[-1] for _, p in cambios} == {"ventas@sgi.local", "admin@sgi.local"}
+    for _, (hash_clave, _, rol, email) in cambios:
         assert bcrypt.checkpw(CLAVE_DEMO.encode("utf-8"), hash_clave.encode("utf-8"))
         assert rol == {e: r for e, _, r in preparar_sandbox.USUARIOS_DEMO}[email]
     salida = capsys.readouterr().out
-    assert f"{len(preparar_sandbox.USUARIOS_DEMO) - 2} creados y 2 restablecidos" in salida
+    assert "14 creados y 2 actualizados (clave, nombre, rol y activo)" in salida
     assert CLAVE_DEMO not in salida
-
-
-def test_sin_restablecer_no_actualiza_usuarios_existentes(monkeypatch, capsys):
-    monkeypatch.setenv(preparar_sandbox.VARIABLE_CLAVE_DEMO, CLAVE_DEMO)
-    cursor = CursorRestablecer(existentes={"admin@sgi.com"})
-    monkeypatch.setattr(preparar_sandbox, "conectar", lambda base: ConexionFalsa(cursor))
-
-    preparar_sandbox._cargar_usuarios_demo()
-
-    assert not any(s.startswith("UPDATE") for s, _ in cursor.sentencias)
-    assert "1 ya existian" in capsys.readouterr().out
 
 
 def test_restablecer_exige_usuarios_demo(monkeypatch):
@@ -215,20 +249,42 @@ def test_restablecer_exige_usuarios_demo(monkeypatch):
         preparar_sandbox.main()
 
 
-def test_usuarios_demo_con_restablecer_no_crea_ni_migra_la_base(monkeypatch):
+def test_base_exige_usuarios_demo(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["preparar_sandbox", "--base", "sgi_test_run"])
+
+    with pytest.raises(SystemExit):
+        preparar_sandbox.main()
+
+
+@pytest.mark.parametrize("base", ["sgi_db", "SGI_DB", "postgres", "sgi_test_template"])
+def test_usuarios_demo_rechaza_bases_que_no_son_de_prueba(monkeypatch, base):
+    monkeypatch.setattr("sys.argv", ["preparar_sandbox", "--usuarios-demo", "--base", base])
+    monkeypatch.setattr(preparar_sandbox, "conectar_admin", lambda: pytest.fail("No debe conectar"))
+
+    with pytest.raises(SystemExit):
+        preparar_sandbox.main()
+
+
+@pytest.mark.parametrize(("argumentos", "esperado"), [
+    (["--usuarios-demo", "--restablecer-claves"], (True, "sgi_sandbox")),
+    (["--usuarios-demo", "--base", "sgi_test_run"], (False, "sgi_test_run")),
+])
+def test_usuarios_demo_no_crea_ni_migra_la_base(monkeypatch, argumentos, esperado):
     llamadas = []
-    monkeypatch.setattr("sys.argv", ["preparar_sandbox", "--usuarios-demo", "--restablecer-claves"])
+    monkeypatch.setattr("sys.argv", ["preparar_sandbox", *argumentos])
     monkeypatch.setattr(preparar_sandbox, "conectar_admin", lambda: ConexionFalsa(CursorExiste()))
     monkeypatch.setattr(preparar_sandbox, "existe_base", lambda cursor, nombre: True)
     monkeypatch.setattr(preparar_sandbox, "_crear_sandbox", lambda regenerar: llamadas.append("crear"))
     monkeypatch.setattr(preparar_sandbox, "_aplicar_migraciones", lambda: llamadas.append("migrar"))
-    monkeypatch.setattr(preparar_sandbox, "_cargar_usuarios_demo", lambda restablecer=False: llamadas.append(("usuarios", restablecer)))
+    monkeypatch.setattr(
+        preparar_sandbox, "_cargar_usuarios_demo",
+        lambda restablecer=False, base="sgi_sandbox": llamadas.append((restablecer, base)),
+    )
 
     preparar_sandbox.main()
 
-    assert llamadas == [("usuarios", True)]
+    assert llamadas == [esperado]
 
 
 class CursorExiste:
     pass
-

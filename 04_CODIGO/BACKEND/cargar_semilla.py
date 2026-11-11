@@ -223,7 +223,9 @@ def _crear_maestros(db: Session) -> Dict[str, Any]:
     )
     usuarios = {}
     for email, nombre, rol in usuarios_data:
-        usuario = _upsert(
+        # Solo crea los que faltan: un usuario existente conserva su clave, nombre, rol y estado
+        # (scripts/preparar_sandbox.py desactiva cuentas anteriores y reutiliza otras como demo)
+        usuario = db.query(Usuario).filter(Usuario.email == email).first() or _upsert(
             db,
             Usuario,
             ("email",),

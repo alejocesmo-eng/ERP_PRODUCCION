@@ -74,7 +74,7 @@ def test_tabla_con_login_rol_y_modulos(entorno, monkeypatch, capsys):
     ventas = tabla["ventas@sgi.local"]
     assert "| VENTAS | VENTAS | OK |" in ventas
     assert "calidad (sin proteccion)" in ventas and "ventas/cotizaciones" in ventas and "maestros" in ventas
-    operario = tabla["operario_1@sgi.local"]
+    operario = tabla["operario@sgi.local"]
     assert operario.split(" | ")[5] == "maestros, ventas/cotizaciones"
     assert operario.split(" | ")[6].strip(" |") == "costos"
     assert "planos" not in salida  # las rutas con parámetros no se consultan
@@ -82,13 +82,13 @@ def test_tabla_con_login_rol_y_modulos(entorno, monkeypatch, capsys):
 
 
 def test_un_login_fallido_se_reporta_y_termina_con_error(entorno, monkeypatch, capsys):
-    monkeypatch.setattr(verificador, "peticion", backend_simulado(fallan={"calidad@sgi.local"}))
+    monkeypatch.setattr(verificador, "peticion", backend_simulado(fallan={"calidadprod@sgi.local"}))
 
     with pytest.raises(SystemExit) as salida_error:
         verificador.main()
 
     assert salida_error.value.code == 1
-    assert "FALLO (HTTP 401)" in filas(capsys.readouterr().out)["calidad@sgi.local"]
+    assert "FALLO (HTTP 401)" in filas(capsys.readouterr().out)["calidadprod@sgi.local"]
 
 
 def test_no_imprime_la_clave_ni_los_tokens(entorno, monkeypatch, capsys):
