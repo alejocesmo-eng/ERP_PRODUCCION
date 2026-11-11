@@ -178,7 +178,7 @@ def test_ca1_catalogo_paginado_en_servidor(ctx, catalogo):
     client, Sesion = ctx
     for n in range(2, 6):
         crear_articulo(Sesion, f"PT-P{n}", "PRODUCTO_TERMINADO", 3)
-    h = token("ALMACEN")
+    h = token("LIDER_LOGISTICA")
     p1 = client.get("/api/v1/ventas/stock-pt", params={"limit": 2, "offset": 0}, headers=h).json()
     p2 = client.get("/api/v1/ventas/stock-pt", params={"limit": 2, "offset": 2}, headers=h).json()
     assert p1["total"] == 5 and p2["total"] == 5
@@ -192,6 +192,8 @@ def test_catalogo_exige_token_y_rol(ctx, catalogo):
     client, _ = ctx
     assert client.get("/api/v1/ventas/stock-pt").status_code == 401
     assert client.get("/api/v1/ventas/stock-pt", headers=token("PRODUCCION")).status_code == 403
+    # Decisión de Alejo (2026-11-11): ALMACEN no ve el stock de producto terminado
+    assert client.get("/api/v1/ventas/stock-pt", headers=token("ALMACEN")).status_code == 403
 
 
 def test_ca2_disponible_resta_comprometido_y_en_picking(ctx, catalogo):

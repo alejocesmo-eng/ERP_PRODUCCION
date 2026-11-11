@@ -53,3 +53,13 @@ def rol_tiene_permiso(db: Session, rol: str | None, id_permiso: str) -> bool:
         RolPermiso.id_rol == rol,
         RolPermiso.id_permiso == id_permiso,
     ).first() is not None
+
+
+def permisos_de_rol(db: Session, rol: str | None) -> list[str]:
+    """Permisos del rol en rol_permisos, ordenados. Sin rol, ninguno."""
+    if not rol:
+        return []
+    return sorted(
+        fila.id_permiso
+        for fila in db.query(RolPermiso.id_permiso).filter(RolPermiso.id_rol == rol).all()
+    )

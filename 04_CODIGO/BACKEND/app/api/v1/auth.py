@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from app.db.database import get_db
+from app.api.deps import obtener_usuario_actual, permisos_de_rol
 from app.core import security
 from app.db import models
 
@@ -53,3 +54,13 @@ def login_for_access_token(
         "usuario": usuario.nombre_completo,
         "rol": usuario.id_rol,
     }
+
+
+@router.get("/permisos")
+def permisos_del_usuario(
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+    db: Session = Depends(get_db),
+):
+    """Permisos del rol del usuario (rol_permisos), para que el frontend muestre u oculte
+    módulos. Solo orienta la interfaz: cada ruta sigue validando el acceso por su cuenta."""
+    return {"rol": usuario_actual["rol"], "permisos": permisos_de_rol(db, usuario_actual["rol"])}

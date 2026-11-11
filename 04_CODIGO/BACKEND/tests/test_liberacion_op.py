@@ -404,7 +404,8 @@ def test_aprobacion_de_diseno_registra_quien_y_cuando(ctx):
     assert evento.estado_nuevo == "APROBADO"
 
 
-@pytest.mark.parametrize("rol", ["PRODUCCION", "ADMIN"])
+# ADMIN sí aprueba durante la transición de SCRUM-27; DIBUJANTE no aprueba planos
+@pytest.mark.parametrize("rol", ["PRODUCCION", "DIBUJANTE", "JEFE_PRODUCCION"])
 def test_aprobacion_de_plano_solo_rol_diseno(ctx, rol):
     client, sesion = ctx
     _, plano = crear_plano(sesion, aprobado=False)

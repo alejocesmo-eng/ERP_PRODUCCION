@@ -306,7 +306,8 @@ def test_revision_de_un_plano_aprobado_lo_marca_para_revisar(ctx):
     ]
 
 
-@pytest.mark.parametrize("rol", ["PRODUCCION", "ADMIN"])
+# ADMIN sí registra revisiones durante la transición de SCRUM-27 (tests/test_matriz_roles.py)
+@pytest.mark.parametrize("rol", ["PRODUCCION", "JEFE_PRODUCCION", "VENTAS"])
 def test_revision_es_solo_de_diseno(ctx, rol):
     client, Sesion, _ = ctx
     plano = crear_plano(Sesion)

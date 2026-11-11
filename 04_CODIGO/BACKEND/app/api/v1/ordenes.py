@@ -26,7 +26,7 @@ from app.db.models import (
 from app.db.models_calidad import InspeccionCalidad
 from app.db.models_produccion import OperacionOT, RegistroTiempoOperario, SubLoteOperacion
 from app.api.deps import obtener_usuario_actual, requerir_roles, rol_tiene_permiso
-from app.core.roles import ROLES_ACTUALIZAR_OP, ROLES_EXPEDIENTE_OP
+from app.core.roles import ROLES_ACTUALIZAR_OP, ROLES_EXPEDIENTE_OP, ROLES_NOTIFICAR_OP_TERMINADA
 from app.api.v1.quality_gate import (
     archivos_vigentes,
     motivos_liberacion_op,
@@ -44,6 +44,8 @@ PERMISO_LIBERAR_OP = "PERM_OP_LIBERAR"
 PERMISO_ADMIN_TOTAL = "PERM_ADMIN_ALL"
 LONGITUD_MINIMA_MOTIVO = 10
 ESTADOS_OP_LIBERADOS = {EstadoOPEnum.LIBERADA, EstadoOPEnum.LIBERADA_PRODUCCION}
+# OP terminada que pasa a inspección de CALIDAD_PRODUCTO (Regla 6 de pedido-cotizacion-cambios.md)
+ESTADOS_OP_NOTIFICAR_CALIDAD = {EstadoOPEnum.TERMINADA, EstadoOPEnum.EN_INSPECCION}
 # Una OP cancelada o cerrada no vuelve a liberarse por ninguna ruta, tampoco con excepción ADMIN
 ESTADOS_OP_NO_LIBERABLES = {EstadoOPEnum.CANCELADA, EstadoOPEnum.CERRADA}
 
@@ -804,13 +806,19 @@ def actualizar_estado_produccion(
 ):
     """PM-03: Transición de estados en Planta y registro de porcentaje de avance.
     Pasar la OP a un estado liberado se autoriza por permiso (autorizar_liberacion);
-    el resto de transiciones sigue reservado a ROLES_ACTUALIZAR_OP."""
+    terminar la OP y pasarla a inspección se admite a ROLES_NOTIFICAR_OP_TERMINADA; el resto de
+    transiciones sigue reservado a ROLES_ACTUALIZAR_OP."""
     nuevo_estado = op_up.estado or op_up.estado_produccion
     libera_op = nuevo_estado in {estado.value for estado in ESTADOS_OP_LIBERADOS}
-    if not libera_op and usuario_actual["rol"] not in ROLES_ACTUALIZAR_OP:
+    roles_permitidos = (
+        ROLES_NOTIFICAR_OP_TERMINADA
+        if nuevo_estado in {estado.value for estado in ESTADOS_OP_NOTIFICAR_CALIDAD}
+        else ROLES_ACTUALIZAR_OP
+    )
+    if not libera_op and usuario_actual["rol"] not in roles_permitidos:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Acceso denegado. Permisos requeridos para rol(es): {ROLES_ACTUALIZAR_OP}",
+            detail=f"Acceso denegado. Permisos requeridos para rol(es): {roles_permitidos}",
         )
 
     op_db = db.query(OrdenProduccion).filter(OrdenProduccion.id_proyecto == id_proyecto).first()
