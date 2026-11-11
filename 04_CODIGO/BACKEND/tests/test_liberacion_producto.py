@@ -7,7 +7,8 @@ evalúa los planos vigentes de ese producto (última fila por creado_en de cada 
 sin OBSOLETO): PDF vigente en planos_archivos con archivo en disco, BOM abastecida y plano
 APROBADO. Sin id_producto, 400 sin otro criterio. STEP y DXF no bloquean.
 
-Se ejecuta sobre la copia PostgreSQL de SGI_TEST_PG_URL (sgi_test_*), dentro de una
+Se ejecuta sobre la copia PostgreSQL de SGI_TEST_PG_URL (sgi_test_*) con la migración 25
+aplicada (PERM_OP_LIBERAR en LIDER_DISENO), dentro de una
 transacción que se revierte al terminar; los archivos se escriben en un directorio temporal.
 """
 import hashlib
@@ -69,7 +70,7 @@ def ctx(tmp_path, monkeypatch):
         engine.dispose()
 
 
-def token(rol="DISENO"):
+def token(rol="LIDER_DISENO"):
     t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
@@ -178,7 +179,7 @@ def crear_op(sesion, producto, proyecto=None):
     return op
 
 
-def liberar(client, op, rol="DISENO", motivo=None):
+def liberar(client, op, rol="LIDER_DISENO", motivo=None):
     return client.patch(
         f"/api/v1/ordenes/liberar/{op.codigo_op}",
         json={"motivo": motivo} if motivo else None,
@@ -194,7 +195,7 @@ def estado_op(sesion, codigo_op):
 
 # --- OP sin producto ---
 
-@pytest.mark.parametrize(("rol", "motivo"), [("DISENO", None), ("ADMIN", "Urgencia autorizada por Dirección")])
+@pytest.mark.parametrize(("rol", "motivo"), [("LIDER_DISENO", None), ("ADMIN", "Urgencia autorizada por Dirección")])
 def test_op_sin_id_producto_no_libera_y_devuelve_400(ctx, rol, motivo):
     client, sesion = ctx
     op = crear_op(sesion, None)

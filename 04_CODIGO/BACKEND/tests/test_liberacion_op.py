@@ -8,8 +8,8 @@ PERM_ADMIN_ALL la salta solo con motivo de al menos 10 caracteres, con evento de
 La misma comprobación en PATCH /ordenes/liberar/{codigo_op}, PATCH /ordenes/{id_proyecto} y
 POST /ordenes/ (que crea la OP desde una línea de pedido, detalle_id).
 
-Se ejecuta sobre la copia PostgreSQL de SGI_TEST_PG_URL (sgi_test_*), que trae las
-asignaciones de rol_permisos de la migración 16. Cada prueba corre dentro de una
+Se ejecuta sobre la copia PostgreSQL de SGI_TEST_PG_URL (sgi_test_*) con la migración 25
+aplicada: PERM_OP_LIBERAR solo en LIDER_DISENO y DIBUJANTE. Cada prueba corre dentro de una
 transacción que se revierte al terminar; los PDF se escriben en un directorio temporal.
 """
 import hashlib
@@ -226,7 +226,7 @@ def test_op_no_liberable_si_falta_una_condicion(ctx, condicion):
     client, sesion = ctx
     op = crear_op(sesion, **condicion)
 
-    respuesta = liberar(client, op, "DISENO")
+    respuesta = liberar(client, op, "LIDER_DISENO")
 
     assert respuesta.status_code == 400, respuesta.text
     assert estado_op(sesion, op.codigo_op) == EstadoOPEnum.BORRADOR
@@ -236,25 +236,25 @@ def test_op_liberable_con_las_tres_condiciones(ctx):
     client, sesion = ctx
     op = crear_op(sesion)
 
-    respuesta = liberar(client, op, "DISENO")
+    respuesta = liberar(client, op, "LIDER_DISENO")
 
     assert respuesta.status_code == 200, respuesta.text
     assert respuesta.json()["estado_operativo"] == "LIBERADA"
     assert respuesta.json()["revisar"] is False
     assert estado_op(sesion, op.codigo_op) == EstadoOPEnum.LIBERADA
-    assert eventos(sesion, op.codigo_op, "OP_LIBERADA")[0].usuario_responsable == "diseno@prueba.test"
+    assert eventos(sesion, op.codigo_op, "OP_LIBERADA")[0].usuario_responsable == "lider_diseno@prueba.test"
     assert eventos(sesion, op.codigo_op, "OP_LIBERADA_EXCEPCION_ADMIN") == []
 
 
 def test_patch_y_post_liberan_con_las_tres_condiciones(ctx):
     client, sesion = ctx
     op = crear_op(sesion)
-    respuesta = liberar_patch(client, op, "DISENO")
+    respuesta = liberar_patch(client, op, "LIDER_DISENO")
     assert respuesta.status_code == 200, respuesta.text
     assert estado_op(sesion, op.codigo_op) == EstadoOPEnum.LIBERADA
 
     proyecto, plano = crear_plano(sesion)
-    respuesta = crear_post(client, proyecto, plano, "DISENO")
+    respuesta = crear_post(client, proyecto, plano, "LIDER_DISENO")
     assert respuesta.status_code == 201, respuesta.text
     assert estado_op(sesion, plano.codigo_op) == EstadoOPEnum.LIBERADA_PRODUCCION
 
@@ -282,10 +282,10 @@ def test_op_creada_en_borrador_activa_la_reserva_al_liberarla(ctx):
     client, sesion = ctx
     proyecto, plano = crear_plano(sesion)
     cuerpo = {"codigo_op": plano.codigo_op, "detalle_id": str(LINEAS_PEDIDO[plano.id_plano])}
-    assert client.post("/api/v1/ordenes/", json=cuerpo, headers=token("DISENO")).status_code == 201
+    assert client.post("/api/v1/ordenes/", json=cuerpo, headers=token("LIDER_DISENO")).status_code == 201
     assert reserva_stock(sesion, plano.codigo_op) is False
 
-    respuesta = client.patch(f"/api/v1/ordenes/liberar/{plano.codigo_op}", headers=token("DISENO"))
+    respuesta = client.patch(f"/api/v1/ordenes/liberar/{plano.codigo_op}", headers=token("LIDER_DISENO"))
 
     assert respuesta.status_code == 200, respuesta.text
     assert reserva_stock(sesion, plano.codigo_op) is True
@@ -296,12 +296,12 @@ def test_liberacion_activa_reserva_stock_100_en_las_tres_rutas(ctx, ruta):
     client, sesion = ctx
     if ruta == "post":
         proyecto, plano = crear_plano(sesion)
-        respuesta = crear_post(client, proyecto, plano, "DISENO")
+        respuesta = crear_post(client, proyecto, plano, "LIDER_DISENO")
         codigo_op = plano.codigo_op
     else:
         op = crear_op(sesion)
         assert reserva_stock(sesion, op.codigo_op) is False
-        respuesta = (liberar if ruta == "liberar" else liberar_patch)(client, op, "DISENO")
+        respuesta = (liberar if ruta == "liberar" else liberar_patch)(client, op, "LIDER_DISENO")
         codigo_op = op.codigo_op
 
     assert respuesta.status_code in (200, 201), respuesta.text
@@ -312,13 +312,13 @@ def test_post_no_crea_la_op_si_no_cumple_la_regla(ctx):
     client, sesion = ctx
     proyecto, plano = crear_plano(sesion, aprobado=False)
 
-    respuesta = crear_post(client, proyecto, plano, "DISENO")
+    respuesta = crear_post(client, proyecto, plano, "LIDER_DISENO")
 
     assert respuesta.status_code == 400, respuesta.text
     assert estado_op(sesion, plano.codigo_op) is None
 
 
-@pytest.mark.parametrize("rol", ["PRODUCCION", "VENTAS"])
+@pytest.mark.parametrize("rol", ["PRODUCCION", "VENTAS", "DISENO", "JEFE_PRODUCCION"])
 def test_liberacion_denegada_sin_perm_op_liberar_en_las_tres_rutas(ctx, rol):
     client, sesion = ctx
     op = crear_op(sesion)
@@ -371,7 +371,7 @@ def test_marca_revisar_cuando_la_revision_es_posterior_a_la_aprobacion(ctx):
     client, sesion = ctx
     op = crear_op(sesion, revision_posterior=True)
 
-    respuesta = liberar(client, op, "DISENO")
+    respuesta = liberar(client, op, "LIDER_DISENO")
 
     assert respuesta.status_code == 200, respuesta.text
     assert respuesta.json()["revisar"] is True
@@ -379,10 +379,10 @@ def test_marca_revisar_cuando_la_revision_es_posterior_a_la_aprobacion(ctx):
     assert estado_op(sesion, op.codigo_op) == EstadoOPEnum.LIBERADA
 
     op_patch = crear_op(sesion, revision_posterior=True)
-    assert liberar_patch(client, op_patch, "DISENO").json()["revisar"] is True
+    assert liberar_patch(client, op_patch, "LIDER_DISENO").json()["revisar"] is True
 
     proyecto, plano = crear_plano(sesion, revision_posterior=True)
-    assert crear_post(client, proyecto, plano, "DISENO").json()["planos_revisar"] == [plano.codigo_plano]
+    assert crear_post(client, proyecto, plano, "LIDER_DISENO").json()["planos_revisar"] == [plano.codigo_plano]
 
 
 def test_aprobacion_de_diseno_registra_quien_y_cuando(ctx):
@@ -418,7 +418,7 @@ def test_aprobacion_de_plano_solo_rol_diseno(ctx, rol):
 
 @pytest.mark.parametrize("estado", [EstadoOPEnum.CANCELADA, EstadoOPEnum.CERRADA])
 @pytest.mark.parametrize("ruta", ["liberar", "patch"])
-@pytest.mark.parametrize("rol, motivo", [("DISENO", None), ("ADMIN", "Urgencia del cliente autorizada por Dirección")],
+@pytest.mark.parametrize("rol, motivo", [("LIDER_DISENO", None), ("ADMIN", "Urgencia del cliente autorizada por Dirección")],
                          ids=["diseno", "excepcion_admin"])
 def test_op_cancelada_o_cerrada_no_se_libera(ctx, estado, ruta, rol, motivo):
     client, sesion = ctx

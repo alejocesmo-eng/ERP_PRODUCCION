@@ -72,6 +72,11 @@ VERIFICACIONES = (
         "SELECT 1 FROM pg_constraint WHERE conrelid = 'public.socios_negocio'::regclass "
         "AND conname = 'ck_socios_negocio_codigo_nit'",
     ),
+    (
+        "PERM_OP_LIBERAR solo en LIDER_DISENO y DIBUJANTE (migracion 25)",
+        "SELECT 1 FROM rol_permisos WHERE id_permiso = 'PERM_OP_LIBERAR' "
+        "HAVING count(*) = 2 AND bool_and(id_rol IN ('LIDER_DISENO', 'DIBUJANTE'))",
+    ),
 )
 
 
@@ -191,8 +196,8 @@ def _verificar() -> None:
         if faltantes:
             fallar("Verificacion incompleta en sgi_sandbox: " + "; ".join(faltantes))
         print(
-            "Verificacion correcta: historial append-only, busqueda de productos, estado EMITIDA "
-            "y codigo_socio por NIT instalados."
+            "Verificacion correcta: historial append-only, busqueda de productos, estado EMITIDA, "
+            "codigo_socio por NIT y roles de SCRUM-27 instalados."
         )
     finally:
         conexion.close()

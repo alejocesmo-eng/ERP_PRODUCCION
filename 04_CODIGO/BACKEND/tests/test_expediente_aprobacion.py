@@ -214,7 +214,7 @@ def test_quality_gate_falso_si_un_plano_no_esta_aprobado_aunque_tenga_pdf_y_bom(
     assert gate["aprobado"] is False
     assert any(planos_op[1].codigo_plano in motivo and "APROBADO" in motivo for motivo in gate["motivos"])
     # Coincide con la liberación
-    assert client.patch(f"/api/v1/ordenes/liberar/{op.codigo_op}", headers=token("DISENO")).status_code == 400
+    assert client.patch(f"/api/v1/ordenes/liberar/{op.codigo_op}", headers=token("LIDER_DISENO")).status_code == 400
 
 
 @pytest.mark.parametrize(
@@ -227,7 +227,7 @@ def test_quality_gate_falso_si_un_plano_falla_cualquier_condicion(ctx, fallo):
     op, _ = crear_op(sesion, {}, {}, fallo)
 
     assert expediente(client, op)["quality_gate"]["aprobado"] is False
-    assert client.patch(f"/api/v1/ordenes/liberar/{op.codigo_op}", headers=token("DISENO")).status_code == 400
+    assert client.patch(f"/api/v1/ordenes/liberar/{op.codigo_op}", headers=token("LIDER_DISENO")).status_code == 400
 
 
 def test_quality_gate_verdadero_cuando_los_tres_planos_cumplen(ctx):
@@ -239,7 +239,7 @@ def test_quality_gate_verdadero_cuando_los_tres_planos_cumplen(ctx):
     assert len(datos["planos"]) == 3
     assert datos["quality_gate"] == {"aprobado": True, "motivos": []}
     # Coincide con la liberación; "revisar" solo avisa
-    respuesta = client.patch(f"/api/v1/ordenes/liberar/{op.codigo_op}", headers=token("DISENO"))
+    respuesta = client.patch(f"/api/v1/ordenes/liberar/{op.codigo_op}", headers=token("LIDER_DISENO"))
     assert respuesta.status_code == 200, respuesta.text
     assert respuesta.json()["planos_revisar"] == [planos_op[2].codigo_plano]
 
