@@ -1,6 +1,10 @@
 import React, { useState } from 'react';
 import API from '../services/api';
 import { guardarSesion } from '../services/sesion';
+import { ACCESOS_DEMO } from '../config/accesosDemo';
+
+// Solo en desarrollo: en el build de producción la constante es false y la lista no entra al bundle
+const accesosDemo = import.meta.env.DEV ? ACCESOS_DEMO : [];
 
 export default function LoginView({ onLoginSuccess }) {
   const [username, setUsername] = useState('');
@@ -146,21 +150,25 @@ export default function LoginView({ onLoginSuccess }) {
               Defina VITE_DEV_LOGIN_PASSWORD en 04_CODIGO/FRONTEND/.env.local y reinicie Vite para usar estos accesos.
             </p>
           )}
-          <div className="grid grid-cols-2 gap-2">
-            {[
-              { email: 'admin@sgi.com', label: 'Admin' },
-              { email: 'jefe_diseno@sgi.local', label: 'Jefe Ing.' },
-              { email: 'dibujante_1@sgi.local', label: 'Dibujante 1' },
-              { email: 'lider_produccion@sgi.local', label: 'Líder Prod.' },
-            ].map((user) => (
-              <button
-                key={user.email}
-                onClick={() => fastLogin(user.email)}
-                disabled={loading || !claveAccesoRapido}
-                className="py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-[10px] transition border border-slate-200 font-medium"
-              >
-                {user.label}
-              </button>
+          <div className="space-y-2">
+            {accesosDemo.map((grupo) => (
+              <div key={grupo.area}>
+                <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">{grupo.area}</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {grupo.usuarios.map((user) => (
+                    <button
+                      key={user.email}
+                      type="button"
+                      title={user.email}
+                      onClick={() => fastLogin(user.email)}
+                      disabled={loading || !claveAccesoRapido}
+                      className="py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-[10px] transition border border-slate-200 font-medium"
+                    >
+                      {user.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         </div>
