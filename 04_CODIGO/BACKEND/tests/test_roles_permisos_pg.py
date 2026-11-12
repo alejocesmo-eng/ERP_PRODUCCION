@@ -4,8 +4,8 @@ SCRUM-27 paso 1b sobre PostgreSQL: con la migración 25 aplicada están los 16 r
 y el reparto de permisos de reglas/permisos-por-rol-modulo.md, con PERM_OP_LIBERAR solo en
 LIDER_DISENO y DIBUJANTE; la reversión deshace solo lo que la migración registró, se detiene si un usuario tiene un rol nuevo y la migración se puede
 volver a aplicar.
-La migración 27 (LIDER_PRODUCCION pasa a LIDER_MECANIZADOS) se aplica dentro de cada prueba que la
-necesita (es idempotente) y se revierte antes de revertir la 25.
+Las migraciones 27 (LIDER_PRODUCCION pasa a LIDER_MECANIZADOS) y 29 (CAPTURISTA_TIEMPOS) se aplican
+dentro de cada prueba que las necesita (son idempotentes) y se revierten antes de revertir la 25.
 
 Se ejecuta sobre la copia PostgreSQL de SGI_TEST_PG_URL (sgi_test_*) con la migración 25
 aplicada, dentro de una transacción que se revierte al terminar. Los archivos SQL se ejecutan
@@ -30,6 +30,8 @@ MIGRACION_25 = RUTA_BASE_DATOS / "25_MIGRACION_ROLES_PERMISOS_POR_ROL.sql"
 REVERSION_25 = RUTA_BASE_DATOS / "25_REVERSION_ROLES_PERMISOS_POR_ROL.sql"
 MIGRACION_27 = RUTA_BASE_DATOS / "27_MIGRACION_ROL_LIDER_MECANIZADOS.sql"
 REVERSION_27 = RUTA_BASE_DATOS / "27_REVERSION_ROL_LIDER_MECANIZADOS.sql"
+MIGRACION_29 = RUTA_BASE_DATOS / "29_MIGRACION_ROL_CAPTURISTA_TIEMPOS.sql"
+REVERSION_29 = RUTA_BASE_DATOS / "29_REVERSION_ROL_CAPTURISTA_TIEMPOS.sql"
 
 pytestmark = pytest.mark.pg
 
@@ -70,8 +72,9 @@ def conteo(sesion):
     )).one()
 
 
-def test_las_migraciones_25_y_27_dejan_los_roles_del_catalogo(sesion):
+def test_las_migraciones_25_27_y_29_dejan_los_roles_del_catalogo(sesion):
     ejecutar_sql(sesion, MIGRACION_27)
+    ejecutar_sql(sesion, MIGRACION_29)
     existentes = set(sesion.execute(text("SELECT id_rol FROM roles")).scalars())
 
     assert set(roles.ROLES_CATALOGO) <= existentes
@@ -112,8 +115,15 @@ def test_aprobaciones_de_compras_metas_y_retencion(sesion):
 
 def test_reversion_y_reaplicacion_dejan_los_mismos_conteos(sesion):
     ejecutar_sql(sesion, MIGRACION_27)
+    ejecutar_sql(sesion, MIGRACION_29)
     con_27 = conteo(sesion)
-    # La 27 se revierte antes que la 25 (su PERM_OP_CERRAR es una asignación posterior a la 25)
+    # La 29 y la 27 se revierten antes que la 25 (sus asignaciones son posteriores a la 25). La guarda
+    # de la 29 exige que nadie tenga CAPTURISTA_TIEMPOS: se reasignan y se restauran al final
+    capturistas = sesion.execute(
+        text("SELECT id_usuario FROM usuarios WHERE id_rol = :r"), {"r": roles.CAPTURISTA_TIEMPOS}
+    ).scalars().all()
+    sesion.execute(text("UPDATE usuarios SET id_rol = 'OPERARIO' WHERE id_rol = :r"), {"r": roles.CAPTURISTA_TIEMPOS})
+    ejecutar_sql(sesion, REVERSION_29)
     ejecutar_sql(sesion, REVERSION_27)
     con_25 = conteo(sesion)
     registrados = set(sesion.execute(
@@ -158,6 +168,12 @@ def test_reversion_y_reaplicacion_dejan_los_mismos_conteos(sesion):
     assert conteo(sesion) == con_25
     assert roles_con(sesion, "PERM_OP_LIBERAR") == {roles.LIDER_DISENO, roles.DIBUJANTE}
     ejecutar_sql(sesion, MIGRACION_27)
+    ejecutar_sql(sesion, MIGRACION_29)
+    if capturistas:
+        sesion.execute(
+            text("UPDATE usuarios SET id_rol = :r WHERE id_usuario = ANY(:ids)"),
+            {"r": roles.CAPTURISTA_TIEMPOS, "ids": list(capturistas)},
+        )
     assert conteo(sesion) == con_27
 
 

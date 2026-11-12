@@ -3,7 +3,8 @@
 Paso de permisos en Producción: la cola de planta y los sublotes (/operaciones), el puesto CNC
 (setup, mecanizado, pausa), la carga de máquinas y el listado de OP (/ordenes/) exigen token,
 sin restricción de rol nueva. 401 sin token o con token inválido; con token válido los GET
-responden 200 y las escrituras llegan a su validación normal (no 401).
+responden 200 y las escrituras llegan a su validación normal (no 401). Las que registran tiempos
+(setup, mecanizado, pausa y cierre de sublote) exigen además PERM_TIEMPOS_REGISTRAR (migración 29).
 
 SQLite en memoria con override de get_db y una aplicación FastAPI mínima con los routers de
 producción (no se importa app.main) para no tocar ninguna base real.
@@ -22,6 +23,7 @@ from app.api.v1 import carga_maquinas, ordenes, produccion
 from app.api.v1.endpoints.produccion import cola_router
 from app.core.security import create_access_token
 from app.db.database import Base, get_db
+from app.db.models import Permiso, Rol, RolPermiso, Usuario
 from app.db.models_produccion import SubLoteOperacion
 
 SUBLOTE = str(uuid.uuid4())
@@ -41,6 +43,12 @@ ESCRITURAS = [
     ("patch", f"/api/v1/produccion/carga-maquinas/sublotes/{SUBLOTE}/maquina"),
 ]
 TODAS = [("get", ruta) for ruta in LECTURAS] + ESCRITURAS
+REGISTRO_TIEMPOS = [
+    "/api/v1/operaciones/setup/iniciar",
+    "/api/v1/operaciones/mecanizado/conmutar",
+    "/api/v1/operaciones/pausa/turno",
+    "/api/v1/operaciones/sublotes/finalizar",
+]
 
 
 @pytest.fixture
@@ -67,6 +75,13 @@ def ctx():
             s.close()
 
     app.dependency_overrides[get_db] = _get_db
+    with Sesion() as s:
+        s.add_all([Rol(id_rol="JEFE_PRODUCCION", nombre_rol="JEFE_PRODUCCION"), Rol(id_rol="PRODUCCION", nombre_rol="PRODUCCION")])
+        s.add(Permiso(id_permiso="PERM_TIEMPOS_REGISTRAR", modulo="PRODUCCION"))
+        s.add(RolPermiso(id_rol="JEFE_PRODUCCION", id_permiso="PERM_TIEMPOS_REGISTRAR"))
+        s.add_all(Usuario(email=f"{rol.lower()}@prueba.test", password_hash="!SIN_CLAVE", nombre_completo=rol, id_rol=rol)
+                  for rol in ("JEFE_PRODUCCION", "PRODUCCION"))
+        s.commit()
     client = TestClient(app)
     yield client, Sesion
     client.close()
@@ -109,8 +124,16 @@ def test_lecturas_con_token_responden_200(ctx, ruta):
 def test_escrituras_con_token_pasan_la_autenticacion(ctx, metodo, ruta):
     client, _ = ctx
 
-    # Cuerpo vacío: con token la petición llega a la validación del endpoint (422 o 404), no 401
-    assert llamar(client, metodo, ruta, token()).status_code in (404, 409, 422)
+    # Cuerpo vacío: con token (y el permiso de tiempos donde se exige) la petición llega a la
+    # validación del endpoint (422 o 404), no 401
+    assert llamar(client, metodo, ruta, token("JEFE_PRODUCCION")).status_code in (404, 409, 422)
+
+
+@pytest.mark.parametrize("ruta", REGISTRO_TIEMPOS)
+def test_registrar_tiempos_exige_el_permiso(ctx, ruta):
+    client, _ = ctx
+
+    assert client.post(ruta, json={}, headers=token("PRODUCCION")).status_code == 403
 
 
 def test_sin_token_no_se_crea_ningun_sublote(ctx):

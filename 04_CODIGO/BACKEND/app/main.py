@@ -1,8 +1,9 @@
 # app/main.py
 import os
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from app.services.acceso_bd import limitar_rol_capturista
 from app.api.v1.endpoints import empresa
 from app.api.v1 import (
     auth,
@@ -35,7 +36,9 @@ from app.api.v1.historial import router as historial_router
 app = FastAPI(
     title="SGI ERP Empresarial - API Backend ISO 9001:2026",
     description="Sistema de Gestión Integral con Manufactura, Control MES e Inventarios",
-    version="1.0.0"
+    version="1.0.0",
+    # CAPTURISTA_TIEMPOS solo usa las rutas de registro de tiempos (app/services/acceso_bd.py)
+    dependencies=[Depends(limitar_rol_capturista)],
 )
 
 # Configuración de CORS para permitir solicitudes del Frontend React

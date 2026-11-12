@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.deps import obtener_usuario_actual
+from app.services.acceso_bd import PERMISO_TIEMPOS, requerir_permiso_bd
 from app.db.database import get_db
 from app.db.models import (
     Plano, 
@@ -565,7 +566,7 @@ def crear_sublote_programado(data: SubLoteCrearSchema, db: Session = Depends(get
 
 
 @cola_router.post("/sublotes/finalizar", status_code=status.HTTP_200_OK)
-def finalizar_sublote(payload: FinalizarSubloteSchema, db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
+def finalizar_sublote(payload: FinalizarSubloteSchema, db: Session = Depends(get_db), usuario_actual: dict = Depends(requerir_permiso_bd(PERMISO_TIEMPOS))):
     sublote = db.query(SubLoteOperacion).filter(
         SubLoteOperacion.id_sublote == payload.id_sublote
     ).with_for_update().first()

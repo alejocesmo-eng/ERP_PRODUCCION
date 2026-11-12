@@ -168,8 +168,8 @@ def test_almacen_no_ve_stock_de_producto_terminado():
     assert "ALMACEN" not in MATRIZ["stock_pt GET /ventas/stock-pt"]
 
 
-def test_el_catalogo_tiene_los_16_roles_y_los_anteriores_aparte():
-    assert len(roles.ROLES_CATALOGO) == len(set(roles.ROLES_CATALOGO)) == 16
+def test_el_catalogo_tiene_los_17_roles_y_los_anteriores_aparte():
+    assert len(roles.ROLES_CATALOGO) == len(set(roles.ROLES_CATALOGO)) == 17
     assert set(roles.ROLES_ANTERIORES) == {"DISENO", "PRODUCCION", "CALIDAD"}
     assert not set(roles.ROLES_ANTERIORES) & set(roles.ROLES_CATALOGO)
     usados = (

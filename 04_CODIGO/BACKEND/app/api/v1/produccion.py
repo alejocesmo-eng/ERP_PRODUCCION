@@ -8,6 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.deps import obtener_usuario_actual
+from app.services.acceso_bd import PERMISO_TIEMPOS, requerir_permiso_bd
 from app.db.database import get_db
 from app.db.models import EquipoPlanta, Plano
 from app.db.models_produccion import (
@@ -123,7 +124,7 @@ def _actualizar_horas_equipo(db: Session, maquina_codigo: str, segundos: int) ->
 # =============================================================================
 
 @router.post("/setup/iniciar", response_model=RegistroTiempoResponse, status_code=status.HTTP_200_OK)
-def iniciar_setup_cnc(payload: IniciarSetupRequest, db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
+def iniciar_setup_cnc(payload: IniciarSetupRequest, db: Session = Depends(get_db), usuario_actual: dict = Depends(requerir_permiso_bd(PERMISO_TIEMPOS))):
     """
     Inicia la fase de Setup (Alistamiento) para la operación asignada en el puesto CNC.
     Transiciona el estado de la operación a 'EN_SETUP'.
@@ -178,7 +179,7 @@ def iniciar_setup_cnc(payload: IniciarSetupRequest, db: Session = Depends(get_db
 
 
 @router.post("/mecanizado/conmutar", response_model=RegistroTiempoResponse, status_code=status.HTTP_200_OK)
-def conmutar_a_mecanizado(payload: ConmutarMecanizadoRequest, db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
+def conmutar_a_mecanizado(payload: ConmutarMecanizadoRequest, db: Session = Depends(get_db), usuario_actual: dict = Depends(requerir_permiso_bd(PERMISO_TIEMPOS))):
     """
     Cierra la fase de Setup y conmuta a la fase de Mecanizado.
     Validación ADR-001 / REQ-PROD-001: Si el tiempo de Setup excede más del 50% el tiempo estimado
@@ -239,7 +240,7 @@ def conmutar_a_mecanizado(payload: ConmutarMecanizadoRequest, db: Session = Depe
 
 
 @router.post("/pausa/turno", response_model=RegistroTiempoResponse, status_code=status.HTTP_200_OK)
-def pausas_por_turno(payload: PausaTurnoRequest, db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
+def pausas_por_turno(payload: PausaTurnoRequest, db: Session = Depends(get_db), usuario_actual: dict = Depends(requerir_permiso_bd(PERMISO_TIEMPOS))):
     """
     Pausa temporalmente la fase activa (Setup o Mecanizado) por cambio/interrupción de turno o descanso.
     """

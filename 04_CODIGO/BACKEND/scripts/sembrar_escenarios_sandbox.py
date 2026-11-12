@@ -3,7 +3,7 @@ Semilla de escenarios de sgi_sandbox (SCRUM-33): los datos de reglas/datos-base-
 el modelo actual puede representar, para el recorrido de reglas/escenarios-prueba.md.
 
 Bloques (en orden de dependencias):
-    usuarios_demo          los 16 de usuarios-demo.md (los crea preparar_sandbox; aqui solo se exigen)
+    usuarios_demo          los 17 de usuarios-demo.md (los crea preparar_sandbox; aqui solo se exigen)
     clientes_y_proveedor   3 clientes demo (socios_negocio y su copia en clientes, mismo NIT) y 1 proveedor
     centro_trabajo         CT-DEMO-CNC con tarifas, para la liquidacion de costos (E14)
     materiales_y_stock     materias primas, CC-50 como producto terminado y sus lotes liberados
