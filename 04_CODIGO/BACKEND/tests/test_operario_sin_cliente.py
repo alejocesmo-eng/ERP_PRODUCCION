@@ -2,7 +2,8 @@
 """
 OPERARIO no recibe datos del cliente (reglas/permisos-por-rol-modulo.md): ninguna lectura GET de la
 aplicación le devuelve nombre, NIT, contacto ni ubicación del cliente, también las que solo piden
-token. Conserva plano, cantidad y detalles técnicos de sus operaciones.
+token. Tampoco recibe el valor cotizado (solo VENTAS, JEFE_PRODUCCION, COSTOS y GESTION_CALIDAD).
+Conserva plano, cantidad y detalles técnicos de sus operaciones.
 
 Recorre todas las rutas GET de app.main (desde su OpenAPI) con un cliente ficticio sembrado y busca
 sus datos en el cuerpo de la respuesta. Control: JEFE_PRODUCCION sí los recibe en las mismas rutas,
@@ -34,6 +35,8 @@ CORREO = "reservado.zeta@cliente.test"
 TELEFONO = "3009998877"
 UBICACION = "Sede Reservada Zeta"
 DATOS_CLIENTE = [RAZON_SOCIAL, NIT, CONTACTO, CORREO, TELEFONO, UBICACION]
+# Valor cotizado del pedido y de la cotización: una cifra que no aparece en otro dato sembrado
+VALOR_COTIZADO = 7654321.5
 ROLES_PRUEBA = [roles.OPERARIO, roles.JEFE_PRODUCCION]
 
 
@@ -64,11 +67,11 @@ def ctx():
                              es_proveedor=False, estado_activo=True)
         s.add_all([cliente, socio])
         s.flush()
-        cotizacion = Cotizacion(id_socio=socio.id_socio, numero_cotizacion="COT-ZETA-1", valor_total=100)
+        cotizacion = Cotizacion(id_socio=socio.id_socio, numero_cotizacion="COT-ZETA-1", valor_total=VALOR_COTIZADO)
         pedido = Proyecto(id_proyecto=uuid.uuid4(), numero_pedido="PED-ZETA-1", codigo_proyecto="PED-ZETA-1",
                           id_cliente=cliente.id_cliente, cliente_nombre=RAZON_SOCIAL, ubicacion_cliente=UBICACION,
                           requisitos_cliente="Tolerancia general ISO 2768-m", detalle_producto="Eje ZT",
-                          cantidad=5, confirmado=True)
+                          cantidad=5, confirmado=True, cotizacion_total=VALOR_COTIZADO)
         s.add_all([cotizacion, pedido])
         s.flush()
         plano = Plano(id_proyecto=pedido.id_proyecto, codigo_plano="PLN-ZETA-1", codigo_op="OP-ZETA-1",
@@ -118,11 +121,11 @@ def rutas_get(app, ids):
     return rutas
 
 
-def con_datos_de_cliente(client, rol, rutas):
+def con_datos_de_cliente(client, rol, rutas, datos=DATOS_CLIENTE):
     encontradas = {}
     for url, consulta in rutas:
         texto = client.get(url, params=consulta, headers=token(rol)).text
-        presentes = [dato for dato in DATOS_CLIENTE if dato.lower() in texto.lower()]
+        presentes = [dato for dato in datos if dato.lower() in texto.lower()]
         if presentes:
             encontradas[url] = presentes
     return encontradas
@@ -142,6 +145,29 @@ def test_control_otro_rol_si_los_recibe_en_las_mismas_rutas(ctx):
 
     # La prueba anterior no pasa por vacío: esas rutas sí traen datos del cliente
     assert {"/api/v1/ordenes/", "/api/v1/proyectos/"} <= set(con_cliente)
+
+
+def test_operario_no_recibe_el_valor_cotizado_en_ninguna_lectura(ctx):
+    client, ids, app = ctx
+    rutas = rutas_get(app, ids)
+    cifra = [str(int(VALOR_COTIZADO))]
+
+    assert con_datos_de_cliente(client, roles.OPERARIO, rutas, cifra) == {}
+    # Control: el mismo valor sí sale a JEFE_PRODUCCION en el expediente del pedido
+    assert f"/api/v1/proyectos/{ids['id_proyecto']}/expediente" in con_datos_de_cliente(
+        client, roles.JEFE_PRODUCCION, rutas, cifra)
+
+
+def test_el_expediente_del_pedido_de_operario_no_trae_valor_cotizado(ctx):
+    client, ids, _ = ctx
+    url = f"/api/v1/proyectos/{ids['id_proyecto']}/expediente"
+    operario = client.get(url, headers=token(roles.OPERARIO)).json()
+    jefe = client.get(url, headers=token(roles.JEFE_PRODUCCION)).json()
+
+    assert "valor_total_cotizado" not in operario
+    assert jefe["valor_total_cotizado"] == VALOR_COTIZADO
+    # El resto del expediente sigue llegando
+    assert operario["numero_pedido"] == "PED-ZETA-1"
 
 
 def test_operario_conserva_plano_cantidad_y_detalles_tecnicos(ctx):

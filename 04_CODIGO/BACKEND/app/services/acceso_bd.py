@@ -81,9 +81,18 @@ CAMPOS_CLIENTE = frozenset({
 CAMPOS_PLANO = frozenset({
     "id_plano", "codigo_plano", "archivo_url", "detalle_pieza", "instrucciones", "observaciones_tecnicas",
 })
+# Valor cotizado: solo VENTAS, JEFE_PRODUCCION, COSTOS y GESTION_CALIDAD (PERM_VALOR_COTIZADO_VER).
+# Algunas rutas que solo piden token lo devuelven (expediente del pedido, cotizaciones): a OPERARIO
+# y a CAPTURISTA_TIEMPOS se les quita por campo. "valor_total" también es el valor de movimientos
+# de inventario, que tampoco deben ver (sin costos). "valor_cotizado" no está: en la búsqueda solo
+# sale con el permiso, y en /busqueda/alcance es el indicador de si el rol lo ve.
+CAMPOS_VALOR_COTIZADO = frozenset({
+    "valor_total_cotizado", "cotizacion_total", "cotizacion_comercial", "valor_total", "precio_unitario",
+    "subtotal",
+})
 CAMPOS_OCULTOS_POR_ROL = {
-    roles.OPERARIO: CAMPOS_CLIENTE,
-    roles.CAPTURISTA_TIEMPOS: CAMPOS_CLIENTE | CAMPOS_PLANO,
+    roles.OPERARIO: CAMPOS_CLIENTE | CAMPOS_VALOR_COTIZADO,
+    roles.CAPTURISTA_TIEMPOS: CAMPOS_CLIENTE | CAMPOS_VALOR_COTIZADO | CAMPOS_PLANO,
 }
 
 
@@ -91,7 +100,8 @@ def alcance_por_rol(request: Request, db: Session = Depends(get_db)) -> None:
     """Dependencia global de la aplicación, con el rol de la base:
     - CAPTURISTA_TIEMPOS solo pasa a RUTAS_CAPTURISTA.
     - OPERARIO y CAPTURISTA_TIEMPOS marcan la petición para que OcultarCamposPorRol quite de la
-      respuesta los campos de CAMPOS_OCULTOS_POR_ROL.
+      respuesta los campos de CAMPOS_OCULTOS_POR_ROL (cliente y valor cotizado; al capturista,
+      también el plano).
     Sin token o con token inválido no decide: la ruta responde."""
     cabecera = request.headers.get("authorization", "")
     if not cabecera.lower().startswith("bearer "):

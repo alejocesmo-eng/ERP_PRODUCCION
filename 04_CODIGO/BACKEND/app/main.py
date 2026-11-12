@@ -38,7 +38,8 @@ app = FastAPI(
     description="Sistema de Gestión Integral con Manufactura, Control MES e Inventarios",
     version="1.0.0",
     # Alcance por rol de la base (app/services/acceso_bd.py): CAPTURISTA_TIEMPOS solo registra
-    # tiempos; OPERARIO y CAPTURISTA_TIEMPOS no reciben datos de cliente (el capturista, tampoco de planos)
+    # tiempos; OPERARIO y CAPTURISTA_TIEMPOS no reciben datos de cliente ni valor cotizado (el
+    # capturista, tampoco de planos)
     dependencies=[Depends(alcance_por_rol)],
 )
 
