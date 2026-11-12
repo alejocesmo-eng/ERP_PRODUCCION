@@ -102,6 +102,10 @@ VERIFICACIONES = (
         "SELECT 1 FROM rol_permisos WHERE id_rol = 'CAPTURISTA_TIEMPOS' "
         "HAVING count(*) = 1 AND bool_and(id_permiso = 'PERM_TIEMPOS_REGISTRAR')",
     ),
+    (
+        "LIDER_MECANIZADOS registra tiempos (migracion 30)",
+        "SELECT 1 FROM rol_permisos WHERE id_rol = 'LIDER_MECANIZADOS' AND id_permiso = 'PERM_TIEMPOS_REGISTRAR'",
+    ),
 )
 
 

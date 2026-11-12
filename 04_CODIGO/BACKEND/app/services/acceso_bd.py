@@ -1,10 +1,15 @@
 """
 Acceso según el rol guardado en la base, leído en cada consulta (no el rol del token).
 
-Lo usan la búsqueda general y los costos de OP: si a un usuario le cambian el rol, el cambio
-cuenta desde su siguiente consulta, aunque su token diga otro rol.
+Lo usan la búsqueda general, los costos de OP, el registro de tiempos y el alcance global por rol:
+si a un usuario le cambian el rol, el cambio cuenta desde su siguiente consulta, aunque su token
+diga otro rol.
 """
+import json
+
 from fastapi import Depends, HTTPException, Request, status
+from fastapi.responses import Response
+from starlette.middleware.base import BaseHTTPMiddleware
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
@@ -16,8 +21,8 @@ from app.db.models import Usuario
 
 PERMISO_COSTOS = "PERM_EXPEDIENTE_COSTOS_VER"
 PERMISO_VALOR_COTIZADO = "PERM_VALOR_COTIZADO_VER"
-# Registrar tiempos de operaciones de OP (migración 29): OPERARIO, CAPTURISTA_TIEMPOS,
-# JEFE_PRODUCCION y ADMIN
+# Registrar tiempos de operaciones de OP (migraciones 29 y 30): OPERARIO, CAPTURISTA_TIEMPOS,
+# JEFE_PRODUCCION, ADMIN y LIDER_MECANIZADOS
 PERMISO_TIEMPOS = "PERM_TIEMPOS_REGISTRAR"
 
 # Lo único que puede usar CAPTURISTA_TIEMPOS: sesión, cola de sublotes y registro de tiempos.
@@ -63,9 +68,31 @@ def requerir_permiso_bd(id_permiso: str):
     return verificar
 
 
-def limitar_rol_capturista(request: Request, db: Session = Depends(get_db)) -> None:
-    """Dependencia global de la aplicación: si el usuario del token es CAPTURISTA_TIEMPOS en la
-    base, solo pasa a RUTAS_CAPTURISTA. Sin token o con token inválido no decide: la ruta responde."""
+# Datos del cliente que OPERARIO y CAPTURISTA_TIEMPOS no reciben en ninguna respuesta
+# (reglas/permisos-por-rol-modulo.md: OPERARIO sin datos de cliente). Se quitan por nombre de campo.
+CAMPOS_CLIENTE = frozenset({
+    "cliente", "cliente_nombre", "nombre_cliente", "ubicacion_cliente", "id_cliente", "cliente_id",
+    "id_socio", "socio", "razon_social", "nit", "nit_rut", "nit_cedula", "codigo_socio", "contacto",
+    "contacto_nombre", "contacto_telefono", "contacto_email", "email_contacto", "telefono", "ciudad",
+    "direccion", "pais", "condiciones_pago_dias",
+})
+# CAPTURISTA_TIEMPOS tampoco recibe nada del plano: le basta la OP, la operación, la máquina,
+# el operario y la cantidad para registrar tiempos
+CAMPOS_PLANO = frozenset({
+    "id_plano", "codigo_plano", "archivo_url", "detalle_pieza", "instrucciones", "observaciones_tecnicas",
+})
+CAMPOS_OCULTOS_POR_ROL = {
+    roles.OPERARIO: CAMPOS_CLIENTE,
+    roles.CAPTURISTA_TIEMPOS: CAMPOS_CLIENTE | CAMPOS_PLANO,
+}
+
+
+def alcance_por_rol(request: Request, db: Session = Depends(get_db)) -> None:
+    """Dependencia global de la aplicación, con el rol de la base:
+    - CAPTURISTA_TIEMPOS solo pasa a RUTAS_CAPTURISTA.
+    - OPERARIO y CAPTURISTA_TIEMPOS marcan la petición para que OcultarCamposPorRol quite de la
+      respuesta los campos de CAMPOS_OCULTOS_POR_ROL.
+    Sin token o con token inválido no decide: la ruta responde."""
     cabecera = request.headers.get("authorization", "")
     if not cabecera.lower().startswith("bearer "):
         return
@@ -73,8 +100,39 @@ def limitar_rol_capturista(request: Request, db: Session = Depends(get_db)) -> N
         email = jwt.decode(cabecera[7:].strip(), SECRET_KEY, algorithms=[ALGORITHM]).get("sub")
     except JWTError:
         return
-    if rol_en_bd(db, email) != roles.CAPTURISTA_TIEMPOS:
-        return
+    rol = rol_en_bd(db, email)
+    if rol in CAMPOS_OCULTOS_POR_ROL:
+        request.state.campos_ocultos = CAMPOS_OCULTOS_POR_ROL[rol]
     # Ruta completa de la petición: RUTAS_CAPTURISTA no tiene rutas con parámetros
-    if (request.method, request.scope["path"].rstrip("/") or "/") not in RUTAS_CAPTURISTA:
+    if rol == roles.CAPTURISTA_TIEMPOS and (request.method, request.scope["path"].rstrip("/") or "/") not in RUTAS_CAPTURISTA:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Su rol solo registra tiempos de operaciones.")
+
+
+def quitar_campos(valor, ocultos: frozenset):
+    if isinstance(valor, dict):
+        return {clave: quitar_campos(dato, ocultos) for clave, dato in valor.items() if clave not in ocultos}
+    if isinstance(valor, list):
+        return [quitar_campos(dato, ocultos) for dato in valor]
+    return valor
+
+
+class OcultarCamposPorRol(BaseHTTPMiddleware):
+    """Quita de las respuestas JSON los campos que alcance_por_rol marcó para el rol."""
+
+    async def dispatch(self, request: Request, call_next):
+        respuesta = await call_next(request)
+        ocultos = getattr(request.state, "campos_ocultos", None)
+        if not ocultos or "application/json" not in respuesta.headers.get("content-type", ""):
+            return respuesta
+        cuerpo = b"".join([parte async for parte in respuesta.body_iterator])
+        try:
+            datos = json.loads(cuerpo)
+        except ValueError:
+            return Response(content=cuerpo, status_code=respuesta.status_code, headers=dict(respuesta.headers))
+        cabeceras = {k: v for k, v in respuesta.headers.items() if k.lower() != "content-length"}
+        return Response(
+            content=json.dumps(quitar_campos(datos, ocultos), ensure_ascii=False).encode("utf-8"),
+            status_code=respuesta.status_code,
+            headers=cabeceras,
+            media_type="application/json",
+        )

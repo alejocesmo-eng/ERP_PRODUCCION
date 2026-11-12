@@ -1,9 +1,10 @@
 # tests/test_capturista_tiempos.py
 """
 Perfil CAPTURISTA_TIEMPOS (migración 29): solo registra tiempos de operaciones de OP, en cualquier
-unidad, con PERM_TIEMPOS_REGISTRAR. La dependencia global limitar_rol_capturista le cierra el resto
+unidad, con PERM_TIEMPOS_REGISTRAR (que LIDER_MECANIZADOS también tiene desde la migración 30). La dependencia global alcance_por_rol le cierra el resto
 (cliente, planos, costos, valor cotizado, unidad, liberación, cierre, retención) aunque la ruta
-solo pida token. El rol se lee de la base, no del token.
+solo pida token, y OcultarCamposPorRol le quita de la cola de sublotes todo lo del plano. El rol se
+lee de la base, no del token.
 
 SQLite en memoria con override de get_db; aplicación FastAPI mínima con la misma dependencia global
 que app.main (no se importa app.main).
@@ -24,7 +25,8 @@ from app.api.v1.endpoints.produccion import cola_router
 from app.core import roles
 from app.core.security import create_access_token
 from app.db.database import Base, get_db
-from app.db.models import Permiso, Rol, RolPermiso, Usuario
+from app.db.models import Permiso, Plano, Rol, RolPermiso, Usuario
+from app.db.models_produccion import OperacionOT, SubLoteOperacion
 from app.services import acceso_bd
 
 CAPTURISTA = roles.CAPTURISTA_TIEMPOS
@@ -47,7 +49,8 @@ CERRADAS = [
 
 
 def crear_app():
-    app = FastAPI(dependencies=[Depends(acceso_bd.limitar_rol_capturista)])
+    app = FastAPI(dependencies=[Depends(acceso_bd.alcance_por_rol)])
+    app.add_middleware(acceso_bd.OcultarCamposPorRol)
     app.include_router(auth.router, prefix="/api/v1/auth")
     app.include_router(usuarios.router, prefix="/api/v1/usuarios")
     app.include_router(busqueda.router, prefix="/api/v1/busqueda")
@@ -75,13 +78,25 @@ def ctx():
     app = crear_app()
     app.dependency_overrides[get_db] = _get_db
     with Sesion() as s:
-        s.add_all(Rol(id_rol=rol, nombre_rol=rol) for rol in (CAPTURISTA, roles.JEFE_PRODUCCION, roles.VENTAS))
+        todos = (CAPTURISTA, roles.JEFE_PRODUCCION, roles.LIDER_MECANIZADOS, roles.VENTAS)
+        s.add_all(Rol(id_rol=rol, nombre_rol=rol) for rol in todos)
         s.add(Permiso(id_permiso=acceso_bd.PERMISO_TIEMPOS, modulo="PRODUCCION"))
-        s.add_all(RolPermiso(id_rol=rol, id_permiso=acceso_bd.PERMISO_TIEMPOS) for rol in (CAPTURISTA, roles.JEFE_PRODUCCION))
+        # Como las migraciones 29 y 30
+        s.add_all(RolPermiso(id_rol=rol, id_permiso=acceso_bd.PERMISO_TIEMPOS)
+                  for rol in (CAPTURISTA, roles.JEFE_PRODUCCION, roles.LIDER_MECANIZADOS))
         s.add_all(
             Usuario(email=f"{rol.lower()}@prueba.test", password_hash="!SIN_CLAVE", nombre_completo=rol, id_rol=rol)
-            for rol in (CAPTURISTA, roles.JEFE_PRODUCCION, roles.VENTAS)
+            for rol in todos
         )
+        plano = Plano(codigo_plano="PLN-CAP-1", material_requerido="Acero 1045", archivo_url="/static/planos/PLN-CAP-1.pdf")
+        s.add(plano)
+        s.flush()
+        operacion = OperacionOT(id_plano=plano.id_plano, codigo_op="OP-CAP-1", codigo_plano="PLN-CAP-1",
+                                secuencia_paso=10, nombre_proceso="Torneado", cantidad_total_orden=4)
+        s.add(operacion)
+        s.flush()
+        s.add(SubLoteOperacion(id_operacion=operacion.id_operacion, cantidad_asignada=4, operario_nombre="Operario",
+                               maquina_codigo="CNC-1"))
         s.commit()
     with TestClient(app) as client:
         yield client
@@ -106,6 +121,11 @@ def test_el_capturista_registra_tiempos(ctx, ruta):
 
 
 @pytest.mark.parametrize("ruta", REGISTRO_TIEMPOS)
+def test_el_lider_de_mecanizados_registra_tiempos(ctx, ruta):
+    assert ctx.post(ruta, json={}, headers=token(roles.LIDER_MECANIZADOS)).status_code == 422
+
+
+@pytest.mark.parametrize("ruta", REGISTRO_TIEMPOS)
 def test_sin_el_permiso_no_se_registran_tiempos(ctx, ruta):
     assert ctx.post(ruta, json={}, headers=token(roles.VENTAS)).status_code == 403
 
@@ -123,6 +143,19 @@ def test_el_capturista_ve_su_cola_y_su_sesion(ctx):
     assert ctx.get("/api/v1/usuarios/me", headers=token(CAPTURISTA)).status_code == 200
     alcance = ctx.get("/api/v1/busqueda/alcance", headers=token(CAPTURISTA)).json()
     assert alcance["tipos"] == [] and alcance["costos"] is False and alcance["valor_cotizado"] is False
+
+
+def test_la_cola_del_capturista_no_trae_nada_del_plano(ctx):
+    (capturista,) = ctx.get("/api/v1/operaciones/sublotes", headers=token(CAPTURISTA)).json()
+    (jefe,) = ctx.get("/api/v1/operaciones/sublotes", headers=token(roles.JEFE_PRODUCCION)).json()
+
+    assert not acceso_bd.CAMPOS_PLANO & set(capturista)
+    assert "PLN-CAP-1" not in str(capturista) and "Acero 1045" not in str(capturista)
+    # Lo que necesita para registrar tiempos sigue ahí
+    assert (capturista["codigo_op"], capturista["nombre_proceso"], capturista["maquina_codigo"],
+            capturista["cantidad_asignada"]) == ("OP-CAP-1", "Torneado", "CNC-1", 4)
+    # Otro rol sí recibe el plano
+    assert jefe["codigo_plano"] == "PLN-CAP-1" and jefe["archivo_url"]
 
 
 def test_los_demas_roles_no_cambian(ctx):
