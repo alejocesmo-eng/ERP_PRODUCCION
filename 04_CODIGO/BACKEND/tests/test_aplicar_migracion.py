@@ -1,17 +1,20 @@
 # tests/test_aplicar_migracion.py
 """
-scripts.aplicar_migracion sin base real: rechaza sgi_db antes de conectar, encuentra las
-migraciones y la reversión 25, y preparar_sandbox las incluye y las verifica.
+scripts.aplicar_migracion sin base real: rechaza sgi_db antes de conectar, se conecta exactamente a
+la base del argumento (no a la base de mantenimiento de SGI_TEST_PG_ADMIN_URL), no acepta una URL de
+administración con clave, no muestra datos de conexión al fallar, encuentra las migraciones y la
+reversión 25, y preparar_sandbox las incluye y las verifica.
 """
 import sys
 
+import psycopg2
 import pytest
 
-from scripts import aplicar_migracion, preparar_sandbox
+from scripts import _pg_pruebas, aplicar_migracion, preparar_sandbox
 
 
 def test_rechaza_sgi_db_sin_conectar(monkeypatch):
-    monkeypatch.setattr(aplicar_migracion, "conectar_admin", lambda: pytest.fail("No debe conectar"))
+    monkeypatch.setattr(aplicar_migracion, "conectar", lambda base: pytest.fail("No debe conectar"))
     monkeypatch.setattr(sys, "argv", ["aplicar_migracion", "sgi_db", "23"])
 
     with pytest.raises(SystemExit):
@@ -118,7 +121,6 @@ def test_la_reversion_no_verifica_el_sandbox(monkeypatch):
         def close(self):
             pass
 
-    monkeypatch.setattr(aplicar_migracion, "conectar_admin", Conexion)
     monkeypatch.setattr(aplicar_migracion, "conectar", lambda base: Conexion())
     monkeypatch.setattr(aplicar_migracion.preparar_sandbox, "_verificar", lambda: pytest.fail("No debe verificar"))
     monkeypatch.setattr(sys, "argv", ["aplicar_migracion", "sgi_sandbox", "25", "--reversion"])
@@ -126,3 +128,69 @@ def test_la_reversion_no_verifica_el_sandbox(monkeypatch):
     aplicar_migracion.main()
 
     assert any("25_REVERSION_ROLES_PERMISOS_POR_ROL.sql" in consulta for consulta in ejecutado)
+
+
+class _Conexion:
+    def __init__(self):
+        self.ejecutado = []
+
+    def cursor(self):
+        conexion = self
+
+        class Cursor:
+            def execute(self, consulta, *parametros):
+                conexion.ejecutado.append(consulta)
+
+        return Cursor()
+
+    def close(self):
+        pass
+
+
+def test_se_conecta_a_la_base_del_argumento_aunque_la_url_de_administracion_tenga_otra(monkeypatch):
+    # La base de mantenimiento de la URL no existe ("postgre"): no debe abrirse
+    monkeypatch.setenv("SGI_TEST_PG_ADMIN_URL", "postgresql://usuario_prueba@localhost:5432/postgre")
+    pedidas = []
+
+    def connect(**datos):
+        pedidas.append(datos["dbname"])
+        return _Conexion()
+
+    monkeypatch.setattr(_pg_pruebas.psycopg2, "connect", connect)
+    monkeypatch.setattr(sys, "argv", ["aplicar_migracion", "sgi_test_run", "27"])
+
+    aplicar_migracion.main()
+
+    assert pedidas == ["sgi_test_run"]
+
+
+def test_la_url_de_administracion_con_clave_se_rechaza_sin_conectar(monkeypatch, capsys):
+    monkeypatch.setenv("SGI_TEST_PG_ADMIN_URL", "postgresql://usuario_prueba:clave_prueba@localhost:5432/postgres")
+    monkeypatch.setattr(_pg_pruebas.psycopg2, "connect", lambda **datos: pytest.fail("No debe conectar"))
+    monkeypatch.setattr(sys, "argv", ["aplicar_migracion", "sgi_test_run", "27"])
+
+    with pytest.raises(SystemExit):
+        aplicar_migracion.main()
+
+    error = capsys.readouterr().err
+    assert "no debe incluir la clave" in error and "clave_prueba" not in error
+
+
+def test_si_la_base_no_existe_lo_dice_sin_datos_de_conexion(monkeypatch, capsys):
+    monkeypatch.setenv("SGI_TEST_PG_ADMIN_URL", "postgresql://usuario_prueba@servidor-prueba:6543/postgres")
+
+    def connect(**datos):
+        raise psycopg2.OperationalError(
+            'connection to server at "servidor-prueba" (10.0.0.9), port 6543 failed: '
+            'FATAL:  database "sgi_test_run" does not exist'
+        )
+
+    monkeypatch.setattr(_pg_pruebas.psycopg2, "connect", connect)
+    monkeypatch.setattr(sys, "argv", ["aplicar_migracion", "sgi_test_run", "27"])
+
+    with pytest.raises(SystemExit):
+        aplicar_migracion.main()
+
+    error = capsys.readouterr().err
+    assert "No se pudo conectar a sgi_test_run: database [oculto] does not exist" in error
+    assert not any(dato in error for dato in ("servidor-prueba", "10.0.0.9", "6543", "usuario_prueba"))
