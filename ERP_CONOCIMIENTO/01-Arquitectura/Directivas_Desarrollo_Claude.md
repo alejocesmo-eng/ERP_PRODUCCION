@@ -16,4 +16,4 @@
 - UI de alta densidad: Tailwind CSS con `text-xs`, paleta institucional (slate, emerald, amber, purple, blue) y badges semánticos.
 
 ## 4. INTEGRIDAD DE DATOS Y PRUEBAS
-- Cualquier adición a la base de datos debe reflejarse en `cargar_semilla.py` con registros de prueba funcionales para cada rol operativo (Jefe de Ingeniería, Dibujante, Líder de Producción, Operario).
+- Cualquier adición a la base de datos debe reflejarse en `cargar_semilla.py` con registros de prueba funcionales para cada rol operativo (Jefe de Ingeniería, Dibujante, Líder de Mecanizados, Operario).

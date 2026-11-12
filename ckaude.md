@@ -20,4 +20,4 @@
 
 ## 4. INTEGRIDAD DE DATOS Y PRUEBAS
 
-- Cualquier adición a la base de datos debe reflejarse en `cargar_semilla.py` con registros de prueba funcionales para cada rol operativo (Jefe de Ingeniería, Dibujante, Líder de Producción, Operario).
+- Cualquier adición a la base de datos debe reflejarse en `cargar_semilla.py` con registros de prueba funcionales para cada rol operativo (Jefe de Ingeniería, Dibujante, Líder de Mecanizados, Operario).

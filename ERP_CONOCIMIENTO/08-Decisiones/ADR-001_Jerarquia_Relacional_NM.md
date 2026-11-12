@@ -66,7 +66,7 @@ Existen dos cuellos de botella principales:
 ## 4. Preguntas por Validar
 
 ### Responsables y suplencias:
-- [PENDIENTE: Definir si el Líder de Producción o Jefe de Planta debe recibir una notificación en tiempo real (vía WebSockets / App) cuando un Setup supere el 50% de desviación.]
+- [PENDIENTE: Definir si el Líder de Mecanizados o Jefe de Planta debe recibir una notificación en tiempo real (vía WebSockets / App) cuando un Setup supere el 50% de desviación.]
 
 ### Aprobaciones:
 - [PENDIENTE: Validar si el Líder de Diseño puede reajustar el tiempo meta de diseño en caso de que el cliente cambie especificaciones a mitad del proceso.]

@@ -113,7 +113,7 @@ export default function ProduccionLiderView() {
       if (userStored) {
         setUsuarioActual(JSON.parse(userStored));
       } else {
-        setUsuarioActual({ rol: 'Jefe de área', area: 'Producción', nombre: 'Líder de Producción' });
+        setUsuarioActual({ rol: 'Jefe de área', area: 'Producción', nombre: 'Líder de Mecanizados' });
       }
     } catch (e) {
       setUsuarioActual({ rol: 'Administrador', area: 'General' });
@@ -642,7 +642,7 @@ export default function ProduccionLiderView() {
           </button>
 
           <div className="bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200 text-xs font-semibold text-amber-900">
-            👤 Usuario: <strong>{usuarioActual?.nombre || 'Líder de Producción'}</strong> [{usuarioActual?.area || 'Producción'}]
+            👤 Usuario: <strong>{usuarioActual?.nombre || 'Líder de Mecanizados'}</strong> [{usuarioActual?.area || 'Producción'}]
           </div>
 
           <button

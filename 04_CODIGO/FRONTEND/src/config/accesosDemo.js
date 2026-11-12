@@ -18,7 +18,7 @@ export const ACCESOS_DEMO = [
   { area: 'Producción', usuarios: [
     { email: 'director@sgi.local', label: 'Director de producción' },
     { email: 'jefeprod@sgi.local', label: 'Jefe de producción' },
-    { email: 'liderprod@sgi.local', label: 'Líder de producción' },
+    { email: 'liderprod@sgi.local', label: 'Líder de Mecanizados' },
     { email: 'operario@sgi.local', label: 'Operario' }
   ] },
   { area: 'Calidad', usuarios: [
