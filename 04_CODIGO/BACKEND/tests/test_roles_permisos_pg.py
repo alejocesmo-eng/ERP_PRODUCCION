@@ -113,6 +113,22 @@ def test_reversion_y_reaplicacion_dejan_los_mismos_conteos(sesion):
     retirados_op_liberar = set(sesion.execute(text(
         "SELECT id_rol FROM migracion_25_registro WHERE tipo = 'ROL_PERMISO_RETIRADO' AND id_permiso = 'PERM_OP_LIBERAR'"
     )).scalars())
+    # La guarda de la reversión exige que ningún usuario tenga un rol de la 25 (los usuarios demo sí
+    # los tienen): se reasignan a un rol anterior dentro de la transacción y se restauran al final.
+    usuarios_con_rol_25 = sesion.execute(text(
+        "SELECT u.id_usuario, u.id_rol FROM usuarios u "
+        "JOIN migracion_25_registro r ON r.tipo = 'ROL' AND r.id_rol = u.id_rol"
+    )).all()
+    if usuarios_con_rol_25:
+        rol_temporal = sesion.execute(text(
+            "SELECT id_rol FROM roles WHERE id_rol NOT IN "
+            "(SELECT id_rol FROM migracion_25_registro WHERE tipo = 'ROL' AND id_rol IS NOT NULL) "
+            "ORDER BY id_rol = 'ADMIN' DESC, id_rol LIMIT 1"
+        )).scalar_one()
+        sesion.execute(
+            text("UPDATE usuarios SET id_rol = :rol WHERE id_usuario = :id"),
+            [{"rol": rol_temporal, "id": id_usuario} for id_usuario, _ in usuarios_con_rol_25],
+        )
 
     ejecutar_sql(sesion, REVERSION_25)
 
@@ -125,6 +141,10 @@ def test_reversion_y_reaplicacion_dejan_los_mismos_conteos(sesion):
     ejecutar_sql(sesion, REVERSION_25)  # idempotente: sin registro no hace nada
     ejecutar_sql(sesion, MIGRACION_25)
     ejecutar_sql(sesion, MIGRACION_25)  # idempotente
+    sesion.execute(
+        text("UPDATE usuarios SET id_rol = :rol WHERE id_usuario = :id"),
+        [{"rol": rol, "id": id_usuario} for id_usuario, rol in usuarios_con_rol_25],
+    )
 
     assert conteo(sesion) == con_25
     assert roles_con(sesion, "PERM_OP_LIBERAR") == {roles.LIDER_DISENO, roles.DIBUJANTE}
