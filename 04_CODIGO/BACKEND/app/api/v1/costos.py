@@ -9,6 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.deps import obtener_usuario_actual
+from app.services.acceso_bd import PERMISO_COSTOS, requerir_permiso_bd
 from app.db.database import get_db
 from app.db.models import (
     CentroTrabajo,
@@ -65,11 +66,13 @@ def _anexar_presupuesto(
     )
 
 
+# Costos directos e indirectos y valor cotizado de la OP: solo con PERM_EXPEDIENTE_COSTOS_VER,
+# leído del rol en la base (reglas/permisos-por-rol-modulo.md)
 @router.get("/liquidar/{codigo_op}")
 def liquidar_op(
     codigo_op: str,
     db: Session = Depends(get_db),
-    usuario_actual: dict = Depends(obtener_usuario_actual),
+    usuario_actual: dict = Depends(requerir_permiso_bd(PERMISO_COSTOS)),
 ):
     resumen = obtener_costos_op(codigo_op, db)
     cotizacion = resumen["cotizacion_comercial"]
@@ -184,7 +187,7 @@ def _obtener_op(db: Session, codigo_op: str) -> OrdenProduccion:
 def obtener_costos_op(
     codigo_op: str,
     db: Session = Depends(get_db),
-    usuario_actual: dict = Depends(obtener_usuario_actual),
+    usuario_actual: dict = Depends(requerir_permiso_bd(PERMISO_COSTOS)),
 ):
     orden = _obtener_op(db, codigo_op)
     proyecto = db.query(Proyecto).filter(

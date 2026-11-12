@@ -57,10 +57,14 @@ ROLES_GESTION_ALMACEN = [ADMIN, ALMACEN]
 ROLES_VENTAS = [ADMIN, VENTAS]
 # Stock de producto terminado: decisión de Alejo (2026-11-11), ALMACEN no lo ve
 ROLES_STOCK_PT = [ADMIN, VENTAS, JEFE_PRODUCCION, COSTOS, LIDER_LOGISTICA]
-# Expediente de OP: VENTAS no lo ve; OPERARIO y MANTENIMIENTO tampoco (sin filtro por campos aún)
+# Expediente de OP (reglas/permisos-por-rol-modulo.md, "Búsqueda y expediente"): completo para
+# JEFE_PRODUCCION, GESTION_CALIDAD y COSTOS; sin costos para LIDER_PRODUCCION. CALIDAD_PRODUCTO,
+# ALMACEN, DIBUJANTE y LIDER_DISENO quedan fuera hasta que se confirme (decisión de Alejo,
+# 2026-11-12), igual que DISENO, el rol anterior de los dos últimos. VENTAS, OPERARIO y
+# MANTENIMIENTO no lo ven. Los costos dentro del expediente van por PERM_EXPEDIENTE_COSTOS_VER.
 ROLES_EXPEDIENTE_OP = [
-    ADMIN, CALIDAD_PRODUCTO, GESTION_CALIDAD, ALMACEN, JEFE_PRODUCCION, LIDER_PRODUCCION, COSTOS,
-    LIDER_DISENO, DIBUJANTE, DIRECTOR_PRODUCCION, DISENO, PRODUCCION, CALIDAD,
+    ADMIN, GESTION_CALIDAD, JEFE_PRODUCCION, LIDER_PRODUCCION, COSTOS, DIRECTOR_PRODUCCION,
+    PRODUCCION, CALIDAD,
 ]
 # Cambios de estado de la OP distintos de la liberación (esa va por PERM_OP_LIBERAR)
 ROLES_ACTUALIZAR_OP = [ADMIN, JEFE_PRODUCCION, PRODUCCION]
@@ -82,3 +86,23 @@ ROLES_TRAZABILIDAD = [
     ADMIN, VENTAS, CALIDAD_PRODUCTO, GESTION_CALIDAD, ALMACEN, JEFE_PRODUCCION, LIDER_PRODUCCION,
     COSTOS, LIDER_DISENO, DIBUJANTE, DIRECTOR_PRODUCCION, DISENO, PRODUCCION, CALIDAD,
 ]
+
+# --- Búsqueda general (reglas/permisos-por-rol-modulo.md, "Búsqueda y expediente") ------------
+# Tipos de dato que cada rol encuentra por código o nombre. Un rol que no está aquí no ve la caja.
+# El rol se lee de la base en cada consulta (app/services/acceso_bd.py).
+BUSQUEDA_COTIZACION = "COTIZACION"
+BUSQUEDA_PEDIDO = "PEDIDO"
+BUSQUEDA_OP = "OP"
+BUSQUEDA_CLIENTE = "CLIENTE"
+BUSQUEDA_PRODUCTO = "PRODUCTO"
+TIPOS_BUSQUEDA = [BUSQUEDA_COTIZACION, BUSQUEDA_PEDIDO, BUSQUEDA_OP, BUSQUEDA_CLIENTE, BUSQUEDA_PRODUCTO]
+TIPOS_BUSQUEDA_POR_ROL = {
+    # Transición: ADMIN en todo; el valor cotizado y los costos siguen sus permisos (no los ve)
+    ADMIN: TIPOS_BUSQUEDA,
+    VENTAS: [BUSQUEDA_COTIZACION, BUSQUEDA_PEDIDO, BUSQUEDA_CLIENTE, BUSQUEDA_PRODUCTO],
+    JEFE_PRODUCCION: [BUSQUEDA_PEDIDO, BUSQUEDA_OP, BUSQUEDA_CLIENTE, BUSQUEDA_PRODUCTO],
+    GESTION_CALIDAD: [BUSQUEDA_PEDIDO, BUSQUEDA_OP, BUSQUEDA_CLIENTE, BUSQUEDA_PRODUCTO],
+    COSTOS: [BUSQUEDA_PEDIDO, BUSQUEDA_OP, BUSQUEDA_CLIENTE, BUSQUEDA_PRODUCTO],
+    # "OP de su área": la OP aún no guarda área, así que ve todas (pendiente)
+    LIDER_PRODUCCION: [BUSQUEDA_OP],
+}

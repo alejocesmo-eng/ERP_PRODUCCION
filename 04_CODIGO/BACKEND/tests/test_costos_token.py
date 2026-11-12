@@ -1,7 +1,8 @@
 # tests/test_costos_token.py
 """
-Paso 1 de permisos: las 7 rutas de /costos exigen token (sin restricción de rol todavía).
-401 sin token en todas y respuesta correcta con token válido en cada una.
+Paso 1 de permisos: las 7 rutas de /costos exigen token. 401 sin token en todas y respuesta
+correcta con token válido en cada una. Los costos de la OP (liquidar y op) además exigen
+PERM_EXPEDIENTE_COSTOS_VER en el rol guardado en la base (tests/test_busqueda.py).
 
 SQLite en memoria con override de get_db y una aplicación FastAPI mínima con el router
 de costos (no se importa app.main) para no tocar ninguna base real.
@@ -19,7 +20,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.v1 import costos
 from app.core.security import create_access_token
 from app.db.database import Base, get_db
-from app.db.models import CentroTrabajo, OrdenProduccion, Proyecto
+from app.db.models import CentroTrabajo, OrdenProduccion, Permiso, Proyecto, Rol, RolPermiso, Usuario
 
 CODIGO_OP = "OP-COS-1"
 RUTAS = [
@@ -65,6 +66,10 @@ def ctx():
     s.add_all([
         proyecto,
         OrdenProduccion(id_op=uuid.uuid4(), id_proyecto=proyecto.id_proyecto, codigo_op=CODIGO_OP, cantidad_fabricar=1),
+        Rol(id_rol="COSTOS", nombre_rol="Costos"),
+        Permiso(id_permiso="PERM_EXPEDIENTE_COSTOS_VER", modulo="COSTOS"),
+        RolPermiso(id_rol="COSTOS", id_permiso="PERM_EXPEDIENTE_COSTOS_VER"),
+        Usuario(email="costos@prueba.test", password_hash="!SIN_CLAVE", nombre_completo="Costos", id_rol="COSTOS"),
     ])
     s.commit()
     s.close()
@@ -107,7 +112,7 @@ def test_sin_token_no_se_crea_el_centro_de_trabajo(ctx):
 def test_consultas_con_token_responden_200(ctx, ruta):
     client, _ = ctx
 
-    respuesta = client.get(ruta, headers=token())
+    respuesta = client.get(ruta, headers=token("COSTOS"))
 
     assert respuesta.status_code == 200, respuesta.text
 

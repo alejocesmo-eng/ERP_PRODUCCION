@@ -25,7 +25,8 @@ from app.api.v1 import (
     diseno,
     ventas,
     cotizaciones,
-    stock_pt
+    stock_pt,
+    busqueda,
 )
 from app.api.v1.endpoints.produccion import cola_router as cola_operaciones_router
 from app.api.v1.historial import router as historial_router
@@ -77,6 +78,7 @@ app.include_router(empresa.router, prefix="/api/v1/configuracion/empresa", tags=
 app.include_router(historial_router, prefix="/api/v1")
 app.include_router(cotizaciones.router, prefix="/api/v1")
 app.include_router(stock_pt.router, prefix="/api/v1")
+app.include_router(busqueda.router, prefix="/api/v1/busqueda", tags=["Búsqueda general"])
 
 @app.get("/")
 def read_root():

@@ -13,7 +13,7 @@ import {
   rolConocido,
   rolEn
 } from '../../config/roles';
-import { tienePermiso, usePermisos } from '../../services/permisos';
+import { usePermisos } from '../../services/permisos';
 
 // Costos directos e indirectos del expediente (migración 25)
 const PERMISO_COSTOS_EXPEDIENTE = 'PERM_EXPEDIENTE_COSTOS_VER';
@@ -137,7 +137,8 @@ export default function ExpedienteOpModal({
   const [errorCostos, setErrorCostos] = useState('');
   const rol = obtenerRolSesion(usuario);
   const permisosRol = usePermisos();
-  const veCostos = tienePermiso(permisosRol, PERMISO_COSTOS_EXPEDIENTE);
+  // Permiso exacto: PERM_ADMIN_ALL no da costos (el backend tampoco los entrega a ADMIN)
+  const veCostos = permisosRol.includes(PERMISO_COSTOS_EXPEDIENTE);
   const pestanas = useMemo(() => PESTANAS.filter((item) => item.id !== 'costos' || veCostos), [veCostos]);
 
   const permisos = useMemo(() => ({

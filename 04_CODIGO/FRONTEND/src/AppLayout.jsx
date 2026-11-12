@@ -5,11 +5,15 @@ import { Outlet, useNavigate } from 'react-router-dom';
 import { ProyectosProvider } from './context/ProyectosContext';
 import ExpedienteOpModal from './components/modals/ExpedienteOpModal';
 import UsuarioConectado from './components/UsuarioConectado';
+import BusquedaGeneral, { useAlcanceBusqueda } from './components/BusquedaGeneral';
 
 export default function AppLayout() {
   const navigate = useNavigate();
-  const [codigoOp, setCodigoOp] = useState('');
   const [codigoOpConsultada, setCodigoOpConsultada] = useState('');
+  // Alcance de la búsqueda según el rol en la base: tipos de dato y acceso al expediente de OP.
+  // Sin tipos no se muestra la caja; sin expediente no se abre el modal (el backend también lo rechaza)
+  const alcance = useAlcanceBusqueda();
+  const puedeVerExpediente = Boolean(alcance.expediente_op);
 
   const manejarAccionExpediente = useCallback((accion) => {
     const rutasPorAccion = {
@@ -52,35 +56,17 @@ export default function AppLayout() {
       <div className="flex min-h-screen bg-slate-100 font-sans text-slate-900">
         <SidebarNavigation />
         <main className="flex-1 p-6 overflow-y-auto">
-          <div className="mb-5 flex flex-wrap items-end justify-end gap-2 rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+          {/* pl-14: deja libre la esquina del botón flotante de menú (SidebarNavigation, fixed top-4 left-4) */}
+          <div className="mb-5 flex flex-wrap items-center justify-end gap-2 rounded-lg border border-slate-200 bg-white p-3 pl-14 shadow-sm">
             <UsuarioConectado className="mr-auto self-center" />
-            <form
-              className="flex flex-wrap items-end gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (codigoOp.trim()) setCodigoOpConsultada(codigoOp.trim());
-              }}
-            >
-              <label className="text-[11px] font-bold text-slate-600">
-                Consultar expediente de OP
-                <input
-                  value={codigoOp}
-                  onChange={(event) => setCodigoOp(event.target.value)}
-                  placeholder="Código de OP"
-                  className="ml-2 rounded border border-slate-300 px-2 py-1.5 font-mono text-xs outline-none focus:border-emerald-500"
-                  maxLength={50}
-                  required
-                />
-              </label>
-              <button type="submit" className="rounded bg-emerald-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-800">
-                Abrir expediente
-              </button>
-            </form>
+            {alcance.tipos?.length > 0 && (
+              <BusquedaGeneral alcance={alcance} onAbrirOp={setCodigoOpConsultada} />
+            )}
           </div>
           <Outlet />
         </main>
         <ExpedienteOpModal
-          abierto={Boolean(codigoOpConsultada)}
+          abierto={puedeVerExpediente && Boolean(codigoOpConsultada)}
           codigoOp={codigoOpConsultada}
           onClose={() => setCodigoOpConsultada('')}
           onAction={manejarAccionExpediente}
