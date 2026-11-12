@@ -5,6 +5,7 @@ import { useProyectos } from '../../context/ProyectosContext';
 import ModalNuevaCotizacion from '../../components/modals/ModalNuevaCotizacion';
 import HistorialTimelineModal from '../../components/modals/HistorialTimelineModal';
 import ModalCatalogoStockPT from '../../components/modals/ModalCatalogoStockPT';
+import DocumentoCotizacion, { documentoDesdeCotizacionGuardada } from '../../components/cotizacion/DocumentoCotizacion';
 
 const capitalize = (str) => {
   if (typeof str !== 'string' || !str) return '';
@@ -71,11 +72,8 @@ export default function ProyectosView() {
   // ESTADO PARA VISOR, DESCARGA E IMPRESIÓN DE COTIZACIÓN
   const [modalVisorCotizacionAbierto, setModalVisorCotizacionAbierto] = useState(false);
   const [cotizacionDetalle, setCotizacionDetalle] = useState(null);
-  const [mostrarModalEmail, setMostrarModalEmail] = useState(false);
-  const [emailDestino, setEmailDestino] = useState('');
-  const [asuntoEmail, setAsuntoEmail] = useState('');
-  const [mensajeEmail, setMensajeEmail] = useState('');
-  const [enviandoEmail, setEnviandoEmail] = useState(false);
+  // Borrador de cotización que se edita en ModalNuevaCotizacion (null = cotización nueva)
+  const [idCotizacionEditar, setIdCotizacionEditar] = useState(null);
 
   // ESTADO PARA EL MODAL DE HISTORIAL Y TRAZABILIDAD
   const [modalHistorial, setModalHistorial] = useState({
@@ -221,9 +219,6 @@ export default function ProyectosView() {
       setLoading(true);
       const res = await API.get(`/ventas/cotizaciones/${cot.id_cotizacion}`);
       setCotizacionDetalle(res.data);
-      setEmailDestino(res.data.cliente?.email || '');
-      setAsuntoEmail(`Cotización Comercial ${res.data.numero_cotizacion} - HD Precision & Technology`);
-      setMensajeEmail(`Estimado/a cliente,\n\nAdjuntamos la cotización comercial formal ${res.data.numero_cotizacion} para su revisión y aprobación.\n\nQuedamos atentos a cualquier inquietud técnica o comercial.`);
     } catch (e) {
       setCotizacionDetalle({
         id_cotizacion: cot.id_cotizacion,
@@ -239,37 +234,51 @@ export default function ProyectosView() {
         },
         posiciones: []
       });
-      setEmailDestino('');
-      setAsuntoEmail(`Cotización ${cot.numero_cotizacion}`);
-      setMensajeEmail('Adjuntamos cotización formal.');
     } finally {
       setLoading(false);
-      setMostrarModalEmail(false);
       setModalVisorCotizacionAbierto(true);
     }
   };
 
-  const handleEnviarCotizacionPorCorreo = async (e) => {
-    e.preventDefault();
-    if (!emailDestino.trim()) {
-      alert("Por favor ingrese el correo electrónico de destino.");
-      return;
-    }
-    setEnviandoEmail(true);
+  // Borrador (reglas/cotizacion-formato-y-borrador.md): solo el BORRADOR se edita, se emite o se
+  // elimina; solo la EMITIDA se convierte en pedido. El backend valida cada transición.
+  const mensajeDeError = (error, porDefecto) => (
+    typeof error.response?.data?.detail === 'string' ? error.response.data.detail : porDefecto
+  );
+
+  const handleEmitirCotizacion = async (cot) => {
+    if (!window.confirm(`¿Emitir la cotización ${cot.numero_cotizacion}? Después no se podrá editar: un cambio exigirá una cotización nueva.`)) return;
+    setMensaje({ tipo: '', texto: '' });
     try {
-      await API.post(`/ventas/cotizaciones/${cotizacionDetalle.id_cotizacion}/enviar-cliente`, {
-        destinatario: emailDestino,
-        asunto: asuntoEmail,
-        mensaje: mensajeEmail
-      });
-      setMensaje({ tipo: 'exito', texto: `✅ Cotización enviada exitosamente a ${emailDestino}.` });
-      setMostrarModalEmail(false);
+      setLoading(true);
+      await API.post(`/ventas/cotizaciones/${cot.id_cotizacion}/emitir`);
+      setMensaje({ tipo: 'exito', texto: `✅ Cotización ${cot.numero_cotizacion} emitida.` });
       await cargarProyectos();
-    } catch (err) {
-      setMensaje({ tipo: 'error', texto: 'No fue posible registrar el envío por correo electrónico.' });
+    } catch (error) {
+      setMensaje({ tipo: 'error', texto: `❌ ${mensajeDeError(error, 'No fue posible emitir la cotización.')}` });
     } finally {
-      setEnviandoEmail(false);
+      setLoading(false);
     }
+  };
+
+  const handleEliminarCotizacion = async (cot) => {
+    if (!window.confirm(`¿Eliminar el borrador ${cot.numero_cotizacion}? Esta acción no se puede deshacer.`)) return;
+    setMensaje({ tipo: '', texto: '' });
+    try {
+      setLoading(true);
+      await API.delete(`/ventas/cotizaciones/${cot.id_cotizacion}`);
+      setCotizaciones(prev => prev.filter(c => c.id_cotizacion !== cot.id_cotizacion));
+      setMensaje({ tipo: 'exito', texto: `✅ Borrador ${cot.numero_cotizacion} eliminado.` });
+    } catch (error) {
+      setMensaje({ tipo: 'error', texto: `❌ ${mensajeDeError(error, 'No fue posible eliminar el borrador.')}` });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEditarCotizacion = (cot) => {
+    setIdCotizacionEditar(cot.id_cotizacion);
+    setModalNuevoCotizacionAbierto(true);
   };
 
   const esAreaAutorizadaParaPaso = (areaRequerida) => {
@@ -1019,7 +1028,7 @@ export default function ProyectosView() {
             <span className="text-xs font-bold text-slate-600">Gestión de Cotizaciones y Ofertas Comerciales</span>
             <div className="flex gap-2">
               <button
-                onClick={() => setModalNuevoCotizacionAbierto(true)}
+                onClick={() => { setIdCotizacionEditar(null); setModalNuevoCotizacionAbierto(true); }}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow-sm transition flex items-center gap-1.5 cursor-pointer"
               >
                 <span>➕</span> Nueva Cotización
@@ -1106,12 +1115,41 @@ export default function ProyectosView() {
                                 type="button"
                                 onClick={() => handleAbrirVisorCotizacion(c)}
                                 className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded text-[11px] border border-slate-300 transition shadow-xs flex items-center gap-1 cursor-pointer"
-                                title="Ver documento membretado, imprimir/PDF y enviar"
+                                title="Ver documento membretado e imprimir / guardar PDF"
                               >
-                                👁️ Ver / PDF / ✉️
+                                👁️ Ver / PDF
                               </button>
 
-                              {c.estado !== 'APROBADA' && (
+                              {c.estado === 'BORRADOR' && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleEditarCotizacion(c)}
+                                    className="px-2.5 py-1 font-semibold rounded text-[11px] bg-white text-slate-800 border border-slate-300 hover:bg-slate-100 transition cursor-pointer"
+                                    title="Editar el borrador"
+                                  >
+                                    ✏️ Editar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleEmitirCotizacion(c)}
+                                    className="px-3 py-1 font-semibold rounded text-[11px] bg-indigo-600 text-white hover:bg-indigo-700 transition shadow-sm cursor-pointer"
+                                    title="Emitir: deja de ser editable y queda lista para convertirse en pedido"
+                                  >
+                                    📤 Emitir
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleEliminarCotizacion(c)}
+                                    className="px-2.5 py-1 font-semibold rounded text-[11px] bg-white text-red-700 border border-red-300 hover:bg-red-50 transition cursor-pointer"
+                                    title="Eliminar el borrador"
+                                  >
+                                    🗑️ Eliminar
+                                  </button>
+                                </>
+                              )}
+
+                              {c.estado === 'EMITIDA' && (
                                 <button
                                   type="button"
                                   onClick={() => handleConvertirCotizacionAPedido(c.id_cotizacion)}
@@ -2529,14 +2567,6 @@ export default function ProyectosView() {
 
                 <button
                   type="button"
-                  onClick={() => setMostrarModalEmail(!mostrarModalEmail)}
-                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
-                >
-                  ✉️ Enviar al Cliente
-                </button>
-
-                <button
-                  type="button"
                   onClick={() => setModalVisorCotizacionAbierto(false)}
                   className="text-slate-400 hover:text-slate-600 text-lg font-bold ml-2 cursor-pointer"
                 >
@@ -2545,144 +2575,8 @@ export default function ProyectosView() {
               </div>
             </div>
 
-            {mostrarModalEmail && (
-              <form onSubmit={handleEnviarCotizacionPorCorreo} className="p-3 bg-emerald-50 border-b border-emerald-300 space-y-2">
-                <div className="flex justify-between items-center">
-                  <span className="font-bold text-emerald-950 text-xs">✉️ Notificar Oferta Comercial al Cliente</span>
-                  <button type="button" onClick={() => setMostrarModalEmail(false)} className="text-slate-400 hover:text-slate-600 font-bold">✕</button>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-700 mb-0.5">Correo Destino (Cliente) *</label>
-                    <input
-                      type="email"
-                      required
-                      value={emailDestino}
-                      onChange={e => setEmailDestino(e.target.value)}
-                      placeholder="cliente@empresa.com"
-                      className="w-full p-1.5 border border-slate-300 rounded bg-white text-xs font-semibold text-slate-900"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-700 mb-0.5">Asunto del Mensaje *</label>
-                    <input
-                      type="text"
-                      required
-                      value={asuntoEmail}
-                      onChange={e => setAsuntoEmail(e.target.value)}
-                      className="w-full p-1.5 border border-slate-300 rounded bg-white text-xs text-slate-900"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-700 mb-0.5">Cuerpo del Mensaje</label>
-                  <textarea
-                    rows="2"
-                    value={mensajeEmail}
-                    onChange={e => setMensajeEmail(e.target.value)}
-                    className="w-full p-1.5 border border-slate-300 rounded bg-white text-xs text-slate-900 font-sans"
-                  />
-                </div>
-                <div className="flex justify-end gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setMostrarModalEmail(false)}
-                    className="px-3 py-1 bg-slate-200 hover:bg-slate-300 rounded font-semibold text-slate-700"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={enviandoEmail}
-                    className="px-4 py-1 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded shadow-xs"
-                  >
-                    {enviandoEmail ? 'Enviando…' : '🚀 Enviar Ahora'}
-                  </button>
-                </div>
-              </form>
-            )}
-
             <div className="flex-1 overflow-y-auto p-6 bg-slate-100">
-              <div className="max-w-4xl mx-auto bg-white p-8 rounded-lg shadow-md border border-slate-300 font-sans text-slate-900 space-y-5">
-                <div className="flex justify-between items-start border-b border-slate-300 pb-4">
-                  <div>
-                    <h1 className="text-xl font-black tracking-tight text-blue-900">HD Precision &amp; Technology</h1>
-                    <p className="text-[10px] text-slate-500 font-medium">Mecanizado CNC de Alta Precisión · Fabricación &amp; Overhaul Industrial</p>
-                    <p className="text-[10px] text-slate-400">NIT: 900.852.147-1 · Funza, Cundinamarca</p>
-                  </div>
-                  <div className="text-right">
-                    <span className="font-extrabold text-xs text-slate-500 uppercase tracking-wider">Oferta Comercial</span>
-                    <div className="text-xl font-mono font-black text-blue-900">{cotizacionDetalle.numero_cotizacion}</div>
-                    <div className="text-[10px] text-slate-500 mt-0.5">Fecha Emisión: {cotizacionDetalle.fecha_emision}</div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3.5 rounded border border-slate-200 text-xs">
-                  <div className="space-y-1">
-                    <div><span className="font-bold text-slate-600">Cliente / Razón Social:</span> <strong className="text-slate-900">{cotizacionDetalle.cliente?.razon_social || cotizacionDetalle.id_socio}</strong></div>
-                    <div><span className="font-bold text-slate-600">NIT / Identificación:</span> {cotizacionDetalle.cliente?.nit || 'N/A'}</div>
-                    <div><span className="font-bold text-slate-600">Dirección:</span> {cotizacionDetalle.cliente?.direccion || 'Planta Principal'}</div>
-                  </div>
-                  <div className="space-y-1">
-                    <div><span className="font-bold text-slate-600">E-mail Contacto:</span> {cotizacionDetalle.cliente?.email || 'N/A'}</div>
-                    <div><span className="font-bold text-slate-600">Teléfono:</span> {cotizacionDetalle.cliente?.telefono || 'N/A'}</div>
-                    <div><span className="font-bold text-slate-600">Condición de Pago:</span> {cotizacionDetalle.cliente?.condiciones_pago || '30 Días'}</div>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse border border-slate-300 text-left text-xs">
-                    <thead>
-                      <tr className="bg-slate-100 font-bold border-b border-slate-300 text-slate-700">
-                        <th className="p-2 border-r text-center w-12">#</th>
-                        <th className="p-2 border-r w-28">Código / Ref</th>
-                        <th className="p-2 border-r">Descripción del Ítem</th>
-                        <th className="p-2 border-r text-center w-16">Cant.</th>
-                        <th className="p-2 border-r text-right w-28">Valor Unit.</th>
-                        <th className="p-2 text-right w-32">Subtotal</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200">
-                      {cotizacionDetalle.posiciones && cotizacionDetalle.posiciones.length > 0 ? (
-                        cotizacionDetalle.posiciones.map((pos, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50">
-                            <td className="p-2 border-r text-center font-mono text-slate-400">{(idx + 1) * 10}</td>
-                            <td className="p-2 border-r font-mono font-bold text-purple-800">{pos.numero_producto}</td>
-                            <td className="p-2 border-r font-semibold uppercase">{pos.descripcion}</td>
-                            <td className="p-2 border-r text-center font-bold">{pos.cantidad}</td>
-                            <td className="p-2 border-r text-right font-mono">$ {Number(pos.precio_unitario).toLocaleString('es-CO')}</td>
-                            <td className="p-2 text-right font-mono font-bold text-slate-900">
-                              $ {Number(pos.subtotal || pos.cantidad * pos.precio_unitario).toLocaleString('es-CO')}
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan="6" className="p-3 text-center text-slate-400">
-                            Detalles incluidos en la oferta consolidada de la orden.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="flex justify-end pt-2">
-                  <div className="w-72 space-y-1 text-right font-mono text-xs">
-                    <div className="flex justify-between border-t-2 border-slate-800 pt-1.5 font-black text-sm text-blue-900">
-                      <span>Total Oferta (COP):</span>
-                      <span>$ {Number(cotizacionDetalle.valor_total).toLocaleString('es-CO')}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {cotizacionDetalle.condiciones_comerciales && (
-                  <div className="p-3 bg-slate-50 border rounded text-[11px] text-slate-600 leading-relaxed">
-                    <strong className="block text-slate-800 mb-1 font-bold">CONDICIONES COMERCIALES Y PLAZOS:</strong>
-                    <p className="whitespace-pre-line">{cotizacionDetalle.condiciones_comerciales}</p>
-                  </div>
-                )}
-              </div>
+              <DocumentoCotizacion doc={documentoDesdeCotizacionGuardada(cotizacionDetalle)} />
             </div>
 
             <div className="flex justify-end border-t border-slate-200 bg-slate-50 px-4 py-2.5">
@@ -2702,12 +2596,17 @@ export default function ProyectosView() {
       {modalNuevoCotizacionAbierto && (
         <ModalNuevaCotizacion
           isOpen={modalNuevoCotizacionAbierto}
-          onClose={() => setModalNuevoCotizacionAbierto(false)}
+          idCotizacionEditar={idCotizacionEditar}
+          onClose={() => { setModalNuevoCotizacionAbierto(false); setIdCotizacionEditar(null); }}
           onCotizacionGuardada={(nuevaCot) => {
             setModalNuevoCotizacionAbierto(false);
             if (nuevaCot && nuevaCot.numero_cotizacion) {
-              setCotizaciones(prev => [nuevaCot, ...prev]);
+              // Al editar se reemplaza la fila del borrador; una nueva va al inicio
+              setCotizaciones(prev => (idCotizacionEditar
+                ? prev.map(c => (c.id_cotizacion === nuevaCot.id_cotizacion ? { ...c, ...nuevaCot } : c))
+                : [nuevaCot, ...prev]));
             }
+            setIdCotizacionEditar(null);
             cargarProyectos();
           }}
         />

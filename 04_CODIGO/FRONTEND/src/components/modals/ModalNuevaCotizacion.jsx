@@ -2,6 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import API from '../../services/api';
 import ModalCatalogoStockPT from './ModalCatalogoStockPT';
+import DocumentoCotizacion from '../cotizacion/DocumentoCotizacion';
+import { obtenerSesion } from '../../services/sesion';
 
 const TIPOS_FABRICACION = [
   { valor: 'BAJO_PLANO', etiqueta: '📐 Bajo Plano' },
@@ -34,16 +36,50 @@ const cargarSedesDePrueba = (socio) => [
   }
 ];
 
+// Formato aprobado (migración 26): moneda, validez de la oferta y término de negociación
+const MONEDAS = ['COP', 'USD'];
+const VALIDEZ_POR_DEFECTO_DIAS = 30;
+const TERMINO_POR_DEFECTO = 'Puesto en planta HD';
+const CODIGO_CONDICION_POR_DEFECTO = '30_DIAS';
+
+const sumarDias = (fechaIso, dias) => {
+  const fecha = new Date(`${fechaIso}T00:00:00`);
+  if (Number.isNaN(fecha.getTime()) || !dias) return null;
+  fecha.setDate(fecha.getDate() + Number(dias));
+  return fecha.toISOString().split('T')[0];
+};
+
 const nitDeSocio = (socio) => socio.nit_cedula || socio.nit_rut || socio.nit || '';
 const codigoDeSocio = (socio) => socio.codigo_socio || socio.codigo_cliente || '';
 
-export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuardada, onAbrirCrearSocio }) {
+// Posición del formulario a partir de una posición guardada (GET /ventas/cotizaciones/{id}).
+// El backend guarda el tipo de fabricación en vinculo_plano_catalogo; descuento, unidad e
+// impuesto no se guardan, así que vuelven a sus valores por defecto.
+const posicionDesdeGuardada = (pos, indice) => ({
+  id: Date.now() + indice,
+  numero_producto: pos.numero_producto || '',
+  descripcion: pos.descripcion || '',
+  especificaciones: '',
+  expandirNota: false,
+  tipo_fabricacion: TIPOS_FABRICACION.some(t => t.valor === pos.vinculo_plano_catalogo) ? pos.vinculo_plano_catalogo : 'ESTANDAR',
+  cantidad: pos.cantidad || 1,
+  unidad: 'UND',
+  precio_unitario: pos.precio_unitario || 0,
+  descuento_pct: 0,
+  tipo_impuesto: 'IVA_19',
+  vinculo_plano_catalogo: '',
+  ...(pos.origen === 'STOCK_PT' ? { origen: 'STOCK_PT', id_articulo: pos.id_articulo } : {})
+});
+
+// idCotizacionEditar: id de una cotización en BORRADOR para editarla (PUT); sin él, cotización nueva (POST)
+export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuardada, onAbrirCrearSocio, idCotizacionEditar = null }) {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [listaSocios, setListaSocios] = useState([]);
   const [modoVistaPrevia, setModoVistaPrevia] = useState(false);
   const [sedes, setSedes] = useState([]);
   const [catalogoStockAbierto, setCatalogoStockAbierto] = useState(false);
+  const [listaCondicionesPago, setListaCondicionesPago] = useState([]);
 
   const fechaHoyStr = new Date().toISOString().split('T')[0];
   const anioActual = new Date().getFullYear();
@@ -65,8 +101,11 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
     fecha_emision: fechaHoyStr,
     fecha_vigencia: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
     fecha_compromiso: fechaCompromisoInicial,
-    condiciones_pago: '30 Días',
+    id_condicion_pago: '',
     moneda: 'COP',
+    validez_oferta_dias: VALIDEZ_POR_DEFECTO_DIAS,
+    termino_negociacion: TERMINO_POR_DEFECTO,
+    observaciones: '',
     condiciones_comerciales: 'Puesto en planta cliente. Forma de pago según acuerdo...'
   });
 
@@ -77,7 +116,7 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
       descripcion: '',
       especificaciones: '*Incluye:\n- Fabricación y mecanizado de precisión\n*No Incluye:\n- Montaje en sitio',
       expandirNota: false,
-      tipo_fabricacion: 'BAJO_PLANO',
+      tipo_fabricacion: 'ESTANDAR',
       cantidad: 1,
       unidad: 'UND',
       precio_unitario: 0,
@@ -87,7 +126,7 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
     }
   ]);
 
-  // Obtener consecutivo y lista de clientes
+  // Obtener consecutivo y lista de clientes (o el borrador que se edita)
   useEffect(() => {
     const cargarDatosIniciales = async () => {
       try {
@@ -97,6 +136,52 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
         }
       } catch (e) {
         console.warn('Carga remota de socios omitida, operando en modo local.');
+      }
+
+      try {
+        const resCondiciones = await API.get('/maestros/condiciones-pago');
+        const condiciones = Array.isArray(resCondiciones.data) ? resCondiciones.data : [];
+        setListaCondicionesPago(condiciones);
+        const porDefecto = condiciones.find(c => c.codigo === CODIGO_CONDICION_POR_DEFECTO);
+        if (porDefecto && !idCotizacionEditar) {
+          setCabecera(prev => ({ ...prev, id_condicion_pago: prev.id_condicion_pago || String(porDefecto.id_condicion_pago) }));
+        }
+      } catch (e) {
+        console.warn('No se pudieron cargar las condiciones de pago.');
+      }
+
+      if (idCotizacionEditar) {
+        try {
+          const { data } = await API.get(`/ventas/cotizaciones/${idCotizacionEditar}`);
+          if (data.estado !== 'BORRADOR') {
+            setErrorMsg(`La cotización ${data.numero_cotizacion} está ${data.estado}: solo un borrador se puede editar.`);
+          }
+          setCabecera(prev => ({
+            ...prev,
+            numero_cotizacion: data.numero_cotizacion,
+            codigo_cliente: data.cliente?.codigo || '',
+            razon_social: data.cliente?.razon_social || '',
+            nit: data.cliente?.nit || '',
+            telefono: data.cliente?.telefono || '',
+            email: data.cliente?.email || '',
+            direccion: data.cliente?.direccion || '',
+            fecha_emision: data.fecha_emision || prev.fecha_emision,
+            fecha_vigencia: data.fecha_vigencia || prev.fecha_vigencia,
+            condiciones_comerciales: data.condiciones_comerciales || '',
+            moneda: data.moneda || 'COP',
+            validez_oferta_dias: data.validez_oferta_dias || '',
+            id_condicion_pago: data.condicion_pago ? String(data.condicion_pago.id_condicion_pago) : '',
+            termino_negociacion: data.termino_negociacion || '',
+            referencia_global: data.referencia || '',
+            observaciones: data.observaciones || ''
+          }));
+          if (Array.isArray(data.posiciones) && data.posiciones.length > 0) {
+            setPosiciones(data.posiciones.map(posicionDesdeGuardada));
+          }
+        } catch (e) {
+          setErrorMsg('No fue posible cargar el borrador de la cotización.');
+        }
+        return;
       }
 
       try {
@@ -119,7 +204,7 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
     };
 
     cargarDatosIniciales();
-  }, [anioActual]);
+  }, [anioActual, idCotizacionEditar]);
 
   // El campo "NIT / código de cliente" busca por NIT o por código; al coincidir queda de solo lectura.
   const handleSeleccionarSocio = (valorDigitado) => {
@@ -142,8 +227,7 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
         email: socioEncontrado.email || '',
         id_sede: sedeUnica ? sedeUnica.id_sede : '',
         direccion: sedeUnica ? sedeUnica.direccion : '',
-        ciudad: (sedeUnica && sedeUnica.ciudad) || socioEncontrado.ciudad || prev.ciudad,
-        condiciones_pago: socioEncontrado.condiciones_pago || prev.condiciones_pago
+        ciudad: (sedeUnica && sedeUnica.ciudad) || socioEncontrado.ciudad || prev.ciudad
       }));
     } else {
       setSedes([]);
@@ -221,7 +305,7 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
         descripcion: '',
         especificaciones: '',
         expandirNota: false,
-        tipo_fabricacion: 'BAJO_PLANO',
+        tipo_fabricacion: 'ESTANDAR',
         cantidad: 1,
         unidad: 'UND',
         precio_unitario: 0,
@@ -312,6 +396,42 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
   );
 
   const totalCotizacion = totalesLiquidacion.subtotalNeto + totalesLiquidacion.totalImpuestos;
+  const condicionElegida = listaCondicionesPago.find(c => String(c.id_condicion_pago) === String(cabecera.id_condicion_pago));
+
+  // Documento con el formato aprobado a partir de lo que hay en el formulario
+  const documentoVistaPrevia = {
+    numero: cabecera.numero_cotizacion,
+    fecha: cabecera.fecha_emision,
+    moneda: cabecera.moneda,
+    referencia: cabecera.referencia_global,
+    cliente: {
+      razon_social: cabecera.razon_social,
+      nit: cabecera.nit,
+      contacto: cabecera.contacto,
+      email: cabecera.email,
+      telefono: cabecera.telefono,
+      direccion: cabecera.direccion,
+      ciudad: cabecera.ciudad
+    },
+    posiciones: posiciones.map(p => ({
+      codigo: p.numero_producto,
+      cantidad: p.cantidad,
+      descripcion: p.descripcion,
+      detalle: p.especificaciones,
+      valor_unitario: p.precio_unitario,
+      descuento_pct: p.descuento_pct,
+      valor_total: calcularSubtotalLinea(p)
+    })),
+    subtotal: posiciones.reduce((suma, p) => suma + (Number(p.cantidad) || 0) * (Number(p.precio_unitario) || 0), 0),
+    descuento: posiciones.reduce((suma, p) => suma + (Number(p.cantidad) || 0) * (Number(p.precio_unitario) || 0) - calcularSubtotalLinea(p), 0),
+    iva: totalesLiquidacion.totalImpuestos,
+    total: totalCotizacion,
+    condicion_pago: condicionElegida ? condicionElegida.descripcion : '',
+    termino_negociacion: cabecera.termino_negociacion,
+    validez_oferta_dias: cabecera.validez_oferta_dias,
+    observaciones: cabecera.observaciones,
+    elaboro: obtenerSesion()?.nombre || ''
+  };
 
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();
@@ -351,10 +471,15 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
       referencia_global: cabecera.referencia_global || '',
       numero_cotizacion: cabecera.numero_cotizacion,
       fecha_emision: cabecera.fecha_emision,
-      fecha_vigencia: cabecera.fecha_vigencia || null,
+      fecha_vigencia: sumarDias(cabecera.fecha_emision, cabecera.validez_oferta_dias) || cabecera.fecha_vigencia || null,
       fecha_compromiso: cabecera.fecha_compromiso || null,
-      condiciones_pago: cabecera.condiciones_pago || '30 Días',
+      condiciones_pago: condicionElegida ? condicionElegida.descripcion : '',
       condiciones_comerciales: cabecera.condiciones_comerciales || '',
+      moneda: cabecera.moneda || 'COP',
+      validez_oferta_dias: Number(cabecera.validez_oferta_dias) > 0 ? Number(cabecera.validez_oferta_dias) : null,
+      id_condicion_pago: cabecera.id_condicion_pago ? Number(cabecera.id_condicion_pago) : null,
+      termino_negociacion: cabecera.termino_negociacion || '',
+      observaciones: cabecera.observaciones || '',
       subtotal: Math.round(totalesLiquidacion.subtotalNeto),
       impuesto_total: Math.round(totalesLiquidacion.totalImpuestos),
       total_general: Math.round(totalCotizacion),
@@ -385,7 +510,9 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
 
     try {
       setLoading(true);
-      const res = await API.post('/ventas/cotizaciones/', payload);
+      const res = idCotizacionEditar
+        ? await API.put(`/ventas/cotizaciones/${idCotizacionEditar}`, payload)
+        : await API.post('/ventas/cotizaciones/', payload);
 
       if (onCotizacionGuardada) {
         onCotizacionGuardada(res.data || {
@@ -432,6 +559,9 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
             <span className="rounded bg-blue-100 px-2 py-0.5 text-[10px] font-extrabold text-blue-800">
               {modoVistaPrevia ? 'DOCUMENTO FORMAL' : 'INDUSTRIAS HD'}
             </span>
+            <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-extrabold text-amber-800">
+              {idCotizacionEditar ? 'EDITANDO BORRADOR' : 'BORRADOR'}
+            </span>
           </div>
 
           <button
@@ -447,106 +577,7 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
         {modoVistaPrevia ? (
           <div className="flex flex-1 flex-col overflow-hidden">
             <div className="flex-1 overflow-y-auto p-6 bg-slate-200">
-              <div className="max-w-4xl mx-auto bg-white p-8 rounded shadow-lg border border-slate-300 font-sans text-slate-900 text-xs space-y-5">
-                
-                <div className="flex justify-between items-start border-b pb-4">
-                  <div>
-                    <h1 className="text-2xl font-black tracking-tight text-blue-900">HD Precision &amp; Technology</h1>
-                    <p className="text-[10px] text-slate-500">Mecanizado de Precisión · Fabricación &amp; Overhaul Industrial</p>
-                  </div>
-                  <div className="text-right">
-                    <span className="font-extrabold text-sm text-slate-800">COTIZACIÓN Nº</span>
-                    <div className="text-lg font-mono font-black text-blue-800">{cabecera.numero_cotizacion}</div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded border border-slate-200">
-                  <div className="space-y-1">
-                    <div><span className="font-bold text-slate-600">Fecha Emisión:</span> {cabecera.fecha_emision}</div>
-                    <div><span className="font-bold text-blue-900">Fecha Compromiso Entrega:</span> <strong className="text-blue-900">{cabecera.fecha_compromiso}</strong></div>
-                    <div><span className="font-bold text-slate-600">Cliente:</span> {cabecera.razon_social || 'Sin razón social'}</div>
-                    <div><span className="font-bold text-slate-600">Contacto:</span> {cabecera.contacto || 'Sin contacto'}</div>
-                    <div><span className="font-bold text-slate-600">Sede de entrega:</span> {sedeElegida ? sedeElegida.nombre : 'No especificada'}</div>
-                    <div><span className="font-bold text-slate-600">Dirección:</span> {cabecera.direccion || 'No especificada'}</div>
-                  </div>
-                  <div className="space-y-1 text-right sm:text-left">
-                    <div><span className="font-bold text-slate-600">NIT:</span> {cabecera.nit || 'Sin NIT'}</div>
-                    <div><span className="font-bold text-slate-600">E-mail:</span> {cabecera.email || 'Sin correo'}</div>
-                    <div><span className="font-bold text-slate-600">Teléfono:</span> {cabecera.telefono || 'Sin teléfono'}</div>
-                    <div><span className="font-bold text-slate-600">Condición de Pago:</span> {cabecera.condiciones_pago}</div>
-                    <div><span className="font-bold text-slate-600">Ciudad:</span> {cabecera.ciudad}</div>
-                  </div>
-                </div>
-
-                {cabecera.referencia_global && (
-                  <div className="text-xs font-bold bg-blue-50 p-2 rounded border border-blue-200">
-                    REFERENCIA: <span className="uppercase text-blue-900">{cabecera.referencia_global}</span>
-                  </div>
-                )}
-
-                <table className="w-full border-collapse border border-slate-300 text-left text-xs">
-                  <thead>
-                    <tr className="bg-slate-100 font-bold border-b border-slate-300">
-                      <th className="p-2 border-r w-12 text-center">Ítem</th>
-                      <th className="p-2 border-r w-32">Código</th>
-                      <th className="p-2 border-r w-20 text-center">Cant.</th>
-                      <th className="p-2 border-r">Descripción y Alcance Técnico</th>
-                      <th className="p-2 border-r w-24 text-right">Valor Unit.</th>
-                      <th className="p-2 border-r w-20 text-center">Impuesto</th>
-                      <th className="p-2 w-28 text-right">Subtotal</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200">
-                    {posiciones.map((p, idx) => (
-                      <tr key={p.id}>
-                        <td className="p-2 border-r text-center font-bold text-slate-400">{idx + 1}</td>
-                        <td className="p-2 border-r font-mono font-bold text-purple-800">{p.numero_producto}</td>
-                        <td className="p-2 border-r text-center font-bold">{p.cantidad} {p.unidad}</td>
-                        <td className="p-2 border-r">
-                          <div className="font-bold text-slate-900 uppercase">{p.descripcion || 'Sin descripción'}</div>
-                          {p.especificaciones && (
-                            <pre className="font-sans whitespace-pre-wrap text-[11px] text-slate-600 mt-1 pl-2 border-l-2 border-slate-300">
-                              {p.especificaciones}
-                            </pre>
-                          )}
-                          <div className="text-[10px] text-slate-400 mt-1">
-                            Fabricación: <strong>{p.tipo_fabricacion}</strong>
-                          </div>
-                        </td>
-                        <td className="p-2 border-r text-right font-mono">$ {Number(p.precio_unitario).toLocaleString('es-CO')}</td>
-                        <td className="p-2 border-r text-center font-bold text-[10px] text-slate-600">
-                          {p.tipo_impuesto === 'IVA_19' ? '19%' : p.tipo_impuesto === 'IVA_5' ? '5%' : '0%'}
-                        </td>
-                        <td className="p-2 text-right font-mono font-bold">$ {Math.round(calcularSubtotalLinea(p)).toLocaleString('es-CO')}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-
-                <div className="flex justify-end pt-3">
-                  <div className="w-72 space-y-1 text-right font-mono text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-slate-600">Subtotal Posiciones:</span>
-                      <span>$ {Math.round(totalesLiquidacion.subtotalNeto).toLocaleString('es-CO')}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-600">IVA Discriminado:</span>
-                      <span>$ {Math.round(totalesLiquidacion.totalImpuestos).toLocaleString('es-CO')}</span>
-                    </div>
-                    <div className="flex justify-between border-t border-slate-400 pt-1 font-bold text-sm text-blue-900">
-                      <span>Total Oferta (COP):</span>
-                      <span>$ {Math.round(totalCotizacion).toLocaleString('es-CO')}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {cabecera.condiciones_comerciales && (
-                  <div className="p-3 bg-slate-50 border rounded text-[11px] leading-relaxed">
-                    <strong className="block font-bold text-slate-700 mb-1">CONDICIONES COMERCIALES Y PLAZOS:</strong>
-                    <p className="whitespace-pre-line text-slate-600">{cabecera.condiciones_comerciales}</p>
-                  </div>
-                )}
-              </div>
+              <DocumentoCotizacion doc={documentoVistaPrevia} />
             </div>
 
             <div className="flex justify-between items-center border-t border-slate-200 bg-white p-3">
@@ -572,7 +603,7 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
                   disabled={loading}
                   className="rounded bg-blue-600 px-5 py-1.5 font-bold text-white shadow hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
                 >
-                  {loading ? 'Guardando...' : '💾 Confirmar y Emitir'}
+                  {loading ? 'Guardando...' : '💾 Guardar borrador'}
                 </button>
               </div>
             </div>
@@ -684,16 +715,17 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-600">Condición Pago</label>
+                  <label htmlFor="cot-condicion-pago" className="block text-[10px] font-bold text-slate-600">Condición Pago</label>
                   <select
-                    value={cabecera.condiciones_pago}
-                    onChange={e => handleCambioCabecera('condiciones_pago', e.target.value)}
+                    id="cot-condicion-pago"
+                    value={cabecera.id_condicion_pago}
+                    onChange={e => handleCambioCabecera('id_condicion_pago', e.target.value)}
                     className="w-full rounded border border-slate-300 bg-white p-1.5 font-semibold"
                   >
-                    <option value="Contado">Contado</option>
-                    <option value="15 Días">15 Días</option>
-                    <option value="30 Días">30 Días</option>
-                    <option value="60 Días">60 Días</option>
+                    <option value="">{listaCondicionesPago.length ? 'Seleccione…' : 'Sin datos maestros'}</option>
+                    {listaCondicionesPago.map(c => (
+                      <option key={c.id_condicion_pago} value={String(c.id_condicion_pago)}>{c.descripcion}</option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -765,6 +797,54 @@ export default function ModalNuevaCotizacion({ isOpen, onClose, onCotizacionGuar
                     value={cabecera.fecha_compromiso}
                     onChange={e => handleCambioCabecera('fecha_compromiso', e.target.value)}
                     className="w-full rounded border border-blue-400 bg-blue-50/60 p-1.5 font-bold text-blue-950 focus:bg-white"
+                  />
+                </div>
+              </div>
+
+              {/* Fila 3: términos comerciales del formato aprobado */}
+              <div className="grid grid-cols-1 sm:grid-cols-6 gap-2 pt-1 border-t border-slate-200">
+                <div>
+                  <label htmlFor="cot-moneda" className="block text-[10px] font-bold text-slate-600">Moneda</label>
+                  <select
+                    id="cot-moneda"
+                    value={cabecera.moneda}
+                    onChange={e => handleCambioCabecera('moneda', e.target.value)}
+                    className="w-full rounded border border-slate-300 bg-white p-1.5 font-semibold"
+                  >
+                    {MONEDAS.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="cot-validez" className="block text-[10px] font-bold text-slate-600">Validez de la oferta (días)</label>
+                  <input
+                    id="cot-validez"
+                    type="number"
+                    min="1"
+                    value={cabecera.validez_oferta_dias}
+                    onChange={e => handleCambioCabecera('validez_oferta_dias', e.target.value)}
+                    className="w-full rounded border border-slate-300 bg-white p-1.5"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label htmlFor="cot-termino" className="block text-[10px] font-bold text-slate-600">Término de negociación</label>
+                  <input
+                    id="cot-termino"
+                    type="text"
+                    maxLength={100}
+                    value={cabecera.termino_negociacion}
+                    onChange={e => handleCambioCabecera('termino_negociacion', e.target.value)}
+                    className="w-full rounded border border-slate-300 bg-white p-1.5"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label htmlFor="cot-observaciones" className="block text-[10px] font-bold text-slate-600">Observaciones</label>
+                  <input
+                    id="cot-observaciones"
+                    type="text"
+                    placeholder="MAS FLETE"
+                    value={cabecera.observaciones}
+                    onChange={e => handleCambioCabecera('observaciones', e.target.value)}
+                    className="w-full rounded border border-slate-300 bg-white p-1.5"
                   />
                 </div>
               </div>
