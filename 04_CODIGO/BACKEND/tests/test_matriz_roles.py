@@ -30,21 +30,21 @@ from app.core import roles
 # los roles anteriores (DISENO, PRODUCCION, CALIDAD) siguen donde estaban.
 LECTURA = [
     "ADMIN", "VENTAS", "CALIDAD_PRODUCTO", "GESTION_CALIDAD", "ALMACEN", "JEFE_PRODUCCION",
-    "LIDER_PRODUCCION", "COSTOS", "LIDER_DISENO", "DIBUJANTE", "DIRECTOR_PRODUCCION",
+    "LIDER_MECANIZADOS", "COSTOS", "LIDER_DISENO", "DIBUJANTE", "DIRECTOR_PRODUCCION",
     "DISENO", "PRODUCCION", "CALIDAD",
 ]
 # Sin CALIDAD_PRODUCTO, ALMACEN, DIBUJANTE, LIDER_DISENO ni DISENO hasta que se confirme (2026-11-12)
 EXPEDIENTE_OP = [
-    "ADMIN", "GESTION_CALIDAD", "JEFE_PRODUCCION", "LIDER_PRODUCCION", "COSTOS", "DIRECTOR_PRODUCCION",
+    "ADMIN", "GESTION_CALIDAD", "JEFE_PRODUCCION", "LIDER_MECANIZADOS", "COSTOS", "DIRECTOR_PRODUCCION",
     "PRODUCCION", "CALIDAD",
 ]
 HISTORIAL_CONSULTA = [
     "ADMIN", "VENTAS", "CALIDAD_PRODUCTO", "GESTION_CALIDAD", "ALMACEN", "JEFE_PRODUCCION",
-    "LIDER_PRODUCCION", "COSTOS", "MANTENIMIENTO", "LIDER_DISENO", "DIBUJANTE",
+    "LIDER_MECANIZADOS", "COSTOS", "MANTENIMIENTO", "LIDER_DISENO", "DIBUJANTE",
     "DIRECTOR_PRODUCCION", "DISENO", "PRODUCCION", "CALIDAD",
 ]
 SUSPENDER = [
-    "ADMIN", "VENTAS", "CALIDAD_PRODUCTO", "GESTION_CALIDAD", "JEFE_PRODUCCION", "LIDER_PRODUCCION",
+    "ADMIN", "VENTAS", "CALIDAD_PRODUCTO", "GESTION_CALIDAD", "JEFE_PRODUCCION", "LIDER_MECANIZADOS",
     "MANTENIMIENTO", "LIDER_DISENO", "DIBUJANTE", "DISENO", "PRODUCCION", "CALIDAD",
 ]
 STOCK_PT = ["ADMIN", "VENTAS", "JEFE_PRODUCCION", "COSTOS", "LIDER_LOGISTICA"]
@@ -102,9 +102,11 @@ MATRIZ = {
 }
 
 # Cambios de estado de la OP distintos de la liberación: se revisan en el cuerpo del PATCH.
-# Terminar la OP y pasarla a inspección lo puede hacer también LIDER_PRODUCCION.
+# Terminar la OP y pasarla a inspección, y cerrarla como respaldo del Jefe de Producción, lo puede
+# hacer también LIDER_MECANIZADOS.
 ROLES_ACTUALIZAR_OP = ["ADMIN", "JEFE_PRODUCCION", "PRODUCCION"]
-ROLES_NOTIFICAR_OP_TERMINADA = ["ADMIN", "JEFE_PRODUCCION", "LIDER_PRODUCCION", "PRODUCCION"]
+ROLES_NOTIFICAR_OP_TERMINADA = ["ADMIN", "JEFE_PRODUCCION", "LIDER_MECANIZADOS", "PRODUCCION"]
+ROLES_CERRAR_OP = ["ADMIN", "JEFE_PRODUCCION", "LIDER_MECANIZADOS", "PRODUCCION"]
 
 
 def _roles_de(dependant):
@@ -148,6 +150,7 @@ def test_cada_ruta_admite_exactamente_sus_roles(ruta):
 def test_actualizar_op_fuera_de_la_liberacion():
     assert ordenes.ROLES_ACTUALIZAR_OP == ROLES_ACTUALIZAR_OP
     assert ordenes.ROLES_NOTIFICAR_OP_TERMINADA == ROLES_NOTIFICAR_OP_TERMINADA
+    assert ordenes.ROLES_CERRAR_OP == ROLES_CERRAR_OP
     assert {estado.value for estado in ordenes.ESTADOS_OP_NOTIFICAR_CALIDAD} == {"TERMINADA", "EN_INSPECCION"}
 
 
@@ -169,7 +172,10 @@ def test_el_catalogo_tiene_los_16_roles_y_los_anteriores_aparte():
     assert len(roles.ROLES_CATALOGO) == len(set(roles.ROLES_CATALOGO)) == 16
     assert set(roles.ROLES_ANTERIORES) == {"DISENO", "PRODUCCION", "CALIDAD"}
     assert not set(roles.ROLES_ANTERIORES) & set(roles.ROLES_CATALOGO)
-    usados = {rol for lista in MATRIZ.values() for rol in lista} | set(ROLES_ACTUALIZAR_OP) | set(ROLES_NOTIFICAR_OP_TERMINADA)
+    usados = (
+        {rol for lista in MATRIZ.values() for rol in lista}
+        | set(ROLES_ACTUALIZAR_OP) | set(ROLES_NOTIFICAR_OP_TERMINADA) | set(ROLES_CERRAR_OP)
+    )
     assert usados <= set(roles.ROLES_CATALOGO) | set(roles.ROLES_ANTERIORES)
 
 

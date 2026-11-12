@@ -26,7 +26,7 @@ from app.db.models import (
 from app.db.models_calidad import InspeccionCalidad
 from app.db.models_produccion import OperacionOT, RegistroTiempoOperario, SubLoteOperacion
 from app.api.deps import obtener_usuario_actual, requerir_roles, rol_tiene_permiso
-from app.core.roles import ROLES_ACTUALIZAR_OP, ROLES_EXPEDIENTE_OP, ROLES_NOTIFICAR_OP_TERMINADA
+from app.core.roles import ROLES_ACTUALIZAR_OP, ROLES_CERRAR_OP, ROLES_EXPEDIENTE_OP, ROLES_NOTIFICAR_OP_TERMINADA
 from app.api.v1.quality_gate import (
     archivos_vigentes,
     motivos_liberacion_op,
@@ -806,15 +806,16 @@ def actualizar_estado_produccion(
 ):
     """PM-03: Transición de estados en Planta y registro de porcentaje de avance.
     Pasar la OP a un estado liberado se autoriza por permiso (autorizar_liberacion);
-    terminar la OP y pasarla a inspección se admite a ROLES_NOTIFICAR_OP_TERMINADA; el resto de
-    transiciones sigue reservado a ROLES_ACTUALIZAR_OP."""
+    terminar la OP y pasarla a inspección se admite a ROLES_NOTIFICAR_OP_TERMINADA; cerrarla, a
+    ROLES_CERRAR_OP; el resto de transiciones sigue reservado a ROLES_ACTUALIZAR_OP."""
     nuevo_estado = op_up.estado or op_up.estado_produccion
     libera_op = nuevo_estado in {estado.value for estado in ESTADOS_OP_LIBERADOS}
-    roles_permitidos = (
-        ROLES_NOTIFICAR_OP_TERMINADA
-        if nuevo_estado in {estado.value for estado in ESTADOS_OP_NOTIFICAR_CALIDAD}
-        else ROLES_ACTUALIZAR_OP
-    )
+    if nuevo_estado in {estado.value for estado in ESTADOS_OP_NOTIFICAR_CALIDAD}:
+        roles_permitidos = ROLES_NOTIFICAR_OP_TERMINADA
+    elif nuevo_estado == EstadoOPEnum.CERRADA.value:
+        roles_permitidos = ROLES_CERRAR_OP
+    else:
+        roles_permitidos = ROLES_ACTUALIZAR_OP
     if not libera_op and usuario_actual["rol"] not in roles_permitidos:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

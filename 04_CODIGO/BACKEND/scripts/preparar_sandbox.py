@@ -87,6 +87,11 @@ VERIFICACIONES = (
         "SELECT 1 FROM pg_attribute WHERE attrelid = 'public.cotizaciones'::regclass AND attname = 'moneda' "
         "AND EXISTS (SELECT 1 FROM condiciones_pago HAVING count(*) >= 7)",
     ),
+    (
+        "LIDER_MECANIZADOS reemplaza a LIDER_PRODUCCION y cierra OP (migracion 27)",
+        "SELECT 1 FROM rol_permisos WHERE id_rol = 'LIDER_MECANIZADOS' AND id_permiso = 'PERM_OP_CERRAR' "
+        "AND NOT EXISTS (SELECT 1 FROM roles WHERE id_rol = 'LIDER_PRODUCCION')",
+    ),
 )
 
 
@@ -101,7 +106,7 @@ USUARIOS_DEMO = (
     ("gestioncal@sgi.local", "Gestión Calidad Demo", "GESTION_CALIDAD"),
     ("almacen@sgi.local", "Almacenista Demo", "ALMACEN"),
     ("jefeprod@sgi.local", "Jefe Producción Demo", "JEFE_PRODUCCION"),
-    ("liderprod@sgi.local", "Líder Producción Demo", "LIDER_PRODUCCION"),
+    ("liderprod@sgi.local", "Líder Mecanizados Demo", "LIDER_MECANIZADOS"),
     ("operario@sgi.local", "Operario Demo", "OPERARIO"),
     ("costos@sgi.local", "Costos Demo", "COSTOS"),
     ("mantenimiento@sgi.local", "Mantenimiento Demo", "MANTENIMIENTO"),

@@ -4,8 +4,9 @@ SCRUM-27, paso 1c:
 - GET /auth/permisos devuelve los permisos del rol del token según rol_permisos, para que el
   frontend muestre u oculte módulos (por ejemplo la pestaña de costos del expediente). Solo
   orienta la interfaz: las rutas siguen validando por su cuenta.
-- PATCH /ordenes/{id}: LIDER_PRODUCCION puede terminar la OP y pasarla a inspección de
-  CALIDAD_PRODUCTO, pero no hacer las demás transiciones (cerrar es de JEFE_PRODUCCION).
+- PATCH /ordenes/{id}: LIDER_MECANIZADOS puede terminar la OP y pasarla a inspección de
+  CALIDAD_PRODUCTO y cerrarla como respaldo del Jefe de Producción, pero no hacer las demás
+  transiciones. Liberar va por PERM_OP_LIBERAR, que no tiene.
 
 SQLite en memoria con override de get_db y tokens firmados en la prueba; aplicación FastAPI
 mínima con los routers de auth y ordenes. No toca ninguna base real.
@@ -27,7 +28,7 @@ from app.db.models import Permiso, Rol, RolPermiso
 PERMISOS = {
     "ADMIN": ["PERM_ADMIN_ALL"],
     "COSTOS": ["PERM_EXPEDIENTE_COSTOS_VER", "PERM_VALOR_COTIZADO_VER"],
-    "LIDER_PRODUCCION": [],
+    "LIDER_MECANIZADOS": [],
 }
 
 
@@ -87,16 +88,30 @@ def test_permisos_exige_token(client):
 
 
 @pytest.mark.parametrize("estado", ["TERMINADA", "EN_INSPECCION"])
-def test_lider_de_produccion_termina_la_op_y_la_pasa_a_inspeccion(client, estado):
+def test_lider_de_mecanizados_termina_la_op_y_la_pasa_a_inspeccion(client, estado):
     # Pasa el control de rol; sin OP en la base, la ruta responde 404
-    respuesta = client.patch(f"/api/v1/ordenes/{uuid.uuid4()}", json={"estado": estado}, headers=token("LIDER_PRODUCCION"))
+    respuesta = client.patch(f"/api/v1/ordenes/{uuid.uuid4()}", json={"estado": estado}, headers=token("LIDER_MECANIZADOS"))
 
     assert respuesta.status_code == 404
 
 
-@pytest.mark.parametrize("estado", ["CERRADA", "EN_PRODUCCION", "CANCELADA"])
-def test_lider_de_produccion_no_hace_las_demas_transiciones(client, estado):
-    respuesta = client.patch(f"/api/v1/ordenes/{uuid.uuid4()}", json={"estado": estado}, headers=token("LIDER_PRODUCCION"))
+def test_lider_de_mecanizados_cierra_la_op_como_respaldo(client):
+    # Pasa el control de rol; sin OP en la base, la ruta responde 404
+    respuesta = client.patch(f"/api/v1/ordenes/{uuid.uuid4()}", json={"estado": "CERRADA"}, headers=token("LIDER_MECANIZADOS"))
+
+    assert respuesta.status_code == 404
+
+
+@pytest.mark.parametrize("rol", ["OPERARIO", "CALIDAD_PRODUCTO", "VENTAS"])
+def test_otros_roles_no_cierran_la_op(client, rol):
+    respuesta = client.patch(f"/api/v1/ordenes/{uuid.uuid4()}", json={"estado": "CERRADA"}, headers=token(rol))
+
+    assert respuesta.status_code == 403
+
+
+@pytest.mark.parametrize("estado", ["EN_PRODUCCION", "CANCELADA"])
+def test_lider_de_mecanizados_no_hace_las_demas_transiciones(client, estado):
+    respuesta = client.patch(f"/api/v1/ordenes/{uuid.uuid4()}", json={"estado": estado}, headers=token("LIDER_MECANIZADOS"))
 
     assert respuesta.status_code == 403
 

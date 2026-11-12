@@ -100,7 +100,7 @@ CORREOS = {
     "diseno": "liderdiseno@sgi.local",
     "dibujante": "dibujante@sgi.local",
     "almacen": "almacen@sgi.local",
-    "lider_produccion": "liderprod@sgi.local",
+    "lider_mecanizados": "liderprod@sgi.local",
     "calidad": "calidadprod@sgi.local",
     "operario": "operario@sgi.local",
     "ventas": "ventas@sgi.local",
@@ -499,7 +499,7 @@ def bloque_compras_y_entregas(s: Sembrador, ctx: dict) -> str:
         s.asegurar(
             EntregaMaterialOP, {"op_id": ctx["ordenes"][op].id_op, "lote_id": ctx["lotes"][sku].id},
             {"cantidad_entregada": cantidad, "entregado_por": usuarios["almacen"].id_usuario,
-             "recibido_por_produccion": usuarios["lider_produccion"].id_usuario},
+             "recibido_por_produccion": usuarios["lider_mecanizados"].id_usuario},
             al_crear={"fecha_entrega": FECHA_BASE},
         )
     return "4 solicitudes radicadas y 3 entregas (perfil de BT-200: 6 de 10 m). Aprobaciones E18/E19 pendientes"

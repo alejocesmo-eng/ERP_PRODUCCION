@@ -34,7 +34,7 @@ PERMISOS = {
 }
 ROLES_PRUEBA = [
     roles.ADMIN, roles.VENTAS, roles.JEFE_PRODUCCION, roles.GESTION_CALIDAD, roles.COSTOS,
-    roles.LIDER_PRODUCCION, roles.ALMACEN, roles.OPERARIO, roles.CALIDAD,
+    roles.LIDER_MECANIZADOS, roles.ALMACEN, roles.OPERARIO, roles.CALIDAD,
 ]
 
 
@@ -103,7 +103,7 @@ def tipos_encontrados(client, rol, q="bus", **kwargs):
     (roles.JEFE_PRODUCCION, {"PEDIDO", "OP"}),
     (roles.GESTION_CALIDAD, {"PEDIDO", "OP"}),
     (roles.COSTOS, {"PEDIDO", "OP"}),
-    (roles.LIDER_PRODUCCION, {"OP"}),
+    (roles.LIDER_MECANIZADOS, {"OP"}),
     (roles.ADMIN, {"COTIZACION", "PEDIDO", "OP"}),
     (roles.ALMACEN, set()),
     (roles.OPERARIO, set()),
@@ -124,6 +124,14 @@ def test_busca_por_nombre_clientes_y_productos(ctx):
     assert {f["codigo"] for f in datos["resultados"]} == {"OP-BUS-1", "RN-001-001-000001"}
 
 
+def test_lider_de_mecanizados_encuentra_al_cliente_sin_valor_cotizado(ctx):
+    client, _ = ctx
+    tipos, datos = tipos_encontrados(client, roles.LIDER_MECANIZADOS, q="metales")
+
+    assert tipos == {"CLIENTE"}
+    assert datos["valor_cotizado"] is False and datos["costos"] is False
+
+
 def test_ventas_no_ve_op_ni_recibe_acceso_denegado(ctx):
     client, _ = ctx
     tipos, datos = tipos_encontrados(client, roles.VENTAS, q="OP-BUS")
@@ -134,14 +142,14 @@ def test_ventas_no_ve_op_ni_recibe_acceso_denegado(ctx):
 
 def test_el_rol_se_lee_de_la_base_y_no_del_token(ctx):
     client, Sesion = ctx
-    # El token dice VENTAS, pero en la base el usuario es LIDER_PRODUCCION
-    assert tipos_encontrados(client, roles.LIDER_PRODUCCION, rol_en_token=roles.VENTAS)[0] == {"OP"}
+    # El token dice VENTAS, pero en la base el usuario es LIDER_MECANIZADOS
+    assert tipos_encontrados(client, roles.LIDER_MECANIZADOS, rol_en_token=roles.VENTAS)[0] == {"OP"}
 
     with Sesion() as s:
-        s.query(Usuario).filter_by(email="lider_produccion@prueba.test").update({"id_rol": roles.ALMACEN})
+        s.query(Usuario).filter_by(email="lider_mecanizados@prueba.test").update({"id_rol": roles.ALMACEN})
         s.commit()
     # Mismo token: el cambio de rol cuenta desde la siguiente consulta
-    assert tipos_encontrados(client, roles.LIDER_PRODUCCION)[0] == set()
+    assert tipos_encontrados(client, roles.LIDER_MECANIZADOS)[0] == set()
 
 
 def test_valor_cotizado_solo_con_su_permiso(ctx):
@@ -149,7 +157,7 @@ def test_valor_cotizado_solo_con_su_permiso(ctx):
 
     _, ventas = tipos_encontrados(client, roles.VENTAS)
     _, admin = tipos_encontrados(client, roles.ADMIN)
-    _, lider = tipos_encontrados(client, roles.LIDER_PRODUCCION)
+    _, lider = tipos_encontrados(client, roles.LIDER_MECANIZADOS)
 
     assert {f["valor_cotizado"] for f in ventas["resultados"]} == {1500.0}
     assert all("valor_cotizado" not in f for f in admin["resultados"]) and admin["valor_cotizado"] is False
@@ -168,7 +176,7 @@ def test_calidad_anterior_se_trata_como_gestion_calidad(ctx):
     (roles.JEFE_PRODUCCION, True, True),
     (roles.GESTION_CALIDAD, True, True),
     (roles.COSTOS, True, True),
-    (roles.LIDER_PRODUCCION, True, False),
+    (roles.LIDER_MECANIZADOS, True, False),
     (roles.ADMIN, True, False),
     (roles.VENTAS, False, False),
     (roles.ALMACEN, False, False),
@@ -185,7 +193,7 @@ def test_costos_de_la_op_solo_para_roles_de_costos(ctx, ruta):
     client, _ = ctx
 
     assert client.get(ruta, headers=token(roles.COSTOS)).status_code == 200
-    assert client.get(ruta, headers=token(roles.LIDER_PRODUCCION)).status_code == 403
+    assert client.get(ruta, headers=token(roles.LIDER_MECANIZADOS)).status_code == 403
     assert client.get(ruta, headers=token(roles.ADMIN)).status_code == 403
     # El token no basta: dice COSTOS, pero el usuario es VENTAS en la base
     assert client.get(ruta, headers=token(roles.VENTAS, rol_en_token=roles.COSTOS)).status_code == 403

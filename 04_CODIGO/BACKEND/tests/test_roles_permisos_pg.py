@@ -4,6 +4,8 @@ SCRUM-27 paso 1b sobre PostgreSQL: con la migración 25 aplicada están los 16 r
 y el reparto de permisos de reglas/permisos-por-rol-modulo.md, con PERM_OP_LIBERAR solo en
 LIDER_DISENO y DIBUJANTE; la reversión deshace solo lo que la migración registró, se detiene si un usuario tiene un rol nuevo y la migración se puede
 volver a aplicar.
+La migración 27 (LIDER_PRODUCCION pasa a LIDER_MECANIZADOS) se aplica dentro de cada prueba que la
+necesita (es idempotente) y se revierte antes de revertir la 25.
 
 Se ejecuta sobre la copia PostgreSQL de SGI_TEST_PG_URL (sgi_test_*) con la migración 25
 aplicada, dentro de una transacción que se revierte al terminar. Los archivos SQL se ejecutan
@@ -26,6 +28,8 @@ URL_PG = os.environ.get("SGI_TEST_PG_URL")
 RUTA_BASE_DATOS = Path(__file__).resolve().parents[3] / "05_BASE_DATOS"
 MIGRACION_25 = RUTA_BASE_DATOS / "25_MIGRACION_ROLES_PERMISOS_POR_ROL.sql"
 REVERSION_25 = RUTA_BASE_DATOS / "25_REVERSION_ROLES_PERMISOS_POR_ROL.sql"
+MIGRACION_27 = RUTA_BASE_DATOS / "27_MIGRACION_ROL_LIDER_MECANIZADOS.sql"
+REVERSION_27 = RUTA_BASE_DATOS / "27_REVERSION_ROL_LIDER_MECANIZADOS.sql"
 
 pytestmark = pytest.mark.pg
 
@@ -66,7 +70,8 @@ def conteo(sesion):
     )).one()
 
 
-def test_la_migracion_25_creo_los_roles_del_catalogo(sesion):
+def test_las_migraciones_25_y_27_dejan_los_roles_del_catalogo(sesion):
+    ejecutar_sql(sesion, MIGRACION_27)
     existentes = set(sesion.execute(text("SELECT id_rol FROM roles")).scalars())
 
     assert set(roles.ROLES_CATALOGO) <= existentes
@@ -106,6 +111,10 @@ def test_aprobaciones_de_compras_metas_y_retencion(sesion):
 
 
 def test_reversion_y_reaplicacion_dejan_los_mismos_conteos(sesion):
+    ejecutar_sql(sesion, MIGRACION_27)
+    con_27 = conteo(sesion)
+    # La 27 se revierte antes que la 25 (su PERM_OP_CERRAR es una asignación posterior a la 25)
+    ejecutar_sql(sesion, REVERSION_27)
     con_25 = conteo(sesion)
     registrados = set(sesion.execute(
         text("SELECT id_rol FROM migracion_25_registro WHERE tipo = 'ROL'")
@@ -148,6 +157,8 @@ def test_reversion_y_reaplicacion_dejan_los_mismos_conteos(sesion):
 
     assert conteo(sesion) == con_25
     assert roles_con(sesion, "PERM_OP_LIBERAR") == {roles.LIDER_DISENO, roles.DIBUJANTE}
+    ejecutar_sql(sesion, MIGRACION_27)
+    assert conteo(sesion) == con_27
 
 
 def test_la_reversion_se_detiene_si_un_usuario_tiene_un_rol_nuevo(sesion):
