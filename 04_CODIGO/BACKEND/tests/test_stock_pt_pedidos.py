@@ -547,6 +547,8 @@ def test_aprobar_y_generar_pedido_propaga_origen_e_id_articulo(ctx, catalogo):
     assert r.status_code == 201, r.text
     id_cot = r.json()["id_cotizacion"]
     antes = foto_inventario(Sesion, catalogo["pt"])
+    # Solo una cotización EMITIDA se convierte en pedido (reglas/cotizacion-formato-y-borrador.md)
+    assert client.post(f"/api/v1/ventas/cotizaciones/{id_cot}/emitir", headers=token("VENTAS")).status_code == 200
     ra = client.patch(f"/api/v1/ventas/cotizaciones/{id_cot}/aprobar-y-generar-pedido", headers=token("VENTAS"))
     assert ra.status_code == 200, ra.text
     assert foto_inventario(Sesion, catalogo["pt"]) == antes      # aprobar tampoco reserva

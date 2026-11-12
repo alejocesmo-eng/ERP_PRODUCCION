@@ -12,6 +12,7 @@ from app.api.deps import obtener_usuario_actual, requerir_roles
 from app.core.roles import ROLES_GESTION_ALMACEN, ROLES_LECTURA, ROLES_SOLO_ADMIN
 from app.db.database import get_db
 from app.db.models import (
+    CondicionPago,
     AreaTrabajadorEnum,
     ArticuloInventario,
     CategoriaInventario,
@@ -179,6 +180,18 @@ def _guardar(db: Session, entidad, mensaje: str):
         db.rollback()
         raise HTTPException(status_code=500, detail=mensaje) from error
     return entidad
+
+
+@router.get("/condiciones-pago")
+def listar_condiciones_pago(
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requerir_roles(ROLES_LECTURA)),
+):
+    """Condiciones de pago activas para la cotización (migración 26), en el orden configurado."""
+    return [
+        {"id_condicion_pago": c.id_condicion_pago, "codigo": c.codigo, "descripcion": c.descripcion}
+        for c in db.query(CondicionPago).filter(CondicionPago.activo.is_(True)).order_by(CondicionPago.orden, CondicionPago.descripcion)
+    ]
 
 
 @router.get("/socios")

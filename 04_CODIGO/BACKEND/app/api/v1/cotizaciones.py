@@ -1,17 +1,21 @@
 # app/api/v1/cotizaciones.py
+import re
 import uuid
-from typing import List, Optional, Any, Union
+from typing import List, Literal, Optional, Any, Union
 from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.db.database import get_db
 from app.api.deps import obtener_usuario_actual, requerir_roles
 from app.core.roles import ROLES_VENTAS
 from app.services.auditoria import agregar_evento_trazabilidad
 from app.db.models import (
+    CondicionPago,
     Cotizacion,
+    HistorialAccionesDocumento,
+    Usuario,
     PosicionCotizacion,
     SocioNegocio,
     Proyecto,
@@ -57,6 +61,12 @@ class CotizacionCreateIn(BaseModel):
     fecha_compromiso: Optional[date] = None
     condiciones_pago: Optional[str] = "30 Días"
     condiciones_comerciales: Optional[str] = None
+    # Formato aprobado (migración 26)
+    moneda: Literal["COP", "USD"] = "COP"
+    validez_oferta_dias: Optional[int] = Field(default=None, gt=0)
+    id_condicion_pago: Optional[int] = None
+    termino_negociacion: Optional[str] = Field(default="Puesto en planta HD", max_length=100)
+    observaciones: Optional[str] = None
     subtotal: Optional[float] = 0.0
     impuesto_total: Optional[float] = 0.0
     total_general: Optional[float] = 0.0
@@ -91,9 +101,167 @@ def listar_cotizaciones(db: Session = Depends(get_db), usuario: dict = Depends(o
             "fecha_emision": c.fecha_emision.strftime("%Y-%m-%d") if c.fecha_emision else "",
             "fecha_vigencia": c.fecha_vigencia.strftime("%Y-%m-%d") if c.fecha_vigencia else "",
             "valor_total": float(c.valor_total or 0.0),
+            "moneda": c.moneda or "COP",
             "estado": c.estado.value if hasattr(c.estado, "value") else str(c.estado)
         })
     return resultado
+
+
+@router.get("/siguiente-consecutivo")
+def siguiente_consecutivo(
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requerir_roles(ROLES_VENTAS)),
+):
+    """Número sugerido para una cotización nueva, en el formato de la empresa HD-XXXXX-AA."""
+    numeros = [fila[0] for fila in db.query(Cotizacion.numero_cotizacion).filter(Cotizacion.numero_cotizacion.like("HD-%")).all()]
+    return {"siguiente_numero": siguiente_numero_hd(numeros, date.today())}
+
+# Borrador (reglas/cotizacion-formato-y-borrador.md): una cotización nueva es BORRADOR, editable
+# y eliminable sin dejar rastro en pedidos. Al emitirla pasa a EMITIDA y deja de ser editable.
+# Solo una cotización EMITIDA se convierte en pedido.
+MENSAJE_SOLO_BORRADOR = "Solo una cotización en BORRADOR se puede {accion}. Esta está en {estado}."
+
+
+def _estado_de(cot: Cotizacion) -> str:
+    return cot.estado.value if hasattr(cot.estado, "value") else str(cot.estado)
+
+
+def _exigir_borrador(cot: Cotizacion, accion: str) -> None:
+    estado = _estado_de(cot)
+    if estado != EstadoCotizacionEnum.BORRADOR.value:
+        raise HTTPException(status_code=409, detail=MENSAJE_SOLO_BORRADOR.format(accion=accion, estado=estado))
+
+
+def _aplicar_formato(db: Session, cot: Cotizacion, data: "CotizacionCreateIn") -> None:
+    """Moneda, validez, condición de pago (datos maestros activos), término, referencia y observaciones."""
+    if data.id_condicion_pago is not None:
+        condicion = db.query(CondicionPago).filter(
+            CondicionPago.id_condicion_pago == data.id_condicion_pago, CondicionPago.activo.is_(True)
+        ).first()
+        if not condicion:
+            raise HTTPException(status_code=400, detail="La condición de pago no existe o no está activa.")
+    cot.moneda = data.moneda
+    cot.validez_oferta_dias = data.validez_oferta_dias
+    cot.id_condicion_pago = data.id_condicion_pago
+    cot.termino_negociacion = (data.termino_negociacion or "").strip() or None
+    cot.referencia = (data.referencia_global or "").strip()[:150] or None
+    cot.observaciones = (data.observaciones or "").strip() or None
+
+
+# Número de la empresa: HD-XXXXX-AA (consecutivo de 5 dígitos y año en 2 dígitos)
+_NUMERO_HD = re.compile(r"^HD-(\d{5})-(\d{2})$")
+
+
+def siguiente_numero_hd(numeros: List[str], hoy: date) -> str:
+    """Siguiente HD-XXXXX-AA: el mayor consecutivo HD existente más uno (sin reiniciar por año)."""
+    consecutivos = [int(m.group(1)) for m in (_NUMERO_HD.match(n or "") for n in numeros) if m]
+    return f"HD-{(max(consecutivos) if consecutivos else 0) + 1:05d}-{hoy.year % 100:02d}"
+
+
+def _elaborado_por(db: Session, cot: Cotizacion) -> dict:
+    """Firma "Elaboró": el usuario que creó la cotización (evento COTIZACION_CREADA)."""
+    evento = db.query(HistorialAccionesDocumento).filter(
+        HistorialAccionesDocumento.tipo_entidad == "COTIZACION",
+        HistorialAccionesDocumento.identificador_documento == cot.numero_cotizacion,
+        HistorialAccionesDocumento.accion == "COTIZACION_CREADA",
+    ).order_by(HistorialAccionesDocumento.fecha_hora).first()
+    if not evento:
+        return {"email": None, "nombre": None}
+    usuario = db.query(Usuario).filter(Usuario.email == evento.usuario_responsable).first()
+    return {"email": evento.usuario_responsable, "nombre": usuario.nombre_completo if usuario else evento.usuario_responsable}
+
+
+def _resolver_socio(db: Session, data: "CotizacionCreateIn") -> SocioNegocio:
+    """Socio de la cotización: por id, por código o por NIT; si no existe y hay NIT, se crea."""
+    socio = None
+
+    if data.id_socio:
+        try:
+            uuid_parsed = uuid.UUID(str(data.id_socio))
+            socio = db.query(SocioNegocio).filter(SocioNegocio.id_socio == uuid_parsed).first()
+        except (ValueError, AttributeError):
+            socio = None
+
+    # SCRUM-22: codigo_socio es el NIT solo con números; codigo_cliente y nit se comparan normalizados
+    codigo_por_codigo = codigo_socio_o_none(data.codigo_cliente)
+    codigo_por_nit = codigo_socio_o_none(data.nit)
+
+    if not socio and codigo_por_codigo:
+        socio = db.query(SocioNegocio).filter(SocioNegocio.codigo_socio == codigo_por_codigo).first()
+
+    if not socio and codigo_por_nit:
+        socio = db.query(SocioNegocio).filter(SocioNegocio.codigo_socio == codigo_por_nit).first()
+
+    if not socio:
+        # Cliente nuevo: sin NIT válido no se crea (antes se inventaban CLI-/NIT- aleatorios)
+        nit_cliente = data.nit if codigo_por_nit else (data.codigo_cliente if codigo_por_codigo else None)
+        if not nit_cliente:
+            raise HTTPException(
+                status_code=400,
+                detail="No se puede crear un cliente sin NIT. Indique el NIT del cliente (solo números, "
+                       "con dígito de verificación opcional tras un guion)."
+            )
+        socio = SocioNegocio(
+            id_socio=uuid.uuid4(),
+            codigo_socio=normalizar_nit(nit_cliente),
+            nit_cedula=nit_cliente.strip().upper(),
+            razon_social=data.razon_social or "Cliente Sin Razón Social",
+            es_cliente=True,
+            es_proveedor=False,
+            condiciones_pago_dias=30,
+            estado_activo=True,
+            direccion=data.direccion_cliente,
+            telefono=data.contacto_telefono,
+            email=data.contacto_email
+        )
+        db.add(socio)
+        db.flush()
+    return socio
+
+
+def _total_documento(data: "CotizacionCreateIn") -> float:
+    return data.total_general if (data.total_general and data.total_general > 0) else sum(
+        (p.cantidad * p.precio_unitario * (1 - p.descuento_pct / 100)) for p in data.posiciones
+    )
+
+
+def _agregar_posiciones(db: Session, cotizacion: Cotizacion, posiciones: List[PosicionCotizacionIn]) -> None:
+    for pos in posiciones:
+        origen_pos = (pos.origen or "PLANO").strip().upper()
+        if origen_pos not in ("PLANO", ORIGEN_STOCK_PT):
+            raise HTTPException(status_code=400, detail="El origen de la posición debe ser PLANO o STOCK_PT.")
+        sku_pos = pos.numero_producto or "REF-COT"
+        descripcion_pos = pos.descripcion
+        id_articulo_pos = None
+        if origen_pos == ORIGEN_STOCK_PT:
+            # La cotización no es vinculante: solo valida el artículo PT y fija SKU/descripción.
+            # No reserva ni modifica el saldo de inventario.
+            art = (
+                db.query(ArticuloInventario)
+                .filter(ArticuloInventario.id_articulo == pos.id_articulo)
+                .first()
+                if pos.id_articulo else None
+            )
+            if art is None or art.categoria != CATEGORIA_PT:
+                raise HTTPException(
+                    status_code=400,
+                    detail="La posición de stock PT requiere un artículo existente de categoría PRODUCTO_TERMINADO."
+                )
+            sku_pos = art.codigo_sku
+            descripcion_pos = art.nombre
+            id_articulo_pos = art.id_articulo
+        db.add(PosicionCotizacion(
+            id_posicion=uuid.uuid4(),
+            id_cotizacion=cotizacion.id_cotizacion,
+            numero_producto=sku_pos,
+            descripcion=descripcion_pos,
+            cantidad=int(pos.cantidad),
+            precio_unitario=pos.precio_unitario,
+            vinculo_plano_catalogo=pos.vinculo_plano_catalogo,
+            origen=origen_pos,
+            id_articulo=id_articulo_pos
+        ))
+
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def crear_cotizacion(
@@ -102,53 +270,8 @@ def crear_cotizacion(
     usuario: dict = Depends(requerir_roles(ROLES_VENTAS)),
 ):
     try:
-        socio = None
-
-        if data.id_socio:
-            try:
-                uuid_parsed = uuid.UUID(str(data.id_socio))
-                socio = db.query(SocioNegocio).filter(SocioNegocio.id_socio == uuid_parsed).first()
-            except (ValueError, AttributeError):
-                socio = None
-
-        # SCRUM-22: codigo_socio es el NIT solo con números; codigo_cliente y nit se comparan normalizados
-        codigo_por_codigo = codigo_socio_o_none(data.codigo_cliente)
-        codigo_por_nit = codigo_socio_o_none(data.nit)
-
-        if not socio and codigo_por_codigo:
-            socio = db.query(SocioNegocio).filter(SocioNegocio.codigo_socio == codigo_por_codigo).first()
-
-        if not socio and codigo_por_nit:
-            socio = db.query(SocioNegocio).filter(SocioNegocio.codigo_socio == codigo_por_nit).first()
-
-        if not socio:
-            # Cliente nuevo: sin NIT válido no se crea (antes se inventaban CLI-/NIT- aleatorios)
-            nit_cliente = data.nit if codigo_por_nit else (data.codigo_cliente if codigo_por_codigo else None)
-            if not nit_cliente:
-                raise HTTPException(
-                    status_code=400,
-                    detail="No se puede crear un cliente sin NIT. Indique el NIT del cliente (solo números, "
-                           "con dígito de verificación opcional tras un guion)."
-                )
-            socio = SocioNegocio(
-                id_socio=uuid.uuid4(),
-                codigo_socio=normalizar_nit(nit_cliente),
-                nit_cedula=nit_cliente.strip().upper(),
-                razon_social=data.razon_social or "Cliente Sin Razón Social",
-                es_cliente=True,
-                es_proveedor=False,
-                condiciones_pago_dias=30,
-                estado_activo=True,
-                direccion=data.direccion_cliente,
-                telefono=data.contacto_telefono,
-                email=data.contacto_email
-            )
-            db.add(socio)
-            db.flush()
-
-        total_doc = data.total_general if (data.total_general and data.total_general > 0) else sum(
-            (p.cantidad * p.precio_unitario * (1 - p.descuento_pct / 100)) for p in data.posiciones
-        )
+        socio = _resolver_socio(db, data)
+        total_doc = _total_documento(data)
 
         nueva_cot = Cotizacion(
             id_cotizacion=uuid.uuid4(),
@@ -160,45 +283,11 @@ def crear_cotizacion(
             valor_total=total_doc,
             condiciones_comerciales=data.condiciones_comerciales
         )
+        _aplicar_formato(db, nueva_cot, data)
         db.add(nueva_cot)
         db.flush()
 
-        for pos in data.posiciones:
-            origen_pos = (pos.origen or "PLANO").strip().upper()
-            if origen_pos not in ("PLANO", ORIGEN_STOCK_PT):
-                raise HTTPException(status_code=400, detail="El origen de la posición debe ser PLANO o STOCK_PT.")
-            sku_pos = pos.numero_producto or "REF-COT"
-            descripcion_pos = pos.descripcion
-            id_articulo_pos = None
-            if origen_pos == ORIGEN_STOCK_PT:
-                # La cotización no es vinculante: solo valida el artículo PT y fija SKU/descripción.
-                # No reserva ni modifica el saldo de inventario.
-                art = (
-                    db.query(ArticuloInventario)
-                    .filter(ArticuloInventario.id_articulo == pos.id_articulo)
-                    .first()
-                    if pos.id_articulo else None
-                )
-                if art is None or art.categoria != CATEGORIA_PT:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="La posición de stock PT requiere un artículo existente de categoría PRODUCTO_TERMINADO."
-                    )
-                sku_pos = art.codigo_sku
-                descripcion_pos = art.nombre
-                id_articulo_pos = art.id_articulo
-            nueva_pos = PosicionCotizacion(
-                id_posicion=uuid.uuid4(),
-                id_cotizacion=nueva_cot.id_cotizacion,
-                numero_producto=sku_pos,
-                descripcion=descripcion_pos,
-                cantidad=int(pos.cantidad),
-                precio_unitario=pos.precio_unitario,
-                vinculo_plano_catalogo=pos.vinculo_plano_catalogo,
-                origen=origen_pos,
-                id_articulo=id_articulo_pos
-            )
-            db.add(nueva_pos)
+        _agregar_posiciones(db, nueva_cot, data.posiciones)
 
         agregar_evento_trazabilidad(
             db,
@@ -256,6 +345,16 @@ def obtener_detalle_cotizacion(
         "valor_total": float(c.valor_total or 0.0),
         "estado": c.estado.value if hasattr(c.estado, "value") else str(c.estado),
         "condiciones_comerciales": c.condiciones_comerciales or "",
+        "moneda": c.moneda or "COP",
+        "validez_oferta_dias": c.validez_oferta_dias,
+        "condicion_pago": (
+            {"id_condicion_pago": c.condicion_pago.id_condicion_pago, "descripcion": c.condicion_pago.descripcion}
+            if c.condicion_pago else None
+        ),
+        "termino_negociacion": c.termino_negociacion or "",
+        "referencia": c.referencia or "",
+        "observaciones": c.observaciones or "",
+        "elaborado_por": _elaborado_por(db, c),
         "cliente": {
             "codigo": socio.codigo_socio if socio else "CLI-N/A",
             "razon_social": socio.razon_social if socio else "Cliente Comercial",
@@ -280,6 +379,115 @@ def obtener_detalle_cotizacion(
             for p in c.posiciones
         ]
     }
+
+@router.put("/{id_cotizacion}")
+def editar_cotizacion_borrador(
+    id_cotizacion: uuid.UUID,
+    data: CotizacionCreateIn,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requerir_roles(ROLES_VENTAS)),
+):
+    """Reemplaza cliente, fechas, condiciones y posiciones de una cotización en BORRADOR.
+    El número de la cotización no cambia."""
+    cot = db.query(Cotizacion).filter(Cotizacion.id_cotizacion == id_cotizacion).with_for_update().first()
+    if not cot:
+        raise HTTPException(status_code=404, detail="Cotización no encontrada.")
+    _exigir_borrador(cot, "editar")
+    try:
+        socio = _resolver_socio(db, data)
+        cot.id_socio = socio.id_socio
+        cot.fecha_emision = data.fecha_emision or cot.fecha_emision
+        cot.fecha_vigencia = data.fecha_vigencia
+        cot.valor_total = _total_documento(data)
+        cot.condiciones_comerciales = data.condiciones_comerciales
+        _aplicar_formato(db, cot, data)
+        cot.posiciones.clear()
+        db.flush()
+        _agregar_posiciones(db, cot, data.posiciones)
+        agregar_evento_trazabilidad(
+            db,
+            tipo_entidad="COTIZACION",
+            identificador=cot.numero_cotizacion,
+            accion="COTIZACION_EDITADA",
+            usuario=usuario["email"],
+            area="VENTAS",
+            estado_anterior="BORRADOR",
+            estado_nuevo="BORRADOR",
+            motivo=f"id_cotizacion={cot.id_cotizacion}; posiciones={len(data.posiciones)}",
+        )
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al editar la cotización: {str(e)}")
+    return {
+        "id_cotizacion": str(cot.id_cotizacion),
+        "numero_cotizacion": cot.numero_cotizacion,
+        "id_socio": socio.razon_social,
+        "fecha_emision": str(cot.fecha_emision),
+        "valor_total": float(cot.valor_total),
+        "estado": "BORRADOR"
+    }
+
+
+@router.delete("/{id_cotizacion}")
+def eliminar_cotizacion_borrador(
+    id_cotizacion: uuid.UUID,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requerir_roles(ROLES_VENTAS)),
+):
+    """Elimina una cotización en BORRADOR con sus posiciones. Un borrador nunca generó pedido,
+    así que no queda rastro en pedidos; la trazabilidad registra la eliminación."""
+    cot = db.query(Cotizacion).filter(Cotizacion.id_cotizacion == id_cotizacion).with_for_update().first()
+    if not cot:
+        raise HTTPException(status_code=404, detail="Cotización no encontrada.")
+    _exigir_borrador(cot, "eliminar")
+    numero = cot.numero_cotizacion
+    agregar_evento_trazabilidad(
+        db,
+        tipo_entidad="COTIZACION",
+        identificador=numero,
+        accion="COTIZACION_ELIMINADA",
+        usuario=usuario["email"],
+        area="VENTAS",
+        estado_anterior="BORRADOR",
+        motivo=f"id_cotizacion={cot.id_cotizacion}",
+    )
+    db.delete(cot)
+    db.commit()
+    return {"status": "ok", "mensaje": f"Cotización {numero} eliminada."}
+
+
+@router.post("/{id_cotizacion}/emitir")
+def emitir_cotizacion(
+    id_cotizacion: uuid.UUID,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requerir_roles(ROLES_VENTAS)),
+):
+    """BORRADOR → EMITIDA. Desde aquí la cotización no se edita: un cambio exige una cotización nueva."""
+    cot = db.query(Cotizacion).filter(Cotizacion.id_cotizacion == id_cotizacion).with_for_update().first()
+    if not cot:
+        raise HTTPException(status_code=404, detail="Cotización no encontrada.")
+    _exigir_borrador(cot, "emitir")
+    if not cot.posiciones:
+        raise HTTPException(status_code=400, detail="No se puede emitir una cotización sin posiciones.")
+    cot.estado = EstadoCotizacionEnum.EMITIDA
+    agregar_evento_trazabilidad(
+        db,
+        tipo_entidad="COTIZACION",
+        identificador=cot.numero_cotizacion,
+        accion="COTIZACION_EMITIDA",
+        usuario=usuario["email"],
+        area="VENTAS",
+        estado_anterior="BORRADOR",
+        estado_nuevo="EMITIDA",
+        motivo=f"id_cotizacion={cot.id_cotizacion}",
+    )
+    db.commit()
+    return {"status": "ok", "mensaje": f"Cotización {cot.numero_cotizacion} emitida.", "estado": "EMITIDA"}
+
 
 @router.post("/{id_cotizacion}/enviar-cliente")
 def enviar_cotizacion_cliente(
@@ -335,6 +543,13 @@ def aprobar_cotizacion_y_generar_pedido(
         raise HTTPException(
             status_code=409,
             detail="La cotización ya figura aprobada, pero no se encontró su pedido asociado.",
+        )
+
+    if estado_actual != EstadoCotizacionEnum.EMITIDA.value:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Solo una cotización EMITIDA se convierte en pedido. Esta está en {estado_actual}: emítala primero.",
         )
 
     estado_anterior_cotizacion = estado_actual

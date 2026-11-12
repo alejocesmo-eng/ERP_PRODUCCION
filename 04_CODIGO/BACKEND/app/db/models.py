@@ -203,6 +203,17 @@ class SocioNegocio(Base):
     actualizado_en = Column(DateTime(timezone=True), nullable=False, default=func.now(), onupdate=func.now())
 
 
+class CondicionPago(Base):
+    """Condiciones de pago de la cotización, datos maestros (05_BASE_DATOS/26_MIGRACION_COTIZACION_FORMATO.sql)."""
+    __tablename__ = "condiciones_pago"
+
+    id_condicion_pago = Column(Integer, primary_key=True, autoincrement=True)
+    codigo = Column(String(30), unique=True, nullable=False)
+    descripcion = Column(String(100), nullable=False)
+    orden = Column(Integer, nullable=False, default=0)
+    activo = Column(Boolean, nullable=False, default=True)
+
+
 class Cotizacion(Base):
     """
     Entidad de Cotización Comercial previa al Pedido.
@@ -217,9 +228,17 @@ class Cotizacion(Base):
     estado = Column(Enum(EstadoCotizacionEnum), default=EstadoCotizacionEnum.BORRADOR)
     valor_total = Column(Numeric(14, 2), default=0)
     condiciones_comerciales = Column(Text, nullable=True)
+    # Formato aprobado (migración 26): COP por defecto o USD, validez, condición de pago y términos
+    moneda = Column(String(3), nullable=False, default="COP", server_default="COP")
+    validez_oferta_dias = Column(Integer, nullable=True)
+    id_condicion_pago = Column(Integer, ForeignKey("condiciones_pago.id_condicion_pago", name="fk_cotizaciones_condicion_pago", ondelete="RESTRICT"), nullable=True)
+    termino_negociacion = Column(String(100), nullable=True, default="Puesto en planta HD")
+    referencia = Column(String(150), nullable=True)
+    observaciones = Column(Text, nullable=True)
     creado_en = Column(DateTime(timezone=True), default=func.now())
 
     id = synonym("id_cotizacion")
+    condicion_pago = relationship("CondicionPago")
     posiciones = relationship("PosicionCotizacion", back_populates="cotizacion", cascade="all, delete-orphan")
 
 

@@ -82,6 +82,11 @@ VERIFICACIONES = (
         "SELECT 1 FROM rol_permisos WHERE id_permiso = 'PERM_OP_LIBERAR' "
         "HAVING count(*) = 2 AND bool_and(id_rol IN ('LIDER_DISENO', 'DIBUJANTE'))",
     ),
+    (
+        "Moneda y condiciones de pago de la cotizacion (migracion 26)",
+        "SELECT 1 FROM pg_attribute WHERE attrelid = 'public.cotizaciones'::regclass AND attname = 'moneda' "
+        "AND EXISTS (SELECT 1 FROM condiciones_pago HAVING count(*) >= 7)",
+    ),
 )
 
 
@@ -208,7 +213,7 @@ def _verificar() -> None:
             fallar("Verificacion incompleta en sgi_sandbox: " + "; ".join(faltantes))
         print(
             "Verificacion correcta: historial append-only, busqueda de productos, estado EMITIDA, "
-            "codigo_socio por NIT y roles de SCRUM-27 instalados."
+            "codigo_socio por NIT, roles de SCRUM-27 y formato de cotizacion instalados."
         )
     finally:
         conexion.close()
