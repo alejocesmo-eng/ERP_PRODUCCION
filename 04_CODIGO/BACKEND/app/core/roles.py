@@ -72,6 +72,11 @@ ROLES_ACTUALIZAR_OP = [ADMIN, JEFE_PRODUCCION, PRODUCCION]
 ROLES_NOTIFICAR_OP_TERMINADA = [ADMIN, JEFE_PRODUCCION, LIDER_MECANIZADOS, PRODUCCION]
 # Cerrar la OP: LIDER_MECANIZADOS cierra OP de cualquier unidad como respaldo del Jefe de Producción
 ROLES_CERRAR_OP = [ADMIN, JEFE_PRODUCCION, LIDER_MECANIZADOS, PRODUCCION]
+# Unidad actual de la OP (app/services/unidad_op.py): el líder de cada unidad solo ve y traslada
+# las OP de su unidad. Los líderes de Servicios y Metalistería se agregan aquí cuando existan sus
+# roles. CALIDAD_PRODUCTO traslada cualquier OP; ningún otro rol cambia la unidad (tampoco ADMIN).
+UNIDAD_POR_LIDER = {LIDER_MECANIZADOS: "MECANIZADOS"}
+ROLES_CAMBIAR_UNIDAD_OP = [*UNIDAD_POR_LIDER, CALIDAD_PRODUCTO]
 ROLES_APROBAR_PLANO = [ADMIN, LIDER_DISENO, DISENO]
 ROLES_REVISION_PLANO = [ADMIN, LIDER_DISENO, DIBUJANTE, DISENO]
 ROLES_CALIDAD_LOTE = [ADMIN, CALIDAD_PRODUCTO, CALIDAD]

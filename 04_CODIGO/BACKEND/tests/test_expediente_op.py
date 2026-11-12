@@ -26,6 +26,7 @@ from app.db.models import (
     MovimientoKardexSAP,
     OTDetalle,
     OrdenProduccion,
+    TrasladoUnidadOP,
     PedidoDetalle,
     Permiso,
     Plano,
@@ -63,6 +64,7 @@ def db(tmp_path, monkeypatch):
         PlanoHistorial.__table__,
         OTDetalle.__table__,
         OrdenProduccion.__table__,
+        TrasladoUnidadOP.__table__,
         BOMListaMateriales.__table__,
         SolicitudCompra.__table__,
         LoteMaterial.__table__,
@@ -244,6 +246,10 @@ def test_liberacion_actualiza_estado_despues_de_validar_gate(db):
     evento = db.query(HistorialAccionesDocumento).filter_by(identificador_documento="4001234").one()
     assert evento.accion == "OP_LIBERADA"
     assert evento.usuario_responsable == "diseno@hd.com"
+    # Asignación inicial: la OP llega a la unidad de sus planos vigentes (Mecanizados por defecto)
+    assert op.unidad_actual == "MECANIZADOS"
+    traslado = db.query(TrasladoUnidadOP).filter_by(id_op=op.id_op).one()
+    assert (traslado.unidad_origen, traslado.unidad_destino, traslado.usuario_email) == ("SIN_ASIGNAR", "MECANIZADOS", "diseno@hd.com")
 
 
 def test_expediente_no_expone_otra_op_del_mismo_pedido(db):

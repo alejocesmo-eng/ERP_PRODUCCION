@@ -65,8 +65,17 @@ def test_el_sandbox_aplica_y_verifica_la_migracion_27():
     assert aplicar_migracion.ruta_migracion(27).name == "27_MIGRACION_ROL_LIDER_MECANIZADOS.sql"
     assert aplicar_migracion.ruta_migracion(27, reversion=True).name == "27_REVERSION_ROL_LIDER_MECANIZADOS.sql"
     # Después de la 25, que crea LIDER_PRODUCCION
-    assert nombres[-1] == "27_MIGRACION_ROL_LIDER_MECANIZADOS.sql"
+    assert nombres.index("27_MIGRACION_ROL_LIDER_MECANIZADOS.sql") > nombres.index("25_MIGRACION_ROLES_PERMISOS_POR_ROL.sql")
     assert any("migracion 27" in descripcion for descripcion, _ in preparar_sandbox.VERIFICACIONES)
+
+
+def test_el_sandbox_aplica_y_verifica_la_migracion_28():
+    nombres = [ruta.name for ruta in preparar_sandbox.migraciones_sandbox()]
+
+    assert aplicar_migracion.ruta_migracion(28).name == "28_MIGRACION_OP_UNIDAD_ACTUAL.sql"
+    assert aplicar_migracion.ruta_migracion(28, reversion=True).name == "28_REVERSION_OP_UNIDAD_ACTUAL.sql"
+    assert nombres[-1] == "28_MIGRACION_OP_UNIDAD_ACTUAL.sql"
+    assert any("migracion 28" in descripcion for descripcion, _ in preparar_sandbox.VERIFICACIONES)
 
 
 def test_encuentra_la_reversion_25():

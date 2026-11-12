@@ -77,7 +77,10 @@ def ctx():
         s.add(pedido)
         s.flush()
         s.add(OrdenProduccion(id_proyecto=pedido.id_proyecto, id_producto=producto.id_producto,
-                              codigo_op="OP-BUS-1", cantidad_fabricar=1))
+                              codigo_op="OP-BUS-1", cantidad_fabricar=1, unidad_actual="MECANIZADOS"))
+        # Otra unidad: el líder de Mecanizados no la encuentra
+        s.add(OrdenProduccion(id_proyecto=pedido.id_proyecto, codigo_op="OP-BUS-2", cantidad_fabricar=1,
+                              unidad_actual="SERVICIOS"))
         s.commit()
 
     with TestClient(app) as client:
@@ -122,6 +125,15 @@ def test_busca_por_nombre_clientes_y_productos(ctx):
     assert por_cliente == {"COTIZACION", "PEDIDO", "CLIENTE"}
     assert por_producto == {"OP", "PRODUCTO"}
     assert {f["codigo"] for f in datos["resultados"]} == {"OP-BUS-1", "RN-001-001-000001"}
+
+
+def test_el_lider_solo_encuentra_las_op_de_su_unidad(ctx):
+    client, _ = ctx
+    _, lider = tipos_encontrados(client, roles.LIDER_MECANIZADOS, q="OP-BUS")
+    _, jefe = tipos_encontrados(client, roles.JEFE_PRODUCCION, q="OP-BUS")
+
+    assert {f["codigo"] for f in lider["resultados"]} == {"OP-BUS-1"}
+    assert {f["codigo"] for f in jefe["resultados"] if f["tipo"] == "OP"} == {"OP-BUS-1", "OP-BUS-2"}
 
 
 def test_lider_de_mecanizados_encuentra_al_cliente_sin_valor_cotizado(ctx):

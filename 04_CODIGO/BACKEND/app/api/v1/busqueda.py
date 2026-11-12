@@ -3,7 +3,8 @@
 Búsqueda general de PRISMA por código o nombre (reglas/permisos-por-rol-modulo.md, "Búsqueda y
 expediente"). Cada rol encuentra solo los tipos de dato de TIPOS_BUSQUEDA_POR_ROL; los demás
 tipos no se consultan ni aparecen (sin "Acceso denegado"). El rol se lee de la base en cada
-consulta. El valor cotizado solo sale con PERM_VALOR_COTIZADO_VER.
+consulta. El valor cotizado solo sale con PERM_VALOR_COTIZADO_VER. El líder de una unidad solo
+encuentra las OP que están en ella (app/services/unidad_op.py).
 
 Las relaciones entre resultados (OP -> pedido -> cotización) quedan para una segunda etapa.
 """
@@ -15,6 +16,7 @@ from app.api.deps import obtener_usuario_actual
 from app.core import roles
 from app.db.database import get_db
 from app.db.models import Cotizacion, OrdenProduccion, Producto, Proyecto, SocioNegocio
+from app.services import unidad_op
 from app.services.acceso_bd import PERMISO_COSTOS, PERMISO_VALOR_COTIZADO, puede, rol_en_bd
 
 router = APIRouter()
@@ -23,8 +25,7 @@ LONGITUD_MINIMA = 2
 MAXIMO_POR_TIPO = 10
 
 
-def _alcance(db: Session, email: str) -> dict:
-    rol = rol_en_bd(db, email)
+def _alcance(db: Session, rol: str | None) -> dict:
     return {
         "tipos": list(roles.TIPOS_BUSQUEDA_POR_ROL.get(rol, [])),
         "expediente_op": rol in roles.ROLES_EXPEDIENTE_OP,
@@ -74,9 +75,9 @@ def _pedidos(db: Session, texto: str, valor_cotizado: bool) -> list[dict]:
     } for pedido in filas]
 
 
-def _ordenes(db: Session, texto: str) -> list[dict]:
+def _ordenes(db: Session, texto: str, rol: str | None) -> list[dict]:
     filas = (
-        db.query(OrdenProduccion, Producto.descripcion)
+        unidad_op.filtrar_op_visibles(db.query(OrdenProduccion, Producto.descripcion), rol)
         .outerjoin(Producto, Producto.id_producto == OrdenProduccion.id_producto)
         .filter(_contiene(texto, OrdenProduccion.codigo_op, Producto.descripcion, Producto.codigo_rn))
         .order_by(OrdenProduccion.codigo_op).limit(MAXIMO_POR_TIPO).all()
@@ -121,7 +122,7 @@ def _productos(db: Session, texto: str) -> list[dict]:
 @router.get("/alcance")
 def alcance_busqueda(db: Session = Depends(get_db), usuario: dict = Depends(obtener_usuario_actual)):
     """Qué tipos encuentra el rol y si abre el expediente de OP; sin tipos, la caja no se muestra."""
-    return _alcance(db, usuario["email"])
+    return _alcance(db, rol_en_bd(db, usuario["email"]))
 
 
 @router.get("/")
@@ -130,7 +131,8 @@ def buscar(
     db: Session = Depends(get_db),
     usuario: dict = Depends(obtener_usuario_actual),
 ):
-    alcance = _alcance(db, usuario["email"])
+    rol = rol_en_bd(db, usuario["email"])
+    alcance = _alcance(db, rol)
     texto = q.strip()
     if len(texto) < LONGITUD_MINIMA or not alcance["tipos"]:
         return {"resultados": [], **alcance}
@@ -142,7 +144,7 @@ def buscar(
     if roles.BUSQUEDA_PEDIDO in tipos:
         resultados += _pedidos(db, texto, alcance["valor_cotizado"])
     if roles.BUSQUEDA_OP in tipos:
-        resultados += _ordenes(db, texto)
+        resultados += _ordenes(db, texto, rol)
     if roles.BUSQUEDA_CLIENTE in tipos:
         resultados += _clientes(db, texto)
     if roles.BUSQUEDA_PRODUCTO in tipos:

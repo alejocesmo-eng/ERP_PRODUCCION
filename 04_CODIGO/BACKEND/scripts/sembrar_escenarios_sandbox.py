@@ -476,7 +476,10 @@ def bloque_ordenes_produccion(s: Sembrador, ctx: dict) -> str:
              "porcentaje_avance": avance, "estado_calidad": "APROBADO" if terminada else None,
              "aprobado_por_calidad_id": calidad.id_usuario if terminada else None,
              "observaciones": "Datos ficticios de demostración (sgi_sandbox)"},
-            al_crear={"liberada_en": FECHA_BASE if liberada else None},
+            # Unidad inicial (migración 28): las liberadas están en Mecanizados; después solo cambia
+            # con un traslado, que la semilla no sobrescribe
+            al_crear={"liberada_en": FECHA_BASE if liberada else None,
+                      "unidad_actual": "MECANIZADOS" if liberada else "SIN_ASIGNAR"},
         )
     return "OP-DEMO-001 liberada, 002 sin liberar (E5 pendiente del paso 3a), 003 sin plano aprobado (E6), 004 terminada"
 

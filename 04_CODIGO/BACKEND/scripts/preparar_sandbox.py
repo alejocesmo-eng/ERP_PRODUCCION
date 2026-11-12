@@ -92,6 +92,11 @@ VERIFICACIONES = (
         "SELECT 1 FROM rol_permisos WHERE id_rol = 'LIDER_MECANIZADOS' AND id_permiso = 'PERM_OP_CERRAR' "
         "AND NOT EXISTS (SELECT 1 FROM roles WHERE id_rol = 'LIDER_PRODUCCION')",
     ),
+    (
+        "Unidad actual de la OP y traslados (migracion 28)",
+        "SELECT 1 FROM pg_attribute WHERE attrelid = 'public.ordenes_produccion'::regclass "
+        "AND attname = 'unidad_actual' AND to_regclass('public.op_traslados_unidad') IS NOT NULL",
+    ),
 )
 
 

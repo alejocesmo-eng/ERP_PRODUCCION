@@ -21,6 +21,8 @@ EQUIVALENTES = {roles.CALIDAD: roles.GESTION_CALIDAD}
 
 def rol_en_bd(db: Session, email: str) -> str | None:
     """Rol vigente del usuario en usuarios.id_rol, con la equivalencia de transición."""
+    if not email:
+        return None
     fila = db.query(Usuario.id_rol).filter(Usuario.email == email).first()
     rol = fila.id_rol if fila else None
     return EQUIVALENTES.get(rol, rol)

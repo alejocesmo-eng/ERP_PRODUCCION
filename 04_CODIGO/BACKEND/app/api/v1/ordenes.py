@@ -37,6 +37,8 @@ from app.api.v1.quality_gate import (
 )
 from app.services.auditoria import agregar_evento_trazabilidad
 from app.services.historial_planos import historial_por_plano
+from app.services import unidad_op
+from app.services.acceso_bd import rol_en_bd
 
 router = APIRouter()
 
@@ -88,7 +90,8 @@ def obtener_expediente_op(
     usuario_actual: dict = Depends(requerir_roles(ROLES_EXPEDIENTE_OP)),
 ):
     op = db.query(OrdenProduccion).filter(OrdenProduccion.codigo_op == codigo_op).first()
-    if not op:
+    # El líder de una unidad solo ve las OP que están en ella (rol leído de la base)
+    if not op or not unidad_op.puede_ver_op(rol_en_bd(db, usuario_actual.get("email")), op):
         raise HTTPException(status_code=404, detail="No se encontró la Orden de Producción indicada.")
 
     proyecto = db.query(Proyecto).filter(Proyecto.id_proyecto == op.id_proyecto).first()
@@ -318,6 +321,7 @@ def obtener_expediente_op(
     return {
         "codigo_op": op.codigo_op,
         "estado_operativo": _valor_enum(op.estado),
+        "unidad_actual": op.unidad_actual,
         "estado_bom": estado_bom,
         "cantidad_programada": op.cantidad_fabricar,
         "porcentaje_avance": op.porcentaje_avance or 0,
@@ -446,6 +450,7 @@ def liberar_orden_produccion(
     op.estado = EstadoOPEnum.LIBERADA
     op.reserva_stock_100 = True
     op.liberada_en = datetime.now().astimezone()
+    unidad_op.asignar_unidad_inicial(db, op, planos, usuario_actual["email"], usuario_actual.get("rol"))
     try:
         agregar_evento_trazabilidad(
             db,
@@ -549,6 +554,7 @@ class OrdenProduccionVistaResponse(BaseModel):
     
     # Estado de Producción
     estado_produccion: str
+    unidad_actual: Optional[str] = None
     observaciones: Optional[str] = None
     creado_en: datetime
     
@@ -614,8 +620,11 @@ def listar_ordenes_produccion(
     db: Session = Depends(get_db),
     usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
-    """PM-03: Listar todas las Órdenes de Producción en Planta."""
-    ordenes_db = db.query(OrdenProduccion).all()
+    """PM-03: Listar las Órdenes de Producción en Planta. El líder de una unidad solo recibe las OP
+    de su unidad y CALIDAD_PRODUCTO las que le llegan para inspección (app/services/unidad_op.py)."""
+    ordenes_db = unidad_op.filtrar_op_visibles(
+        db.query(OrdenProduccion), rol_en_bd(db, usuario_actual.get("email"))
+    ).all()
     resultado = []
 
     for op_db in ordenes_db:
@@ -650,6 +659,7 @@ def listar_ordenes_produccion(
             fecha_compromiso=fecha_comp,
             porcentaje_avance=getattr(op_db, 'porcentaje_avance', 0.0) or 0.0,
             estado_produccion=op_db.estado.value if hasattr(op_db.estado, 'value') else str(op_db.estado),
+            unidad_actual=op_db.unidad_actual,
             observaciones=op_db.observaciones or "En proceso",
             creado_en=op_db.creado_en or proj.creado_en,
             productos_componentes=componentes
@@ -844,6 +854,7 @@ def actualizar_estado_produccion(
             motivo_excepcion, planos_gate = autorizar_liberacion(db, usuario_actual, op_db.id_producto, op_up.motivo)
             revisar = planos_por_revisar(planos_gate)
             op_db.reserva_stock_100 = True
+            unidad_op.asignar_unidad_inicial(db, op_db, planos_gate, usuario_actual["email"], usuario_actual.get("rol"))
         elif estado_enum == EstadoOPEnum.LISTA_PARA_LIBERAR:
             # Misma regla de liberación sobre los planos vigentes del producto de la OP
             if not op_db.id_producto:
