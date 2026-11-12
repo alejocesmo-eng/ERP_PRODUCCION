@@ -723,8 +723,8 @@ export default function ProyectosView() {
     setMensaje({ tipo: '', texto: '' });
     try {
       setLoading(true);
-      await API.patch(`/ventas/cotizaciones/${idCotizacion}/aprobar-y-generar-pedido`);
-      setMensaje({ tipo: 'exito', texto: `✅ Cotización aprobada. Pedido Comercial generado exitosamente.` });
+      const respuesta = await API.patch(`/ventas/cotizaciones/${idCotizacion}/aprobar-y-generar-pedido`);
+      setMensaje({ tipo: 'exito', texto: `✅ Cotización convertida en el pedido ${respuesta.data?.numero_pedido || ''}.` });
       setPestañaModulo('pedidos');
       await cargarProyectos();
     } catch (error) {
@@ -1100,9 +1100,7 @@ export default function ProyectosView() {
                           </td>
                           <td className="p-3 whitespace-nowrap">
                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                              c.estado === 'APROBADA'
-                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                                : c.estado === 'EMITIDA'
+                              c.estado === 'EMITIDA'
                                 ? 'bg-blue-100 text-blue-800 border-blue-300'
                                 : 'bg-amber-100 text-amber-800 border-amber-300'
                             }`}>
@@ -1149,7 +1147,13 @@ export default function ProyectosView() {
                                 </>
                               )}
 
-                              {c.estado === 'EMITIDA' && (
+                              {c.estado === 'EMITIDA' && c.numero_pedido && (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold border bg-emerald-100 text-emerald-800 border-emerald-300">
+                                  Pedido {c.numero_pedido}
+                                </span>
+                              )}
+
+                              {c.estado === 'EMITIDA' && !c.numero_pedido && (
                                 <button
                                   type="button"
                                   onClick={() => handleConvertirCotizacionAPedido(c.id_cotizacion)}
@@ -2546,9 +2550,7 @@ export default function ProyectosView() {
                   {cotizacionDetalle.numero_cotizacion}
                 </span>
                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                  cotizacionDetalle.estado === 'APROBADA'
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : cotizacionDetalle.estado === 'EMITIDA'
+                  cotizacionDetalle.estado === 'EMITIDA'
                     ? 'bg-blue-100 text-blue-800'
                     : 'bg-amber-100 text-amber-800'
                 }`}>

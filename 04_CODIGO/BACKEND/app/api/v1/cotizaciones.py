@@ -90,6 +90,7 @@ def listar_cotizaciones(db: Session = Depends(get_db), usuario: dict = Depends(o
     Retorna el listado completo de cotizaciones emitidas para ProyectosView.jsx
     """
     cotizaciones_db = db.query(Cotizacion).order_by(Cotizacion.creado_en.desc()).all()
+    con_pedido = {fila[0] for fila in db.query(Proyecto.codigo_proyecto).filter(Proyecto.cotizacion_total.isnot(None)).all()}
     resultado = []
     for c in cotizaciones_db:
         socio = db.query(SocioNegocio).filter(SocioNegocio.id_socio == c.id_socio).first()
@@ -102,7 +103,8 @@ def listar_cotizaciones(db: Session = Depends(get_db), usuario: dict = Depends(o
             "fecha_vigencia": c.fecha_vigencia.strftime("%Y-%m-%d") if c.fecha_vigencia else "",
             "valor_total": float(c.valor_total or 0.0),
             "moneda": c.moneda or "COP",
-            "estado": c.estado.value if hasattr(c.estado, "value") else str(c.estado)
+            "estado": c.estado.value if hasattr(c.estado, "value") else str(c.estado),
+            "numero_pedido": _numero_pedido(c) if _numero_pedido(c) in con_pedido else None,
         })
     return resultado
 
@@ -146,6 +148,10 @@ def _aplicar_formato(db: Session, cot: Cotizacion, data: "CotizacionCreateIn") -
     cot.termino_negociacion = (data.termino_negociacion or "").strip() or None
     cot.referencia = (data.referencia_global or "").strip()[:150] or None
     cot.observaciones = (data.observaciones or "").strip() or None
+
+
+def _numero_pedido(cot: Cotizacion) -> str:
+    return f"PED-{cot.numero_cotizacion.replace('COT-', '')}"
 
 
 # Número de la empresa: HD-XXXXX-AA (consecutivo de 5 dígitos y año en 2 dígitos)
@@ -527,23 +533,26 @@ def aprobar_cotizacion_y_generar_pedido(
     if not cot:
         raise HTTPException(status_code=404, detail="Cotización no encontrada.")
 
-    numero_ped = f"PED-{cot.numero_cotizacion.replace('COT-', '')}"
+    numero_ped = _numero_pedido(cot)
     estado_actual = cot.estado.value if hasattr(cot.estado, "value") else str(cot.estado)
-    if estado_actual == EstadoCotizacionEnum.APROBADA.value:
-        pedido_existente = db.query(Proyecto).filter(Proyecto.codigo_proyecto == numero_ped).first()
-        if pedido_existente:
-            db.rollback()
-            return {
-                "status": "ok",
-                "mensaje": f"La cotización {cot.numero_cotizacion} ya fue aprobada.",
-                "id_proyecto": str(pedido_existente.id_proyecto),
-                "numero_pedido": numero_ped,
-            }
+    # EMITIDA reemplaza a APROBADA (reglas/cotizacion-formato-y-borrador.md): al convertirse en pedido
+    # la cotización sigue EMITIDA; si ya tiene pedido se devuelve ese (APROBADA solo en datos antiguos).
+    # El pedido nacido de una cotización es el único con cotizacion_total.
+    pedido_existente = db.query(Proyecto).filter(Proyecto.codigo_proyecto == numero_ped).first()
+    if pedido_existente and pedido_existente.cotizacion_total is None:
         db.rollback()
         raise HTTPException(
             status_code=409,
-            detail="La cotización ya figura aprobada, pero no se encontró su pedido asociado.",
+            detail=f"Ya existe el pedido {numero_ped} sin cotización de origen; no se puede reutilizar su número.",
         )
+    if pedido_existente and estado_actual in (EstadoCotizacionEnum.EMITIDA.value, EstadoCotizacionEnum.APROBADA.value):
+        db.rollback()
+        return {
+            "status": "ok",
+            "mensaje": f"La cotización {cot.numero_cotizacion} ya tiene el pedido {numero_ped}.",
+            "id_proyecto": str(pedido_existente.id_proyecto),
+            "numero_pedido": numero_ped,
+        }
 
     if estado_actual != EstadoCotizacionEnum.EMITIDA.value:
         db.rollback()
@@ -552,8 +561,6 @@ def aprobar_cotizacion_y_generar_pedido(
             detail=f"Solo una cotización EMITIDA se convierte en pedido. Esta está en {estado_actual}: emítala primero.",
         )
 
-    estado_anterior_cotizacion = estado_actual
-    cot.estado = EstadoCotizacionEnum.APROBADA
     socio = db.query(SocioNegocio).filter(SocioNegocio.id_socio == cot.id_socio).first()
 
     nuevo_pedido = Proyecto(
@@ -568,7 +575,7 @@ def aprobar_cotizacion_y_generar_pedido(
         ubicacion_cliente=socio.direccion if socio else "Planta Principal",
         cantidad=sum(p.cantidad for p in cot.posiciones) or 1,
         detalle_producto=cot.posiciones[0].descripcion if cot.posiciones else "Fabricación bajo cotización",
-        requisitos_cliente="Fabricación según cotización aprobada",
+        requisitos_cliente="Fabricación según cotización emitida",
         cotizacion_total=cot.valor_total,
         confirmado=False
     )
@@ -595,11 +602,11 @@ def aprobar_cotizacion_y_generar_pedido(
         db,
         tipo_entidad="COTIZACION",
         identificador=cot.numero_cotizacion,
-        accion="COTIZACION_APROBADA",
+        accion="COTIZACION_CONVERTIDA_EN_PEDIDO",
         usuario=usuario["email"],
         area="VENTAS",
-        estado_anterior=estado_anterior_cotizacion,
-        estado_nuevo=EstadoCotizacionEnum.APROBADA.value,
+        estado_anterior=estado_actual,
+        estado_nuevo=estado_actual,
         motivo=f"id_proyecto={nuevo_pedido.id_proyecto}; pedido={numero_ped}",
     )
     agregar_evento_trazabilidad(
@@ -617,7 +624,7 @@ def aprobar_cotizacion_y_generar_pedido(
 
     return {
         "status": "ok",
-        "mensaje": f"Cotización {cot.numero_cotizacion} aprobada. Pedido {numero_ped} creado exitosamente.",
+        "mensaje": f"Cotización {cot.numero_cotizacion} convertida en el pedido {numero_ped}.",
         "id_proyecto": str(nuevo_pedido.id_proyecto),
         "numero_pedido": numero_ped
     }

@@ -147,10 +147,33 @@ def test_la_emitida_se_convierte_en_pedido(ctx):
     r = client.patch(f"{URL}/{id_cot}/aprobar-y-generar-pedido", headers=token())
 
     assert r.status_code == 200, r.text
-    assert estado(Sesion, id_cot) == "APROBADA"
+    # EMITIDA reemplaza a APROBADA: convertida en pedido sigue EMITIDA
+    assert estado(Sesion, id_cot) == "EMITIDA"
     assert r.json()["numero_pedido"] == "PED-BOR-1"
-    # Ya aprobada: no se edita ni se elimina
+    assert client.get(f"{URL}/", headers=token()).json()[0]["numero_pedido"] == "PED-BOR-1"
+    # Convertir otra vez devuelve el mismo pedido sin duplicarlo
+    otra = client.patch(f"{URL}/{id_cot}/aprobar-y-generar-pedido", headers=token())
+    assert otra.status_code == 200 and otra.json()["id_proyecto"] == r.json()["id_proyecto"]
+    with Sesion() as s:
+        assert s.query(Proyecto).count() == 1
+    # Ya emitida: no se edita ni se elimina
     assert client.delete(f"{URL}/{id_cot}", headers=token()).status_code == 409
+
+
+def test_no_reutiliza_el_numero_de_un_pedido_sin_cotizacion(ctx):
+    client, Sesion = ctx
+    id_cot = crear(client)
+    client.post(f"{URL}/{id_cot}/emitir", headers=token())
+    with Sesion() as s:
+        s.add(Proyecto(numero_pedido="PED-BOR-1", codigo_proyecto="PED-BOR-1", cliente_nombre="Anterior", cantidad=1,
+                       requisitos_cliente="Pedido anterior sin cotización"))
+        s.commit()
+
+    r = client.patch(f"{URL}/{id_cot}/aprobar-y-generar-pedido", headers=token())
+
+    assert r.status_code == 409 and "sin cotización de origen" in r.json()["detail"]
+    assert estado(Sesion, id_cot) == "EMITIDA"
+    assert client.get(f"{URL}/", headers=token()).json()[0]["numero_pedido"] is None
 
 
 @pytest.mark.parametrize("metodo, sufijo", [("put", ""), ("delete", ""), ("post", "/emitir")])
