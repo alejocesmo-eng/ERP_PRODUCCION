@@ -27,6 +27,11 @@ export function cargarPermisos() {
   return cache.promesa;
 }
 
+// Tras cambiar permisos en Configuración: la siguiente consulta vuelve a pedirlos al backend
+export function limpiarCachePermisos() {
+  cache = { token: null, promesa: null };
+}
+
 export function tienePermiso(permisos, idPermiso) {
   return permisos.includes(idPermiso) || permisos.includes(PERMISO_ADMIN_TOTAL);
 }

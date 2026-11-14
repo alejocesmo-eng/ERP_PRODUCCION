@@ -29,6 +29,7 @@ from app.api.v1 import (
     stock_pt,
     busqueda,
     unidades_op,
+    configuracion_roles,
 )
 from app.api.v1.endpoints.produccion import cola_router as cola_operaciones_router
 from app.api.v1.historial import router as historial_router
@@ -88,6 +89,7 @@ app.include_router(cotizaciones.router, prefix="/api/v1")
 app.include_router(stock_pt.router, prefix="/api/v1")
 app.include_router(busqueda.router, prefix="/api/v1/busqueda", tags=["Búsqueda general"])
 app.include_router(unidades_op.router, prefix="/api/v1/unidades-op", tags=["Unidad de la OP"])
+app.include_router(configuracion_roles.router, prefix="/api/v1/configuracion/roles", tags=["Configuración de roles y permisos"])
 
 @app.get("/")
 def read_root():

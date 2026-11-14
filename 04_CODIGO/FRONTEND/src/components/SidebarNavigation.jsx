@@ -2,11 +2,14 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { cerrarSesion } from '../services/sesion';
+import { useAccesoConfiguracion } from '../services/configuracionRoles';
 
 export const SidebarNavigation = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [visible, setVisible] = useState(false);
+  // Configuración de roles: solo se muestra si el backend confirma el acceso (ADMIN)
+  const accesoConfiguracion = useAccesoConfiguracion();
 
   const handleLogout = () => {
     cerrarSesion();
@@ -244,6 +247,18 @@ export const SidebarNavigation = () => {
                   <span className="truncate">Datos Maestros</span>
                 </Link>
               </li>
+              {accesoConfiguracion && (
+                <li>
+                  <Link
+                    to="/configuracion/roles"
+                    onClick={() => setVisible(false)}
+                    className={`flex items-center gap-2.5 py-1.5 px-2.5 rounded-lg transition ${isActive('/configuracion/roles')}`}
+                  >
+                    <span className="text-sm">🔐</span>
+                    <span className="truncate">Roles y Permisos</span>
+                  </Link>
+                </li>
+              )}
             </ul>
           </div>
         </nav>

@@ -11,6 +11,7 @@ import ComprasGestionView from './views/nivel2/ComprasGestionView';
 import AlmacenInventarioView from './views/nivel2/AlmacenInventarioView';
 import InventarioGeneralView from './views/nivel2/InventarioGeneralView';
 import ConfiguracionMaestrosView from './views/nivel2/ConfiguracionMaestrosView';
+import ConfiguracionRolesView from './views/nivel2/ConfiguracionRolesView';
 import MantenimientoPlantaView from './views/nivel2/MantenimientoPlantaView';
 import GanttCargaMaquinasView from './views/nivel2/GanttCargaMaquinasView';
 import CalidadRncCapaView from './views/nivel2/CalidadRncCapaView';
@@ -40,6 +41,8 @@ export const AppRoutes = () => {
           <Route path="/compras/gestion" element={<ComprasGestionView />} />
           <Route path="/inventario/general" element={<InventarioGeneralView />} />
           <Route path="/configuracion/maestros" element={<ConfiguracionMaestrosView />} />
+          {/* Solo ADMIN: la vista muestra 403 a los demás y el backend también lo responde */}
+          <Route path="/configuracion/roles" element={<ConfiguracionRolesView />} />
           <Route path="/configuracion" element={<Navigate to="/configuracion/maestros" replace />} />
           <Route path="/mantenimiento/planta" element={<MantenimientoPlantaView />} />
           <Route path="/produccion/capacidad" element={<GanttCargaMaquinasView />} />

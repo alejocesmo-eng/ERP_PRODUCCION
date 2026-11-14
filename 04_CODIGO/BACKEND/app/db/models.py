@@ -117,6 +117,20 @@ class RolPermiso(Base):
     id_permiso = Column(String(100), ForeignKey("permisos.id_permiso"), primary_key=True)
 
 
+class RolPermisoHistorial(Base):
+    """Cada permiso asignado o retirado desde Configuración, con quién y cuándo
+    (05_BASE_DATOS/31_MIGRACION_CONFIGURACION_ROLES.sql). Sin claves foráneas: el registro se
+    conserva aunque el rol se elimine."""
+    __tablename__ = "rol_permisos_historial"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    id_rol = Column(String(50), nullable=False, index=True)
+    id_permiso = Column(String(100), nullable=False)
+    accion = Column(String(10), nullable=False)  # ASIGNADO | RETIRADO
+    usuario_email = Column(String(100), nullable=False)
+    registrado_en = Column(DateTime(timezone=True), nullable=False, default=func.now())
+
+
 class Usuario(Base):
     __tablename__ = "usuarios"
 

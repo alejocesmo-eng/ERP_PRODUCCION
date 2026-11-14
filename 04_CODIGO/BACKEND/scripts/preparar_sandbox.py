@@ -106,6 +106,12 @@ VERIFICACIONES = (
         "LIDER_MECANIZADOS registra tiempos (migracion 30)",
         "SELECT 1 FROM rol_permisos WHERE id_rol = 'LIDER_MECANIZADOS' AND id_permiso = 'PERM_TIEMPOS_REGISTRAR'",
     ),
+    (
+        "Configuracion de roles solo para ADMIN, con historial de permisos (migracion 31)",
+        "SELECT 1 FROM rol_permisos WHERE id_permiso = 'PERM_CONFIGURACION_ROLES' "
+        "HAVING bool_and(id_rol = 'ADMIN') AND count(*) = 1 "
+        "AND to_regclass('public.rol_permisos_historial') IS NOT NULL",
+    ),
 )
 
 
