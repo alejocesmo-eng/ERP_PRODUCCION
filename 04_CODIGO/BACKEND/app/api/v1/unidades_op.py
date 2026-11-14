@@ -32,7 +32,7 @@ def _fecha(valor):
 def _op_visible(db: Session, codigo_op: str, rol: Optional[str]) -> OrdenProduccion:
     op = db.query(OrdenProduccion).filter(OrdenProduccion.codigo_op == codigo_op).first()
     # Una OP fuera del alcance del rol se responde igual que una inexistente
-    if not op or not unidad_op.puede_ver_op(rol, op):
+    if not op or not unidad_op.puede_ver_op(rol, op, db):
         raise HTTPException(status_code=404, detail="No se encontró la Orden de Producción indicada.")
     return op
 

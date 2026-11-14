@@ -1,5 +1,5 @@
 // src/config/accesosDemo.js
-// Acceso rápido de desarrollo (SCRUM-34): los 17 usuarios de reglas/usuarios-demo.md, uno por
+// Acceso rápido de desarrollo (SCRUM-34): los 18 usuarios de reglas/usuarios-demo.md, uno por
 // rol, agrupados por área. Solo lo usa LoginView cuando import.meta.env.DEV es true; en el build
 // de producción la lista queda fuera del bundle. Los mismos correos están en USUARIOS_DEMO de
 // BACKEND/scripts/preparar_sandbox.py. La clave no va aquí: sale de VITE_DEV_LOGIN_PASSWORD.
@@ -19,6 +19,7 @@ export const ACCESOS_DEMO = [
     { email: 'director@sgi.local', label: 'Director de producción' },
     { email: 'jefeprod@sgi.local', label: 'Jefe de producción' },
     { email: 'liderprod@sgi.local', label: 'Líder de Mecanizados' },
+    { email: 'liderservicios@sgi.local', label: 'Líder de Servicios' },
     { email: 'operario@sgi.local', label: 'Operario' },
     { email: 'capturista_tiempos@sgi.local', label: 'Capturista de tiempos' }
   ] },

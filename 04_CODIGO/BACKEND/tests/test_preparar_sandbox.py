@@ -1,7 +1,7 @@
 # tests/test_preparar_sandbox.py
 """
 Script preparar_sandbox sin base de datos: nombres permitidos, lista de migraciones que
-aplica, confirmación antes de regenerar y usuarios de demostración (los 17 de
+aplica, confirmación antes de regenerar y usuarios de demostración (los 18 de
 reglas/usuarios-demo.md, iguales al acceso rápido del login, y cuentas anteriores
 desactivadas sin borrarlas). La creación de sgi_sandbox la ejecuta el usuario.
 """
@@ -135,16 +135,16 @@ def actualizaciones(cursor):
     return [(s, p) for s, p in cursor.sentencias if s.startswith("UPDATE usuarios SET") and "activo = FALSE" not in s]
 
 
-def test_los_17_usuarios_demo_son_los_de_usuarios_demo_md_uno_por_rol():
+def test_los_18_usuarios_demo_son_los_de_usuarios_demo_md_uno_por_rol():
     correos = [email for email, _, _ in preparar_sandbox.USUARIOS_DEMO]
 
-    assert len(correos) == len(set(correos)) == 17
+    assert len(correos) == len(set(correos)) == 18
     assert sorted(rol for _, _, rol in preparar_sandbox.USUARIOS_DEMO) == sorted(roles.ROLES_CATALOGO)
     assert all(email.endswith("@sgi.local") for email in correos)
     assert REUTILIZADAS <= set(correos)
 
 
-def test_el_acceso_rapido_del_login_usa_exactamente_los_17_usuarios_demo():
+def test_el_acceso_rapido_del_login_usa_exactamente_los_18_usuarios_demo():
     botones = re.findall(r"email: '([^']+)'", ACCESOS_DEMO.read_text(encoding="utf-8"))
 
     assert sorted(botones) == sorted(email for email, _, _ in preparar_sandbox.USUARIOS_DEMO)
@@ -207,7 +207,7 @@ def test_crea_los_que_faltan_reutiliza_los_existentes_y_desactiva_los_anteriores
 
     salida = capsys.readouterr().out
     assert bases == ["sgi_sandbox"]
-    assert "14 creados y 3 actualizados" in salida
+    assert "15 creados y 3 actualizados" in salida
     assert "desactivadas (no borradas): 2" in salida
     assert CLAVE_DEMO not in salida
     assert conexion.cerrada
@@ -238,7 +238,7 @@ def test_restablecer_devuelve_tambien_la_clave(monkeypatch, capsys):
         assert bcrypt.checkpw(CLAVE_DEMO.encode("utf-8"), hash_clave.encode("utf-8"))
         assert rol == {e: r for e, _, r in preparar_sandbox.USUARIOS_DEMO}[email]
     salida = capsys.readouterr().out
-    assert "15 creados y 2 actualizados (clave, nombre, rol y activo)" in salida
+    assert "16 creados y 2 actualizados (clave, nombre, rol y activo)" in salida
     assert CLAVE_DEMO not in salida
 
 

@@ -26,7 +26,13 @@ from app.db.models import (
 from app.db.models_calidad import InspeccionCalidad
 from app.db.models_produccion import OperacionOT, RegistroTiempoOperario, SubLoteOperacion
 from app.api.deps import obtener_usuario_actual, requerir_roles, rol_tiene_permiso
-from app.core.roles import ROLES_ACTUALIZAR_OP, ROLES_CERRAR_OP, ROLES_EXPEDIENTE_OP, ROLES_NOTIFICAR_OP_TERMINADA
+from app.core.roles import (
+    ROLES_ACTUALIZAR_OP,
+    ROLES_CERRAR_OP,
+    ROLES_CIERRE_SOLO_SU_UNIDAD,
+    ROLES_EXPEDIENTE_OP,
+    ROLES_NOTIFICAR_OP_TERMINADA,
+)
 from app.api.v1.quality_gate import (
     archivos_vigentes,
     motivos_liberacion_op,
@@ -91,12 +97,13 @@ def obtener_expediente_op(
 ):
     op = db.query(OrdenProduccion).filter(OrdenProduccion.codigo_op == codigo_op).first()
     # El líder de una unidad solo ve las OP que están en ella (rol leído de la base)
-    if not op or not unidad_op.puede_ver_op(rol_en_bd(db, usuario_actual.get("email")), op):
+    if not op or not unidad_op.puede_ver_op(rol_en_bd(db, usuario_actual.get("email")), op, db):
         raise HTTPException(status_code=404, detail="No se encontró la Orden de Producción indicada.")
 
     proyecto = db.query(Proyecto).filter(Proyecto.id_proyecto == op.id_proyecto).first()
     if not proyecto:
         raise HTTPException(status_code=409, detail="La Orden de Producción no tiene un pedido comercial válido.")
+    ops_pedido = _ops_del_pedido(db, op, proyecto)
 
     # Misma selección que la liberación: planos vigentes del producto de la OP (sin otro criterio)
     planos = planos_vigentes_de_producto(db, op.id_producto) if op.id_producto else []
@@ -337,6 +344,8 @@ def obtener_expediente_op(
             "estado_entregas": estado_entregas,
             "cantidad_entregada": cantidad_entregada,
         },
+        # Las demás OP del mismo pedido, de cualquier unidad: resumen sin costos ni valor cotizado
+        "ops_del_pedido": ops_pedido,
         "producto": {
             "id_producto": str(producto.id_producto),
             "codigo_rn": producto.codigo_rn,
@@ -376,6 +385,27 @@ def obtener_expediente_op(
         "inspecciones_calidad": [_serializar_inspeccion(inspeccion) for inspeccion in inspecciones],
         "mediciones_metrologicas": mediciones,
     }
+
+
+def _ops_del_pedido(db: Session, op: OrdenProduccion, proyecto: Proyecto) -> list[dict]:
+    """OP del mismo pedido comercial (mismo numero_pedido, o el mismo proyecto si no tiene número),
+    sin la OP consultada."""
+    if proyecto.numero_pedido:
+        ids_proyecto = db.query(Proyecto.id_proyecto).filter(Proyecto.numero_pedido == proyecto.numero_pedido)
+        filtro = OrdenProduccion.id_proyecto.in_(ids_proyecto)
+    else:
+        filtro = OrdenProduccion.id_proyecto == proyecto.id_proyecto
+    hermanas = (
+        db.query(OrdenProduccion).filter(filtro, OrdenProduccion.id_op != op.id_op)
+        .order_by(OrdenProduccion.codigo_op).all()
+    )
+    return [{
+        "codigo_op": hermana.codigo_op,
+        "estado_operativo": _valor_enum(hermana.estado),
+        "unidad_actual": hermana.unidad_actual,
+        "cantidad_programada": hermana.cantidad_fabricar,
+        "porcentaje_avance": hermana.porcentaje_avance or 0,
+    } for hermana in hermanas]
 
 
 MENSAJE_OP_SIN_PRODUCTO = (
@@ -839,6 +869,15 @@ def actualizar_estado_produccion(
 
     if not op_db:
         raise HTTPException(status_code=404, detail="Orden de Producción no encontrada.")
+
+    # LIDER_SERVICIOS cierra como respaldo solo las OP de su área (rol leído de la base)
+    if nuevo_estado == EstadoOPEnum.CERRADA.value:
+        rol_bd = rol_en_bd(db, usuario_actual.get("email"))
+        if rol_bd in ROLES_CIERRE_SOLO_SU_UNIDAD and not unidad_op.puede_ver_op(rol_bd, op_db, db):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Solo puede cerrar OP de su área.",
+            )
 
     estado_anterior = _valor_enum(op_db.estado)
     avance_anterior = float(op_db.porcentaje_avance or 0)

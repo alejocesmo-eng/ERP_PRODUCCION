@@ -104,8 +104,17 @@ def test_el_sandbox_aplica_y_verifica_la_migracion_31():
 
     assert aplicar_migracion.ruta_migracion(31).name == "31_MIGRACION_CONFIGURACION_ROLES.sql"
     assert aplicar_migracion.ruta_migracion(31, reversion=True).name == "31_REVERSION_CONFIGURACION_ROLES.sql"
-    assert nombres[-1] == "31_MIGRACION_CONFIGURACION_ROLES.sql"
+    assert "31_MIGRACION_CONFIGURACION_ROLES.sql" in nombres
     assert any("migracion 31" in descripcion for descripcion, _ in preparar_sandbox.VERIFICACIONES)
+
+
+def test_el_sandbox_aplica_y_verifica_la_migracion_32():
+    nombres = [ruta.name for ruta in preparar_sandbox.migraciones_sandbox()]
+
+    assert aplicar_migracion.ruta_migracion(32).name == "32_MIGRACION_ROL_LIDER_SERVICIOS.sql"
+    assert aplicar_migracion.ruta_migracion(32, reversion=True).name == "32_REVERSION_ROL_LIDER_SERVICIOS.sql"
+    assert nombres[-1] == "32_MIGRACION_ROL_LIDER_SERVICIOS.sql"
+    assert any("migracion 32" in descripcion for descripcion, _ in preparar_sandbox.VERIFICACIONES)
 
 
 def test_encuentra_la_reversion_25():

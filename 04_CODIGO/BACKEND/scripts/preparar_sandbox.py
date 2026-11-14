@@ -8,7 +8,7 @@ Prepara la base local sgi_sandbox para pruebas manuales de la aplicacion:
    Todas son idempotentes.
 3. Verifica el trigger del historial de planos, las extensiones pg_trgm y unaccent y la
    funcion sgi_normalizar.
-4. Datos de demostracion: los 17 usuarios de reglas/usuarios-demo.md (uno por rol, los mismos
+4. Datos de demostracion: los 18 usuarios de reglas/usuarios-demo.md (uno por rol, los mismos
    del acceso rapido de Dev Mode del login). Crea los que falten; a los que ya existen les
    devuelve el nombre, el rol y el estado activo de la tabla, sin tocar su clave salvo con
    --restablecer-claves. Desactiva (no borra) las cuentas anteriores de cargar_semilla.py que
@@ -112,6 +112,12 @@ VERIFICACIONES = (
         "HAVING bool_and(id_rol = 'ADMIN') AND count(*) = 1 "
         "AND to_regclass('public.rol_permisos_historial') IS NOT NULL",
     ),
+    (
+        "LIDER_SERVICIOS cierra OP y registra tiempos, sin costos ni valor cotizado (migracion 32)",
+        "SELECT 1 FROM rol_permisos WHERE id_rol = 'LIDER_SERVICIOS' "
+        "HAVING bool_or(id_permiso = 'PERM_OP_CERRAR') AND bool_or(id_permiso = 'PERM_TIEMPOS_REGISTRAR') "
+        "AND NOT bool_or(id_permiso IN ('PERM_EXPEDIENTE_COSTOS_VER', 'PERM_VALOR_COTIZADO_VER'))",
+    ),
 )
 
 
@@ -137,6 +143,7 @@ USUARIOS_DEMO = (
     ("logistica@sgi.local", "Logística Demo", "LIDER_LOGISTICA"),
     ("director@sgi.local", "Director Producción Demo", "DIRECTOR_PRODUCCION"),
     ("capturista_tiempos@sgi.local", "Capturista Tiempos Demo", "CAPTURISTA_TIEMPOS"),
+    ("liderservicios@sgi.local", "Líder Servicios Demo", "LIDER_SERVICIOS"),
 )
 # Cuentas de cargar_semilla.py que no son de demostracion: se desactivan, no se borran (el
 # historial conserva sus referencias). admin@sgi.com no esta: sigue como ADMIN tecnico.

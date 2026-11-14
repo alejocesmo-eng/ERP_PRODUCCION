@@ -195,5 +195,5 @@ def test_unidad_de_proceso_de_los_planos():
 
 
 def test_solo_los_lideres_y_calidad_de_producto_cambian_la_unidad():
-    assert roles.ROLES_CAMBIAR_UNIDAD_OP == [roles.LIDER_MECANIZADOS, roles.CALIDAD_PRODUCTO]
-    assert roles.UNIDAD_POR_LIDER == {roles.LIDER_MECANIZADOS: "MECANIZADOS"}
+    assert roles.ROLES_CAMBIAR_UNIDAD_OP == [roles.LIDER_MECANIZADOS, roles.LIDER_SERVICIOS, roles.CALIDAD_PRODUCTO]
+    assert roles.UNIDAD_POR_LIDER == {roles.LIDER_MECANIZADOS: "MECANIZADOS", roles.LIDER_SERVICIOS: "SERVICIOS"}

@@ -8,7 +8,9 @@ reglas/permisos-por-rol-modulo.md del proyecto PRISMA).
   ahí solo cambia con un traslado: lo hacen el líder de la unidad donde está la OP y
   CALIDAD_PRODUCTO (ROLES_CAMBIAR_UNIDAD_OP); ningún otro rol, tampoco ADMIN.
 - El líder de cada unidad solo ve las OP de su unidad; CALIDAD_PRODUCTO, las que le llegan para
-  inspección y las que están en Tercero (vuelven por Calidad).
+  inspección y las que están en Tercero (vuelven por Calidad). LIDER_SERVICIOS además ve las OP de
+  su área desde que se crean: aún sin unidad, si los planos vigentes de su producto son de su unidad
+  (roles.LIDERES_VEN_DESDE_CREACION).
 - Los movimientos de Almacén y del transportador en la cadena del tercero no cambian la unidad:
   la OP queda en Tercero hasta que Calidad la traslade.
 """
@@ -66,10 +68,39 @@ def unidad_del_lider(rol: Optional[str]) -> Optional[str]:
     return roles.UNIDAD_POR_LIDER.get(rol)
 
 
+def _sin_unidad(op: OrdenProduccion) -> bool:
+    return (op.unidad_actual or SIN_ASIGNAR) == SIN_ASIGNAR
+
+
+def unidad_de_producto(db: Session, id_producto) -> Optional[str]:
+    """Unidad de los planos vigentes del producto (la misma selección que la liberación)."""
+    from app.api.v1.quality_gate import planos_vigentes_de_producto
+
+    return unidad_de_planos(planos_vigentes_de_producto(db, id_producto)) if id_producto else None
+
+
+def productos_de_unidad(db: Session, unidad: str) -> set:
+    """Productos de OP aún sin unidad cuyos planos vigentes son de la unidad indicada."""
+    ids = {
+        id_producto for (id_producto,) in db.query(OrdenProduccion.id_producto).filter(
+            OrdenProduccion.id_producto.isnot(None),
+            or_(OrdenProduccion.unidad_actual.is_(None), OrdenProduccion.unidad_actual == SIN_ASIGNAR),
+        ).distinct().all()
+    }
+    return {id_producto for id_producto in ids if unidad_de_producto(db, id_producto) == unidad}
+
+
 def filtrar_op_visibles(consulta: Query, rol: Optional[str]) -> Query:
     """Restringe una consulta de OrdenProduccion a lo que ve el rol según su unidad.
     Los demás roles siguen con el acceso de su ruta."""
     unidad = unidad_del_lider(rol)
+    if unidad and rol in roles.LIDERES_VEN_DESDE_CREACION:
+        productos = productos_de_unidad(consulta.session, unidad)
+        return consulta.filter(or_(
+            OrdenProduccion.unidad_actual == unidad,
+            (or_(OrdenProduccion.unidad_actual.is_(None), OrdenProduccion.unidad_actual == SIN_ASIGNAR))
+            & OrdenProduccion.id_producto.in_(productos),
+        ))
     if unidad:
         return consulta.filter(OrdenProduccion.unidad_actual == unidad)
     if rol == roles.CALIDAD_PRODUCTO:
@@ -80,10 +111,15 @@ def filtrar_op_visibles(consulta: Query, rol: Optional[str]) -> Query:
     return consulta
 
 
-def puede_ver_op(rol: Optional[str], op: OrdenProduccion) -> bool:
+def puede_ver_op(rol: Optional[str], op: OrdenProduccion, db: Optional[Session] = None) -> bool:
+    """Con db, LIDERES_VEN_DESDE_CREACION ven también las OP de su área que aún no tienen unidad."""
     unidad = unidad_del_lider(rol)
+    if unidad and op.unidad_actual == unidad:
+        return True
+    if unidad and rol in roles.LIDERES_VEN_DESDE_CREACION and db is not None and _sin_unidad(op):
+        return unidad_de_producto(db, op.id_producto) == unidad
     if unidad:
-        return op.unidad_actual == unidad
+        return False
     if rol == roles.CALIDAD_PRODUCTO:
         return op.estado in ESTADOS_INSPECCION or op.unidad_actual == TERCERO
     return True

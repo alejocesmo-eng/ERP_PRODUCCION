@@ -21,8 +21,9 @@ from app.db.models import Usuario
 
 PERMISO_COSTOS = "PERM_EXPEDIENTE_COSTOS_VER"
 PERMISO_VALOR_COTIZADO = "PERM_VALOR_COTIZADO_VER"
-# Registrar tiempos de operaciones de OP (migraciones 29 y 30): OPERARIO, CAPTURISTA_TIEMPOS,
-# JEFE_PRODUCCION, ADMIN y LIDER_MECANIZADOS
+# Registrar tiempos de operaciones de OP (migraciones 29, 30 y 32): OPERARIO, CAPTURISTA_TIEMPOS,
+# JEFE_PRODUCCION, ADMIN, LIDER_MECANIZADOS y LIDER_SERVICIOS. Se lee de rol_permisos en cada
+# petición: ADMIN lo asigna o retira desde Configuración de roles sin tocar código
 PERMISO_TIEMPOS = "PERM_TIEMPOS_REGISTRAR"
 
 # Lo único que puede usar CAPTURISTA_TIEMPOS: sesión, cola de sublotes y registro de tiempos.
@@ -93,15 +94,19 @@ CAMPOS_VALOR_COTIZADO = frozenset({
 CAMPOS_OCULTOS_POR_ROL = {
     roles.OPERARIO: CAMPOS_CLIENTE | CAMPOS_VALOR_COTIZADO,
     roles.CAPTURISTA_TIEMPOS: CAMPOS_CLIENTE | CAMPOS_VALOR_COTIZADO | CAMPOS_PLANO,
+    # Los líderes de unidad ven el cliente y su histórico, pero no el valor cotizado (expediente del
+    # pedido, cotizaciones) ni valores de inventario
+    roles.LIDER_MECANIZADOS: CAMPOS_VALOR_COTIZADO,
+    roles.LIDER_SERVICIOS: CAMPOS_VALOR_COTIZADO,
 }
 
 
 def alcance_por_rol(request: Request, db: Session = Depends(get_db)) -> None:
     """Dependencia global de la aplicación, con el rol de la base:
     - CAPTURISTA_TIEMPOS solo pasa a RUTAS_CAPTURISTA.
-    - OPERARIO y CAPTURISTA_TIEMPOS marcan la petición para que OcultarCamposPorRol quite de la
-      respuesta los campos de CAMPOS_OCULTOS_POR_ROL (cliente y valor cotizado; al capturista,
-      también el plano).
+    - OPERARIO, CAPTURISTA_TIEMPOS y los líderes de unidad marcan la petición para que
+      OcultarCamposPorRol quite de la respuesta los campos de CAMPOS_OCULTOS_POR_ROL (valor
+      cotizado; a OPERARIO y al capturista, también el cliente; al capturista, el plano).
     Sin token o con token inválido no decide: la ruta responde."""
     cabecera = request.headers.get("authorization", "")
     if not cabecera.lower().startswith("bearer "):
