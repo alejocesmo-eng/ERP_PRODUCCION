@@ -1,5 +1,5 @@
 // src/views/nivel2/ProyectosView.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import API, { mensajeStockInsuficiente } from '../../services/api';
 import { useProyectos } from '../../context/ProyectosContext';
 import ModalNuevaCotizacion from '../../components/modals/ModalNuevaCotizacion';
@@ -118,11 +118,12 @@ export default function ProyectosView() {
     { paso: 8, id: 'KIT_COMPLETO', nombre: '8. Ensamble & Pruebas', area: 'Producción', accion: '🏁 8. Aprobar Ensamble & Cierre' }
   ];
 
+  // Proyectos del último render, para el respaldo de cargarMantenimientos sin que esa función
+  // cambie con cada carga (si dependiera del estado, el efecto de carga inicial se repetiría)
+  const proyectosRef = useRef(proyectos);
   useEffect(() => {
-    obtenerUsuarioSesion();
-    cargarProyectos();
-    cargarMantenimientos();
-  }, []);
+    proyectosRef.current = proyectos;
+  }, [proyectos]);
 
   const obtenerUsuarioSesion = () => {
     try {
@@ -137,7 +138,37 @@ export default function ProyectosView() {
     }
   };
 
-  const cargarProyectos = async () => {
+  const cargarMantenimientos = useCallback(async (proyectosActuales = null) => {
+    try {
+      const res = await API.get('/mantenimientos/monitor-kits');
+      const listaMant = Array.isArray(res.data) ? res.data : [];
+      const listaProyectos = proyectosActuales || proyectosRef.current || [];
+      const mapeo = [...listaMant];
+
+      listaProyectos.forEach(p => {
+        const yaExiste = mapeo.some(m => m.id_mantenimiento === p.id_proyecto || m.codigo_mantenimiento === p.numero_pedido);
+        if (!yaExiste && (p.tipo_proyecto === 'MANTENIMIENTO' || p.numero_pedido?.includes('MANT') || p.codigo_proyecto?.includes('MANT'))) {
+          mapeo.push({
+            id_mantenimiento: p.id_proyecto,
+            id_proyecto: p.id_proyecto,
+            codigo_mantenimiento: p.numero_pedido,
+            cliente_nombre: p.cliente_nombre,
+            nombre_maquina: p.detalle_producto || 'Equipo General',
+            codigo_op: p.codigo_proyecto || 'OP-100',
+            fase_mantenimiento: p.fase_mantenimiento || 'LAVADO_DESARME',
+            piezas: p.detalles || []
+          });
+        }
+      });
+
+      setListaMantenimientos(mapeo);
+    } catch (error) {
+      console.warn("No se pudieron cargar mantenimientos desde el servidor:", error);
+      setListaMantenimientos([]);
+    }
+  }, []);
+
+  const cargarProyectos = useCallback(async () => {
     try {
       setLoading(true);
       const [resProyectos, resSolicitudes, resCotizaciones] = await Promise.allSettled([
@@ -166,37 +197,13 @@ export default function ProyectosView() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [cargarMantenimientos]);
 
-  const cargarMantenimientos = async (proyectosActuales = null) => {
-    try {
-      const res = await API.get('/mantenimientos/monitor-kits');
-      const listaMant = Array.isArray(res.data) ? res.data : [];
-      const listaProyectos = proyectosActuales || proyectos || [];
-      const mapeo = [...listaMant];
-
-      listaProyectos.forEach(p => {
-        const yaExiste = mapeo.some(m => m.id_mantenimiento === p.id_proyecto || m.codigo_mantenimiento === p.numero_pedido);
-        if (!yaExiste && (p.tipo_proyecto === 'MANTENIMIENTO' || p.numero_pedido?.includes('MANT') || p.codigo_proyecto?.includes('MANT'))) {
-          mapeo.push({
-            id_mantenimiento: p.id_proyecto,
-            id_proyecto: p.id_proyecto,
-            codigo_mantenimiento: p.numero_pedido,
-            cliente_nombre: p.cliente_nombre,
-            nombre_maquina: p.detalle_producto || 'Equipo General',
-            codigo_op: p.codigo_proyecto || 'OP-100',
-            fase_mantenimiento: p.fase_mantenimiento || 'LAVADO_DESARME',
-            piezas: p.detalles || []
-          });
-        }
-      });
-
-      setListaMantenimientos(mapeo);
-    } catch (error) {
-      console.warn("No se pudieron cargar mantenimientos desde el servidor:", error);
-      setListaMantenimientos([]);
-    }
-  };
+  useEffect(() => {
+    obtenerUsuarioSesion();
+    cargarProyectos();
+    cargarMantenimientos();
+  }, [cargarProyectos, cargarMantenimientos]);
 
   const handleAbrirVisorCotizacion = async (cot) => {
     try {
