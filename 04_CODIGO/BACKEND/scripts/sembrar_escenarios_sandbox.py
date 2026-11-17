@@ -597,18 +597,15 @@ def imprimir(base: str, resultados: list[Resultado], confirmado: bool) -> None:
 
 
 def main() -> None:
-    from scripts._pg_pruebas import conectar_admin, existe_base, fallar, url_base, validar_nombre
+    from scripts._pg_pruebas import conectar, fallar, url_base, validar_nombre
 
     parser = argparse.ArgumentParser(description="Semilla de escenarios (SCRUM-33) en sgi_sandbox o sgi_test_*.")
     parser.add_argument("base", help="sgi_sandbox o una copia sgi_test_* (nunca sgi_db).")
     base = validar_nombre(parser.parse_args().base, permitir_sandbox=True)
 
-    admin = conectar_admin()
-    try:
-        if not existe_base(admin.cursor(), base):
-            fallar(f"No existe la base {base}.")
-    finally:
-        admin.close()
+    # Conexión directa a la base elegida, sin pasar por la base de SGI_TEST_PG_ADMIN_URL: si no
+    # existe o rechaza al usuario, conectar() lo informa con el mensaje del servidor
+    conectar(base).close()
 
     # URL sin clave (SGI_TEST_PG_ADMIN_URL con la base elegida); libpq toma la clave de PGPASSWORD
     engine = create_engine(url_base(base))

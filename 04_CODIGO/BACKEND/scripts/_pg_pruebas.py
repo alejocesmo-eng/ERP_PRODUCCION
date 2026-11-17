@@ -60,17 +60,29 @@ def validar_nombre(nombre: str, permitir_plantilla: bool = False, permitir_sandb
     return nombre
 
 
+def mensaje_rechazo(error: UnicodeDecodeError) -> str:
+    """Mensaje del servidor que psycopg2 no pudo leer. Un PostgreSQL en espanol sobre Windows
+    responde antes de autenticar en WIN1252 (bytes 0xf3, 0xab...), no en UTF-8. Lo que va entre
+    comillas angulares o dobles (usuario, base) se oculta."""
+    crudo = error.object if isinstance(error.object, (bytes, bytearray)) else b""
+    texto = bytes(crudo).decode("cp1252", errors="replace").strip() or str(error)
+    return re.sub(r"«[^»]*»|\"[^\"]*\"", "[oculto]", texto)
+
+
 def conectar(base: str):
     """Conexion psycopg2 en autocommit; la clave la toma libpq de PGPASSWORD."""
     url = url_admin()
     if base != (url.database or "postgres"):
         validar_nombre(base, permitir_plantilla=True, permitir_sandbox=True)
-    conexion = psycopg2.connect(
-        host=url.host or "localhost",
-        port=url.port or 5432,
-        user=url.username,
-        dbname=base,
-    )
+    try:
+        conexion = psycopg2.connect(
+            host=url.host or "localhost",
+            port=url.port or 5432,
+            user=url.username,
+            dbname=base,
+        )
+    except UnicodeDecodeError as error:
+        fallar(f"PostgreSQL rechazo la conexion a {base}: {mensaje_rechazo(error)}")
     conexion.autocommit = True
     return conexion
 

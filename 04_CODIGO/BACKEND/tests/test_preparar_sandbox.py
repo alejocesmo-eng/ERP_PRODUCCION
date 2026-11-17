@@ -288,3 +288,22 @@ def test_usuarios_demo_no_crea_ni_migra_la_base(monkeypatch, argumentos, esperad
 
 class CursorExiste:
     pass
+
+def test_el_rechazo_en_win1252_se_lee_sin_mostrar_usuario_ni_base(capsys, monkeypatch):
+    # PostgreSQL en español sobre Windows responde antes de autenticar en WIN1252 y psycopg2
+    # lanza UnicodeDecodeError (0xf3, 0xab) en lugar del mensaje
+    crudo = "FATAL:  la autentificación password falló para el usuario «usuario_secreto»".encode("cp1252")
+
+    def connect(**_):
+        posicion = crudo.index(0xF3)
+        raise UnicodeDecodeError("utf-8", crudo, posicion, posicion + 1, "invalid continuation byte")
+
+    monkeypatch.setenv("SGI_TEST_PG_ADMIN_URL", "postgresql://usuario_secreto@localhost:5432/postgres")
+    monkeypatch.setattr(_pg_pruebas.psycopg2, "connect", connect)
+
+    with pytest.raises(SystemExit):
+        _pg_pruebas.conectar("sgi_sandbox")
+
+    error = capsys.readouterr().err
+    assert "la autentificación password falló para el usuario [oculto]" in error
+    assert "usuario_secreto" not in error

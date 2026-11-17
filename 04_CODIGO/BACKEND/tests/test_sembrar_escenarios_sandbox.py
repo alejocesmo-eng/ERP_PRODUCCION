@@ -12,6 +12,7 @@ import uuid
 
 import pytest
 from sqlalchemy import create_engine, func
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -30,6 +31,7 @@ from app.db.models import (
     SocioNegocio,
     Usuario,
 )
+from scripts import _pg_pruebas
 from scripts import sembrar_escenarios_sandbox as semilla
 
 
@@ -188,6 +190,30 @@ def test_el_pdf_demo_es_siempre_el_mismo():
 def test_rechaza_bases_que_no_son_de_prueba_antes_de_conectar(monkeypatch, base):
     monkeypatch.setattr("sys.argv", ["sembrar_escenarios_sandbox", base])
     monkeypatch.setattr("scripts._pg_pruebas.conectar_admin", lambda: pytest.fail("No debe conectar"))
+    monkeypatch.setattr("scripts._pg_pruebas.conectar", lambda base: pytest.fail("No debe conectar"))
 
     with pytest.raises(SystemExit):
         semilla.main()
+
+
+def test_conecta_directo_a_la_base_elegida_y_no_a_la_de_la_url_admin(monkeypatch):
+    # La base de SGI_TEST_PG_ADMIN_URL (por ejemplo postgres) no interviene en la semilla
+    monkeypatch.setenv("SGI_TEST_PG_ADMIN_URL", "postgresql://usuario@localhost:5432/postgre")
+    monkeypatch.setattr("sys.argv", ["sembrar_escenarios_sandbox", "sgi_sandbox"])
+    monkeypatch.setattr("scripts._pg_pruebas.conectar_admin", lambda: pytest.fail("No usa la base de la URL admin"))
+    bases = []
+
+    class Detener(Exception):
+        pass
+
+    def conectar(base):
+        bases.append(base)
+        raise Detener
+
+    monkeypatch.setattr("scripts._pg_pruebas.conectar", conectar)
+
+    with pytest.raises(Detener):
+        semilla.main()
+
+    assert bases == ["sgi_sandbox"]
+    assert make_url(_pg_pruebas.url_base("sgi_sandbox")).database == "sgi_sandbox"
