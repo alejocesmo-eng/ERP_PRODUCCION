@@ -37,6 +37,7 @@ MIGRACION_30 = RUTA_BASE_DATOS / "30_MIGRACION_TIEMPOS_LIDER_MECANIZADOS.sql"
 REVERSION_30 = RUTA_BASE_DATOS / "30_REVERSION_TIEMPOS_LIDER_MECANIZADOS.sql"
 # Crea LIDER_SERVICIOS, que está en el catálogo (roles.ROLES_CATALOGO)
 MIGRACION_32 = RUTA_BASE_DATOS / "32_MIGRACION_ROL_LIDER_SERVICIOS.sql"
+REVERSION_32 = RUTA_BASE_DATOS / "32_REVERSION_ROL_LIDER_SERVICIOS.sql"
 
 pytestmark = pytest.mark.pg
 
@@ -75,6 +76,27 @@ def conteo(sesion):
         "SELECT (SELECT count(*) FROM roles), (SELECT count(*) FROM permisos), "
         "(SELECT count(*) FROM rol_permisos), (SELECT count(*) FROM usuarios)"
     )).one()
+
+
+def revertir_32(sesion) -> list:
+    """Revierte la 32 (sus asignaciones son posteriores a la 25, la 27 y la 29). Su guarda exige que
+    nadie tenga LIDER_SERVICIOS: los usuarios con ese rol (por ejemplo la cuenta demo) se reasignan
+    a OPERARIO dentro de la transacción. Devuelve sus id para restaurar_32."""
+    lideres = sesion.execute(
+        text("SELECT id_usuario FROM usuarios WHERE id_rol = :r"), {"r": roles.LIDER_SERVICIOS}
+    ).scalars().all()
+    sesion.execute(text("UPDATE usuarios SET id_rol = 'OPERARIO' WHERE id_rol = :r"), {"r": roles.LIDER_SERVICIOS})
+    ejecutar_sql(sesion, REVERSION_32)
+    return lideres
+
+
+def restaurar_32(sesion, lideres: list) -> None:
+    ejecutar_sql(sesion, MIGRACION_32)
+    if lideres:
+        sesion.execute(
+            text("UPDATE usuarios SET id_rol = :r WHERE id_usuario = ANY(:ids)"),
+            {"r": roles.LIDER_SERVICIOS, "ids": list(lideres)},
+        )
 
 
 def test_las_migraciones_25_27_29_y_32_dejan_los_roles_del_catalogo(sesion):
@@ -123,7 +145,9 @@ def test_reversion_y_reaplicacion_dejan_los_mismos_conteos(sesion):
     ejecutar_sql(sesion, MIGRACION_27)
     ejecutar_sql(sesion, MIGRACION_29)
     ejecutar_sql(sesion, MIGRACION_30)
+    ejecutar_sql(sesion, MIGRACION_32)
     con_27 = conteo(sesion)
+    lideres_servicios = revertir_32(sesion)
     # La 29 y la 27 se revierten antes que la 25 (sus asignaciones son posteriores a la 25). La guarda
     # de la 29 exige que nadie tenga CAPTURISTA_TIEMPOS: se reasignan y se restauran al final
     capturistas = sesion.execute(
@@ -183,6 +207,7 @@ def test_reversion_y_reaplicacion_dejan_los_mismos_conteos(sesion):
             text("UPDATE usuarios SET id_rol = :r WHERE id_usuario = ANY(:ids)"),
             {"r": roles.CAPTURISTA_TIEMPOS, "ids": list(capturistas)},
         )
+    restaurar_32(sesion, lideres_servicios)
     assert conteo(sesion) == con_27
 
 
