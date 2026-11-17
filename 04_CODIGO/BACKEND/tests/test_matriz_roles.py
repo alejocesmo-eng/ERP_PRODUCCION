@@ -201,3 +201,16 @@ def test_requerir_roles_responde_403_fuera_de_la_lista(client, rol, estado):
     assert respuesta.status_code == estado
     if estado == 403:
         assert respuesta.json()["detail"] == "Acceso denegado. Permisos requeridos para rol(es): ['ADMIN', 'VENTAS']"
+
+
+def test_el_mensaje_del_403_solo_lista_roles_del_catalogo():
+    from app.api.deps import detalle_acceso_denegado
+
+    detalle = detalle_acceso_denegado(roles.ROLES_EXPEDIENTE_OP)
+
+    assert "GESTION_CALIDAD" in detalle and "JEFE_PRODUCCION" in detalle
+    for anterior in roles.ROLES_ANTERIORES:
+        assert f"'{anterior}'" not in detalle
+    # Sin roles del catálogo (caso teórico) se muestra la lista tal cual
+    assert detalle_acceso_denegado(["DISENO"]).endswith("['DISENO']")
+

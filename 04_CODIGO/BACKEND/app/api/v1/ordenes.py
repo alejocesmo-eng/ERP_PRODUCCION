@@ -25,7 +25,7 @@ from app.db.models import (
 )
 from app.db.models_calidad import InspeccionCalidad
 from app.db.models_produccion import OperacionOT, RegistroTiempoOperario, SubLoteOperacion
-from app.api.deps import obtener_usuario_actual, requerir_roles, rol_tiene_permiso
+from app.api.deps import detalle_acceso_denegado, obtener_usuario_actual, requerir_roles, rol_tiene_permiso
 from app.core.roles import (
     ROLES_ACTUALIZAR_OP,
     ROLES_CERRAR_OP,
@@ -859,7 +859,7 @@ def actualizar_estado_produccion(
     if not libera_op and usuario_actual["rol"] not in roles_permitidos:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Acceso denegado. Permisos requeridos para rol(es): {roles_permitidos}",
+            detail=detalle_acceso_denegado(roles_permitidos),
         )
 
     op_db = db.query(OrdenProduccion).filter(OrdenProduccion.id_proyecto == id_proyecto).first()

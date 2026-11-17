@@ -2,6 +2,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
+from app.core.roles import ROLES_CATALOGO
 from app.core.security import SECRET_KEY, ALGORITHM
 from app.db.database import get_db
 from app.db.models import RolPermiso, Usuario
@@ -35,12 +36,19 @@ def obtener_usuario_actual(token: str = Depends(oauth2_scheme), db: Session = De
         raise credentials_exception
     return {"email": email, "rol": rol}
 
+def detalle_acceso_denegado(roles_permitidos: list[str]) -> str:
+    """Mensaje del 403 con los roles del catálogo (SCRUM-27). Los roles anteriores (DISENO,
+    PRODUCCION, CALIDAD) siguen autorizados en la transición, pero no se anuncian."""
+    del_catalogo = [rol for rol in roles_permitidos if rol in ROLES_CATALOGO]
+    return f"Acceso denegado. Permisos requeridos para rol(es): {del_catalogo or list(roles_permitidos)}"
+
+
 def requerir_roles(roles_permitidos: list[str]):
     def rol_checker(usuario_actual: dict = Depends(obtener_usuario_actual)):
         if usuario_actual["rol"] not in roles_permitidos:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Acceso denegado. Permisos requeridos para rol(es): {roles_permitidos}"
+                detail=detalle_acceso_denegado(roles_permitidos),
             )
         return usuario_actual
     return rol_checker
