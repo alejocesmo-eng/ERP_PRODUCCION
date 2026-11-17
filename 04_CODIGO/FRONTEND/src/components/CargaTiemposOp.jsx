@@ -15,14 +15,14 @@ function hoy() {
 }
 
 const FILA_NUEVA = () => ({
-  id_operacion: '', codigo_maquina: '', operario_email: '', minutos_operacion: '', minutos_setup: '', fecha: hoy()
+  id_operacion: '', codigo_maquina: '', operario: '', minutos_operacion: '', minutos_setup: '', fecha: hoy()
 });
 
 function cuerpo(fila) {
   return {
     id_operacion: fila.id_operacion,
     codigo_maquina: fila.codigo_maquina,
-    operario_email: fila.operario_email,
+    operario: fila.operario,
     minutos_operacion: Number(fila.minutos_operacion),
     minutos_setup: fila.minutos_setup === '' || fila.minutos_setup === null ? null : Number(fila.minutos_setup),
     fecha: fila.fecha || null
@@ -58,7 +58,7 @@ function CamposFila({ fila, cambiar, procesos, maquinas }) {
         <select
           aria-label="Estación"
           value={fila.codigo_maquina}
-          onChange={(e) => cambiar({ codigo_maquina: e.target.value, operario_email: '' })}
+          onChange={(e) => cambiar({ codigo_maquina: e.target.value, operario: '' })}
           className={CONTROL}
         >
           <option value="">Seleccione…</option>
@@ -70,13 +70,13 @@ function CamposFila({ fila, cambiar, procesos, maquinas }) {
       <td className={CELDA}>
         <select
           aria-label="Operario"
-          value={fila.operario_email}
-          onChange={(e) => cambiar({ operario_email: e.target.value })}
+          value={fila.operario}
+          onChange={(e) => cambiar({ operario: e.target.value })}
           disabled={!fila.codigo_maquina}
           className={CONTROL}
         >
           <option value="">{fila.codigo_maquina && !operarios.length ? 'Sin operarios asignados' : 'Seleccione…'}</option>
-          {operarios.map((operario) => <option key={operario.email} value={operario.email}>{operario.nombre}</option>)}
+          {operarios.map((operario) => <option key={operario.usuario} value={operario.usuario}>{operario.nombre}</option>)}
         </select>
       </td>
       <td className={CELDA}>
@@ -197,7 +197,7 @@ export default function CargaTiemposOp({ codigoOp }) {
                       <>
                         <td className={CELDA}>{registro.proceso}</td>
                         <td className={CELDA}>{registro.codigo_maquina}</td>
-                        <td className={CELDA}>{registro.operario_nombre || registro.operario_email}</td>
+                        <td className={CELDA}>{registro.operario_nombre || registro.operario}</td>
                         <td className={`${CELDA} text-right font-mono`}>{registro.minutos_operacion}</td>
                         <td className={`${CELDA} text-right font-mono`}>{registro.minutos_setup ?? ''}</td>
                         <td className={CELDA}>{registro.fecha}</td>
@@ -263,7 +263,7 @@ export default function CargaTiemposOp({ codigoOp }) {
                   <button
                     type="button"
                     onClick={agregar}
-                    disabled={enviando || !nueva.id_operacion || !nueva.codigo_maquina || !nueva.operario_email || !(Number(nueva.minutos_operacion) > 0)}
+                    disabled={enviando || !nueva.id_operacion || !nueva.codigo_maquina || !nueva.operario || !(Number(nueva.minutos_operacion) > 0)}
                     className="rounded bg-emerald-700 px-3 py-0.5 font-bold text-white hover:bg-emerald-800 disabled:opacity-50"
                   >
                     Agregar

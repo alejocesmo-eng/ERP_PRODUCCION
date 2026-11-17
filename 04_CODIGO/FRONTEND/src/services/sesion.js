@@ -1,7 +1,8 @@
 // src/services/sesion.js
-// Sesión del usuario autenticado. El token de /auth/token es la fuente del correo (sub), del rol
-// y de la caducidad; el nombre es el que devolvió esa misma respuesta de login y solo se usa si
-// pertenece al mismo correo del token. No hay valores por defecto: sin token válido no hay sesión.
+// Sesión del usuario autenticado. El token de /auth/token es la fuente del identificador interno
+// (sub = id_usuario, migración 34), del rol y de la caducidad; el nombre y el usuario son los que
+// devolvió esa misma respuesta de login y solo se usan si pertenecen al mismo identificador del
+// token. No hay valores por defecto: sin token válido no hay sesión.
 
 const CLAVE_TOKEN = 'sgi_token';
 const CLAVE_SESION = 'sgi_sesion';
@@ -39,16 +40,25 @@ export function obtenerSesion() {
   } catch {
     guardada = null;
   }
-  const nombre = guardada?.email === datos.sub ? guardada.nombre : null;
-  return { email: datos.sub, rol: datos.rol || null, nombre: nombre || datos.sub };
+  const propia = guardada?.id_usuario === datos.sub ? guardada : null;
+  return {
+    id_usuario: datos.sub,
+    usuario: propia?.usuario || null,
+    rol: datos.rol || null,
+    nombre: propia?.nombre || propia?.usuario || 'Usuario'
+  };
 }
 
-// Guarda la respuesta de POST /auth/token: el token y el nombre del usuario autenticado
+// Guarda la respuesta de POST /auth/token: el token, el nombre y el usuario con que se entró
 export function guardarSesion(respuesta) {
   const token = respuesta.access_token;
   localStorage.setItem(CLAVE_TOKEN, token);
   const datos = datosDelToken(token);
-  localStorage.setItem(CLAVE_SESION, JSON.stringify({ email: datos?.sub || null, nombre: respuesta.usuario || null }));
+  localStorage.setItem(CLAVE_SESION, JSON.stringify({
+    id_usuario: datos?.sub || null,
+    nombre: respuesta.usuario || null,
+    usuario: respuesta.nombre_usuario || null
+  }));
 }
 
 export function cerrarSesion() {

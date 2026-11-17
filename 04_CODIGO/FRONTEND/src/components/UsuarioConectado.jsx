@@ -15,7 +15,7 @@ export default function UsuarioConectado({ className = '' }) {
   if (!sesion) return null;
   return (
     <div
-      title={sesion.email}
+      title={sesion.usuario || undefined}
       className={`bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200 text-xs font-semibold text-blue-900 ${className}`}
     >
       👤 Usuario: <strong>{sesion.nombre}</strong>{sesion.rol ? ` [${sesion.rol}]` : ''}

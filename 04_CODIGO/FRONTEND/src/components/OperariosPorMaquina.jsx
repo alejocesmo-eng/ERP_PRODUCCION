@@ -20,7 +20,7 @@ export default function OperariosPorMaquina() {
       setMaquinas(data.maquinas || []);
       setDisponibles(data.operarios_disponibles || []);
       setBorrador(Object.fromEntries((data.maquinas || []).map((maquina) => [
-        maquina.codigo_maquina, new Set(maquina.operarios.map((operario) => operario.email))
+        maquina.codigo_maquina, new Set(maquina.operarios.map((operario) => operario.usuario))
       ])));
     } catch (fallo) {
       setError(mensajeError(fallo, 'No se pudieron cargar las máquinas.'));
@@ -43,7 +43,7 @@ export default function OperariosPorMaquina() {
     setAviso('');
     setGuardando(codigo);
     try {
-      await API.put(`${RUTA}/${encodeURIComponent(codigo)}/operarios`, { emails: [...(borrador[codigo] || [])] });
+      await API.put(`${RUTA}/${encodeURIComponent(codigo)}/operarios`, { usuarios: [...(borrador[codigo] || [])] });
       setAviso(`Operarios de ${codigo} guardados.`);
       await cargar();
     } catch (fallo) {
@@ -68,13 +68,13 @@ export default function OperariosPorMaquina() {
             <legend className="px-1 font-bold text-slate-800">{maquina.codigo_maquina} · {maquina.nombre}</legend>
             <div className="max-h-40 space-y-1 overflow-y-auto">
               {disponibles.map((operario) => (
-                <label key={operario.email} className="flex items-center gap-2">
+                <label key={operario.usuario} className="flex items-center gap-2">
                   <input
                     type="checkbox"
-                    checked={borrador[maquina.codigo_maquina]?.has(operario.email) || false}
-                    onChange={() => alternar(maquina.codigo_maquina, operario.email)}
+                    checked={borrador[maquina.codigo_maquina]?.has(operario.usuario) || false}
+                    onChange={() => alternar(maquina.codigo_maquina, operario.usuario)}
                   />
-                  <span>{operario.nombre}</span>
+                  <span>{operario.nombre} <span className="text-slate-500">({operario.usuario})</span></span>
                 </label>
               ))}
               {!disponibles.length && <p className="text-slate-500">No hay usuarios activos con rol OPERARIO.</p>}

@@ -60,7 +60,7 @@ export default function LoginView({ onLoginSuccess }) {
   // La clave de los usuarios demo no se escribe en el código: sale de VITE_DEV_LOGIN_PASSWORD
   // (04_CODIGO/FRONTEND/.env.local, no versionado), con el mismo valor que SGI_SANDBOX_DEMO_PASSWORD.
   const claveAccesoRapido = import.meta.env.DEV ? import.meta.env.VITE_DEV_LOGIN_PASSWORD : undefined;
-  const fastLogin = import.meta.env.DEV ? async (email) => {
+  const fastLogin = import.meta.env.DEV ? async (usuario) => {
     if (!claveAccesoRapido) {
       setError('Acceso rápido no configurado: defina VITE_DEV_LOGIN_PASSWORD en 04_CODIGO/FRONTEND/.env.local y reinicie Vite.');
       return;
@@ -69,7 +69,7 @@ export default function LoginView({ onLoginSuccess }) {
     setError('');
     try {
       const formData = new URLSearchParams();
-      formData.append('username', email);
+      formData.append('username', usuario);
       formData.append('password', claveAccesoRapido);
 
       const response = await API.post('/auth/token', formData, {
@@ -106,13 +106,18 @@ export default function LoginView({ onLoginSuccess }) {
 
         <form onSubmit={handleLogin} className="space-y-5">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Usuario / Correo Corporativo</label>
+            <label htmlFor="login-usuario" className="block text-xs font-semibold text-slate-700 mb-1">Usuario</label>
+            {/* Solo se entra con el usuario (no con el correo); las mayúsculas pasan a minúsculas */}
             <input
+              id="login-usuario"
               type="text"
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              onChange={(e) => setUsername(e.target.value.toLowerCase())}
               className="w-full p-2.5 border border-slate-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-              placeholder="admin@sgi.com"
+              placeholder="nombre.apellido"
+              autoComplete="username"
+              autoCapitalize="none"
+              spellCheck={false}
               required
             />
           </div>
@@ -157,10 +162,10 @@ export default function LoginView({ onLoginSuccess }) {
                 <div className="grid grid-cols-2 gap-2">
                   {grupo.usuarios.map((user) => (
                     <button
-                      key={user.email}
+                      key={user.usuario}
                       type="button"
-                      title={user.email}
-                      onClick={() => fastLogin(user.email)}
+                      title={user.usuario}
+                      onClick={() => fastLogin(user.usuario)}
                       disabled={loading || !claveAccesoRapido}
                       className="py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-[10px] transition border border-slate-200 font-medium"
                     >

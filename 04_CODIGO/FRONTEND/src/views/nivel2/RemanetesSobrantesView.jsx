@@ -160,7 +160,7 @@ export default function RemanentesSobrantesView() {
         diametro_ext_mm: Number(retalForm.diametro_ext_mm) || 0,
         diametro_int_mm: Number(retalForm.diametro_int_mm) || 0,
         peso_kg: Number(retalForm.peso_kg) || 0,
-        registrado_por: usuarioSesion?.nombre || usuarioSesion?.email
+        registrado_por: usuarioSesion?.nombre || usuarioSesion?.usuario
       };
 
       const res = await API.post('/almacen/retales/nuevo', payload);

@@ -259,6 +259,18 @@ export const SidebarNavigation = () => {
                   </Link>
                 </li>
               )}
+              {accesoConfiguracion && (
+                <li>
+                  <Link
+                    to="/configuracion/usuarios"
+                    onClick={() => setVisible(false)}
+                    className={`flex items-center gap-2.5 py-1.5 px-2.5 rounded-lg transition ${isActive('/configuracion/usuarios')}`}
+                  >
+                    <span className="text-sm">👥</span>
+                    <span className="truncate">Usuarios</span>
+                  </Link>
+                </li>
+              )}
             </ul>
           </div>
         </nav>
