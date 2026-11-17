@@ -4,16 +4,21 @@ import SidebarNavigation from './components/SidebarNavigation';
 import { Outlet, useNavigate } from 'react-router-dom';
 import { ProyectosProvider } from './context/ProyectosContext';
 import ExpedienteOpModal from './components/modals/ExpedienteOpModal';
+import OrdenFabricacionModal from './components/modals/OrdenFabricacionModal';
 import UsuarioConectado from './components/UsuarioConectado';
 import BusquedaGeneral, { useAlcanceBusqueda } from './components/BusquedaGeneral';
 
 export default function AppLayout() {
   const navigate = useNavigate();
   const [codigoOpConsultada, setCodigoOpConsultada] = useState('');
+  // Botón «Abrir expediente» de Pedidos: orden de fabricación en solo lectura
+  const [codigoOpOrden, setCodigoOpOrden] = useState('');
   // Alcance de la búsqueda según el rol en la base: tipos de dato y acceso al expediente de OP.
   // Sin tipos no se muestra la caja; sin expediente no se abre el modal (el backend también lo rechaza)
   const alcance = useAlcanceBusqueda();
   const puedeVerExpediente = Boolean(alcance.expediente_op);
+
+  const cerrarOrden = useCallback(() => setCodigoOpOrden(''), []);
 
   const manejarAccionExpediente = useCallback((accion) => {
     const rutasPorAccion = {
@@ -44,7 +49,7 @@ export default function AppLayout() {
     const abrirExpedienteOp = (evento) => {
       const codigo = evento.detail?.codigoOp;
       if (typeof codigo === 'string' && codigo.trim()) {
-        setCodigoOpConsultada(codigo.trim());
+        setCodigoOpOrden(codigo.trim());
       }
     };
     window.addEventListener('sgi:abrir-expediente-op', abrirExpedienteOp);
@@ -70,6 +75,11 @@ export default function AppLayout() {
           codigoOp={codigoOpConsultada}
           onClose={() => setCodigoOpConsultada('')}
           onAction={manejarAccionExpediente}
+        />
+        <OrdenFabricacionModal
+          abierto={puedeVerExpediente && Boolean(codigoOpOrden)}
+          codigoOp={codigoOpOrden}
+          onClose={cerrarOrden}
         />
       </div>
     </ProyectosProvider>
