@@ -32,6 +32,7 @@ from app.api.v1 import (
     configuracion_roles,
     configuracion_usuarios,
     maquina_operarios,
+    mapa_op,
     tiempos_manuales,
 )
 from app.api.v1.endpoints.produccion import cola_router as cola_operaciones_router
@@ -95,6 +96,7 @@ app.include_router(unidades_op.router, prefix="/api/v1/unidades-op", tags=["Unid
 app.include_router(configuracion_roles.router, prefix="/api/v1/configuracion/roles", tags=["Configuración de roles y permisos"])
 app.include_router(configuracion_usuarios.router, prefix="/api/v1/configuracion/usuarios", tags=["Configuración de usuarios"])
 app.include_router(maquina_operarios.router, prefix="/api/v1/configuracion/maquinas", tags=["Operarios por máquina"])
+app.include_router(mapa_op.router, prefix="/api/v1/mapa-op", tags=["Mapa de la OP"])
 app.include_router(tiempos_manuales.router, prefix="/api/v1/tiempos-manuales", tags=["Carga manual de tiempos"])
 
 @app.get("/")
