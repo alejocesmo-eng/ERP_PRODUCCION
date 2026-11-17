@@ -14,7 +14,15 @@ export const ROLES_CATALOGO = [
 ];
 export const ROLES_ANTERIORES = ['DISENO', 'PRODUCCION', 'CALIDAD'];
 
-// Expediente de OP (ExpedienteOpModal)
+// GET /ordenes/expediente/{op} (ROLES_EXPEDIENTE_OP). Sin este rol no se ofrece la búsqueda de OP
+// ni el botón de expediente: la búsqueda solo muestra lo que el rol puede ver (VENTAS no entra).
+// Igual que ROLES_EXPEDIENTE_OP del backend (sin los roles por confirmar, 2026-11-12)
+export const ROLES_EXPEDIENTE_OP = [
+  'ADMIN', 'GESTION_CALIDAD', 'JEFE_PRODUCCION', 'LIDER_MECANIZADOS', 'LIDER_SERVICIOS', 'COSTOS', 'DIRECTOR_PRODUCCION',
+  'PRODUCCION', 'CALIDAD'
+];
+
+// Acciones dentro del expediente de OP (ExpedienteOpModal)
 export const ROLES_EXPEDIENTE_VENTAS = ['ADMIN', 'VENTAS'];
 // Cargar plano, solicitar BOM y liberar la OP (la liberación la decide PERM_OP_LIBERAR en el backend)
 export const ROLES_EXPEDIENTE_DISENO = ['ADMIN', 'LIDER_DISENO', 'DIBUJANTE', 'DISENO'];

@@ -5,7 +5,9 @@ import { useProyectos } from '../../context/ProyectosContext';
 import ModalNuevaCotizacion from '../../components/modals/ModalNuevaCotizacion';
 import HistorialTimelineModal from '../../components/modals/HistorialTimelineModal';
 import ModalCatalogoStockPT from '../../components/modals/ModalCatalogoStockPT';
+import { ROLES_EXPEDIENTE_OP, rolEn } from '../../config/roles';
 import DocumentoCotizacion, { documentoDesdeCotizacionGuardada } from '../../components/cotizacion/DocumentoCotizacion';
+import { obtenerSesion } from '../../services/sesion';
 
 const capitalize = (str) => {
   if (typeof str !== 'string' || !str) return '';
@@ -2085,6 +2087,7 @@ export default function ProyectosView() {
                               <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono">{Number(orden.porcentaje_avance || 0)}%</td>
                               <td className="px-2 py-1.5 text-purple-800">{orden.centro_costo_imputado || '—'}</td>
                               <td className="px-2 py-1.5 text-center">
+                                {rolEn(obtenerSesion()?.rol, ROLES_EXPEDIENTE_OP) && (
                                 <button
                                   type="button"
                                   onClick={() => window.dispatchEvent(new CustomEvent('sgi:abrir-expediente-op', { detail: { codigoOp: orden.codigo_op } }))}
@@ -2092,6 +2095,7 @@ export default function ProyectosView() {
                                 >
                                   📂 Abrir expediente
                                 </button>
+                                )}
                               </td>
                             </tr>
                           ))}
