@@ -41,7 +41,7 @@ const PLACEHOLDERS_REFERENCIA_PRESUPUESTO = {
 };
 
 export default function ProyectosView() {
-  const { proyectos: proyectosGlobal } = useProyectos();
+  useProyectos();
 
   const [usuarioActual, setUsuarioActual] = useState(null);
   const [pestañaModulo, setPestañaModulo] = useState('pedidos');
@@ -100,30 +100,12 @@ export default function ProyectosView() {
   });
 
   const [listaMantenimientos, setListaMantenimientos] = useState([]);
-  const [mantenimientoSeleccionado, setMantenimientoSeleccionado] = useState(null);
+  const [, setMantenimientoSeleccionado] = useState(null);
   
-  const [modalNuevoMantenimientoAbierto, setModalNuevoMantenimientoAbierto] = useState(false);
-  const [modalLevantamientoAbierto, setModalLevantamientoAbierto] = useState(false);
+  const [, setModalNuevoMantenimientoAbierto] = useState(false);
+  const [, setModalLevantamientoAbierto] = useState(false);
 
-  const [formMantenimiento, setFormMantenimiento] = useState({
-    codigo_mantenimiento: 'MANT-2026-010',
-    cliente_nombre: '',
-    codigo_op: '',
-    nombre_maquina: '',
-    marca_modelo: '',
-    serie_maquina: '',
-    observaciones_ingreso: ''
-  });
-
-  const [piezasLevantamiento, setPiezasLevantamiento] = useState([]);
-  const [nuevaPiezaTemp, setNuevaPiezaTemp] = useState({
-    codigo: '',
-    descripcion: '',
-    accion: 'FABRICAR_NUEVA',
-    cantidad: 1,
-    material: 'AISI 1045',
-    cotizado: 0
-  });
+  const [, setPiezasLevantamiento] = useState([]);
 
   const ETAPAS_SGI = [
     { paso: 1, id: 'RECEPCION_REGISTRO', nombre: '1. Recepción & Registro', area: 'Ventas', accion: '📋 1. Confirmar Pedido' },
@@ -794,103 +776,6 @@ export default function ProyectosView() {
         setExpedienteCargando(false);
       }
     }
-  };
-
-  const handleGuardarNuevoMantenimiento = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setMensaje({ tipo: '', texto: '' });
-
-    try {
-      const res = await API.post('/mantenimientos/nuevo', formMantenimiento);
-      const nuevoReg = res.data;
-
-      setMensaje({ 
-        tipo: 'exito', 
-        texto: `✅ Mantenimiento [${nuevoReg.codigo_mantenimiento}] registrado y guardado exitosamente en PostgreSQL.` 
-      });
-      
-      setModalNuevoMantenimientoAbierto(false);
-      setListaMantenimientos(prev => [res.data, ...prev]);
-
-      setFormMantenimiento({
-        codigo_mantenimiento: `MANT-2026-${Math.floor(100 + Math.random() * 900)}`,
-        cliente_nombre: '',
-        codigo_op: '',
-        nombre_maquina: '',
-        marca_modelo: '',
-        serie_maquina: '',
-        observaciones_ingreso: ''
-      });
-
-      await cargarMantenimientos();
-    } catch (err) {
-      const msgError = typeof err.response?.data?.detail === 'string'
-        ? err.response.data.detail
-        : 'No se pudo guardar la máquina en la base de datos.';
-      setMensaje({ tipo: 'error', texto: `❌ Error al guardar mantenimiento: ${msgError}` });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAgregarPiezaLevantamiento = () => {
-    if (!nuevaPiezaTemp.codigo || !nuevaPiezaTemp.descripcion) return;
-
-    const nuevaPos = piezasLevantamiento.length + 1;
-    setPiezasLevantamiento([
-      ...piezasLevantamiento,
-      {
-        posicion: nuevaPos,
-        codigo: nuevaPiezaTemp.codigo,
-        descripcion: nuevaPiezaTemp.descripcion,
-        accion: nuevaPiezaTemp.accion,
-        cantidad: parseInt(nuevaPiezaTemp.cantidad) || 1,
-        material: nuevaPiezaTemp.material,
-        cotizado: parseFloat(nuevaPiezaTemp.cotizado) || 0,
-        autorizado: true
-      }
-    ]);
-
-    setNuevaPiezaTemp({
-      codigo: '',
-      descripcion: '',
-      accion: 'FABRICAR_NUEVA',
-      cantidad: 1,
-      material: 'AISI 1045',
-      cotizado: 0
-    });
-  };
-
-  const toggleAutorizacionPieza = (index) => {
-    const copia = [...piezasLevantamiento];
-    copia[index].autorizado = !copia[index].autorizado;
-    setPiezasLevantamiento(copia);
-  };
-
-  const handleExplotarAMicroProduccionMES = async () => {
-    const autorizadas = piezasLevantamiento.filter(p => p.autorizado);
-    try {
-      await API.post(`/mantenimientos/${mantenimientoSeleccionado.id_mantenimiento}/explotar-mes`);
-    } catch (err) {
-      console.warn("Las piezas se conservaron en la cola local de producción.");
-    }
-
-    const listaActualizada = listaMantenimientos.map(m => {
-      if (m.id_mantenimiento === mantenimientoSeleccionado.id_mantenimiento) {
-        return {
-          ...m,
-          fase_mantenimiento: 'EN_FABRICACION',
-          total_piezas_autorizadas: autorizadas.length,
-          porcentaje_kit_listo: 0.0
-        };
-      }
-      return m;
-    });
-
-    setListaMantenimientos(listaActualizada);
-    setModalLevantamientoAbierto(false);
-    setMensaje({ tipo: 'exito', texto: `🚀 ${autorizadas.length} piezas autorizadas enviadas a la cola de producción.` });
   };
 
   const abrirLevantamientoModal = async (mant) => {
