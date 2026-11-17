@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import API from '../../services/api';
 
 const ModalEvaluacionRea = ({ abierto, cerrar, idCotizacion, onActualizar }) => {
@@ -15,13 +15,7 @@ const ModalEvaluacionRea = ({ abierto, cerrar, idCotizacion, onActualizar }) => 
   const [cargando, setCargando] = useState(false);
   const [mensaje, setMensaje] = useState({ tipo: '', texto: '' });
 
-  React.useEffect(() => {
-    if (abierto && idCotizacion) {
-      cargarDatos();
-    }
-  }, [abierto, idCotizacion]);
-
-  const cargarDatos = async () => {
+  const cargarDatos = useCallback(async () => {
     try {
       setCargando(true);
       const res = await API.get(`/rea/evaluacion/${idCotizacion}`);
@@ -31,7 +25,14 @@ const ModalEvaluacionRea = ({ abierto, cerrar, idCotizacion, onActualizar }) => 
     } finally {
       setCargando(false);
     }
-  };
+  }, [idCotizacion]);
+
+  React.useEffect(() => {
+    if (abierto && idCotizacion) {
+      cargarDatos();
+    }
+  }, [abierto, idCotizacion, cargarDatos]);
+
 
   const handleCambio = (campo, valor) => {
     setDatos(prev => ({ ...prev, [campo]: valor }));

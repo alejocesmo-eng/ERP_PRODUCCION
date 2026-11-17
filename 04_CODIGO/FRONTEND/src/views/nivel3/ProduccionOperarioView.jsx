@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import API from '../../services/api';
 
 export default function ProduccionOperarioView() {
@@ -34,11 +34,28 @@ export default function ProduccionOperarioView() {
   // =========================================================================
   // BLOQUE 2: CARGA DE LA COLA Y CRONÓMETROS OCULTOS EN TIEMPO REAL
   // =========================================================================
+  // Cambia solo con la estación, el operario o el sublote en curso: el intervalo se reinicia en esos casos
+  const cargarColaOperario = useCallback(async () => {
+    try {
+      const params = new URLSearchParams({ maquina: estacionMaquina, operario_nombre: operarioLogueado });
+      const res = await API.get(`/operaciones/sublotes?${params.toString()}`);
+      if (!Array.isArray(res.data)) throw new Error('La respuesta de cola no tiene un formato válido.');
+      const estadosEnCola = ['PENDIENTE', 'PENDIENTE_ASIGNACION', 'EN_COLA'];
+      setColaOrdenes(res.data.filter((item) =>
+        item.id_sublote !== ordenEnCurso?.id_sublote
+        && estadosEnCola.includes(item.estado_sublote)
+      ));
+      setErrorCola('');
+    } catch (error) {
+      setErrorCola(error.response?.data?.detail || error.message || 'No fue posible actualizar la cola de trabajo.');
+    }
+  }, [estacionMaquina, operarioLogueado, ordenEnCurso?.id_sublote]);
+
   useEffect(() => {
     cargarColaOperario();
     const actualizacion = window.setInterval(cargarColaOperario, 2000);
     return () => window.clearInterval(actualizacion);
-  }, [operarioLogueado, estacionMaquina, ordenEnCurso?.id_sublote]);
+  }, [cargarColaOperario]);
 
   useEffect(() => {
     let timer = null;
@@ -54,21 +71,6 @@ export default function ProduccionOperarioView() {
     return () => clearInterval(timer);
   }, [faseTrabajo]);
 
-  const cargarColaOperario = async () => {
-    try {
-      const params = new URLSearchParams({ maquina: estacionMaquina, operario_nombre: operarioLogueado });
-      const res = await API.get(`/operaciones/sublotes?${params.toString()}`);
-      if (!Array.isArray(res.data)) throw new Error('La respuesta de cola no tiene un formato válido.');
-      const estadosEnCola = ['PENDIENTE', 'PENDIENTE_ASIGNACION', 'EN_COLA'];
-      setColaOrdenes(res.data.filter((item) =>
-        item.id_sublote !== ordenEnCurso?.id_sublote
-        && estadosEnCola.includes(item.estado_sublote)
-      ));
-      setErrorCola('');
-    } catch (error) {
-      setErrorCola(error.response?.data?.detail || error.message || 'No fue posible actualizar la cola de trabajo.');
-    }
-  };
 
   const actualizarEstadoSublote = async (sublote, estado_sublote) => {
     try {

@@ -1,5 +1,5 @@
 // src/components/modals/HistorialTimelineModal.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import API from '../../services/api';
 
 export default function HistorialTimelineModal({ isOpen, onClose, tipoEntidad, identificador, tituloDoc }) {
@@ -10,7 +10,8 @@ export default function HistorialTimelineModal({ isOpen, onClose, tipoEntidad, i
   const [motivoPausa, setMotivoPausa] = useState('');
   const [accionPausa, setAccionPausa] = useState('suspender'); // 'suspender' o 'reactivar'
 
-  const cargarHistorial = async () => {
+
+  const cargarHistorial = useCallback(async () => {
     setLoading(true);
     try {
       const res = await API.get(`/historial/${tipoEntidad}/${identificador}`);
@@ -64,7 +65,7 @@ export default function HistorialTimelineModal({ isOpen, onClose, tipoEntidad, i
     } finally {
       setLoading(false);
     }
-  };
+  }, [tipoEntidad, identificador]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -73,7 +74,7 @@ export default function HistorialTimelineModal({ isOpen, onClose, tipoEntidad, i
     setMotivoPausa('');
     setAccionPausa('suspender');
     cargarHistorial();
-  }, [isOpen, tipoEntidad, identificador]);
+  }, [isOpen, cargarHistorial]);
 
   const handleRegistrarSuspension = async (e) => {
     e.preventDefault();

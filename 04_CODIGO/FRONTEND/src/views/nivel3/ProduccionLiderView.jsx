@@ -1,5 +1,5 @@
 // src/views/nivel2/ProduccionLiderView.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import API from '../../services/api';
 import VisorPlanoModal from '../../components/VisorPlanoModal';
 import ExpedienteOpModal from '../../components/modals/ExpedienteOpModal';
@@ -83,44 +83,7 @@ export default function ProduccionLiderView() {
     { paso: 8, id: 'KIT_COMPLETO', nombre: '8. Ensamble & Pruebas', area: 'Producción', accion: '🏁 8. Aprobar Ensamble & Cierre' }
   ];
 
-  useEffect(() => {
-    obtenerUsuarioSesion();
-    cargarDatosProduccion();
-  }, [areaActiva]);
-
-  useEffect(() => {
-    const timerGlobal = setInterval(() => {
-      setSublotesActivos(prev => {
-        if (!Array.isArray(prev)) return [];
-        return prev.map(sub => {
-          if (sub.estado_sublote === 'EN_PRODUCCION') {
-            return { ...sub, segundos_produccion: (sub.segundos_produccion || 0) + 1 };
-          }
-          if (sub.estado_sublote === 'EN_SETUP') {
-            return { ...sub, segundos_setup: (sub.segundos_setup || 0) + 1 };
-          }
-          return sub;
-        });
-      });
-    }, 1000);
-
-    return () => clearInterval(timerGlobal);
-  }, []);
-
-  const obtenerUsuarioSesion = () => {
-    try {
-      const userStored = localStorage.getItem('usuario') || localStorage.getItem('user');
-      if (userStored) {
-        setUsuarioActual(JSON.parse(userStored));
-      } else {
-        setUsuarioActual({ rol: 'Jefe de área', area: 'Producción', nombre: 'Líder de Mecanizados' });
-      }
-    } catch (e) {
-      setUsuarioActual({ rol: 'Administrador', area: 'General' });
-    }
-  };
-
-  const cargarDatosProduccion = async () => {
+  const cargarDatosProduccion = useCallback(async () => {
     try {
       setLoading(true);
 
@@ -267,7 +230,45 @@ export default function ProduccionLiderView() {
     } finally {
       setLoading(false);
     }
+  }, [areaActiva]);
+
+  useEffect(() => {
+    obtenerUsuarioSesion();
+    cargarDatosProduccion();
+  }, [cargarDatosProduccion]);
+
+  useEffect(() => {
+    const timerGlobal = setInterval(() => {
+      setSublotesActivos(prev => {
+        if (!Array.isArray(prev)) return [];
+        return prev.map(sub => {
+          if (sub.estado_sublote === 'EN_PRODUCCION') {
+            return { ...sub, segundos_produccion: (sub.segundos_produccion || 0) + 1 };
+          }
+          if (sub.estado_sublote === 'EN_SETUP') {
+            return { ...sub, segundos_setup: (sub.segundos_setup || 0) + 1 };
+          }
+          return sub;
+        });
+      });
+    }, 1000);
+
+    return () => clearInterval(timerGlobal);
+  }, []);
+
+  const obtenerUsuarioSesion = () => {
+    try {
+      const userStored = localStorage.getItem('usuario') || localStorage.getItem('user');
+      if (userStored) {
+        setUsuarioActual(JSON.parse(userStored));
+      } else {
+        setUsuarioActual({ rol: 'Jefe de área', area: 'Producción', nombre: 'Líder de Mecanizados' });
+      }
+    } catch (e) {
+      setUsuarioActual({ rol: 'Administrador', area: 'General' });
+    }
   };
+
 
   const handleMarcarOrdenTerminada = async (ord) => {
     if (!window.confirm(`¿Confirmar que la OP-${ord.codigo_op} [${ord.detalle_pieza}] está 100% completada y lista para Inspección de Calidad?`)) {
