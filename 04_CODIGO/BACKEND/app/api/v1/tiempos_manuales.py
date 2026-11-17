@@ -14,7 +14,7 @@ PRISMA; 33_MIGRACION_CARGA_TIEMPOS_MANUAL.sql).
 - Los costos de los tiempos solo salen para COSTOS y JEFE_PRODUCCION (roles.ROLES_COSTOS_TIEMPOS).
 - Sin parámetros en la ruta: CAPTURISTA_TIEMPOS solo pasa a rutas fijas (acceso_bd.RUTAS_CAPTURISTA).
 """
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
 from uuid import UUID
@@ -119,7 +119,10 @@ def _aplicar(registro: RegistroTiemposProduccion, datos: TiempoManual, maquina: 
     registro.segundos_ejecutados = _segundos(datos.minutos_operacion)
     registro.segundos_setup = _segundos(datos.minutos_setup)
     registro.fecha_trabajo = fecha
+    # La captura solo trae fecha: inicio a las 00:00 y fin = inicio + tiempo de operación. Los costos
+    # usan los segundos, no estas horas
     registro.fecha_hora_inicio = datetime.combine(fecha, time.min, tzinfo=timezone.utc)
+    registro.fecha_hora_fin = registro.fecha_hora_inicio + timedelta(seconds=registro.segundos_ejecutados)
 
 
 def _valores(registro: RegistroTiemposProduccion) -> dict:

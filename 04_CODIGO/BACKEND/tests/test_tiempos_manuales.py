@@ -14,7 +14,7 @@ SQLite en memoria con override de get_db; aplicación FastAPI mínima con la mis
 y el mismo middleware que app.main (no se importa app.main).
 """
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 from fastapi import Depends, FastAPI
@@ -161,6 +161,9 @@ def test_registran_el_capturista_el_lider_y_el_jefe(ctx, rol):
         assert (registro.origen, registro.tipo_tiempo, registro.estacion_id) == ("MANUAL", "MECANIZADO", "TORNO-01")
         assert (registro.segundos_ejecutados, registro.segundos_setup) == (45 * 60, 15 * 60)
         assert registro.fecha_trabajo == date(2026, 11, 16)
+        # Solo hay fecha: inicio a las 00:00 y fin = inicio + 45 min de operación (el setup no cuenta)
+        inicio, fin = (valor.replace(tzinfo=None) for valor in (registro.fecha_hora_inicio, registro.fecha_hora_fin))
+        assert (inicio, fin) == (datetime(2026, 11, 16), datetime(2026, 11, 16, 0, 45))
         assert registro.operario_id == OPERARIOS[0] and registro.registrado_por == f"{rol.lower()}@prueba.test"
 
 
@@ -251,7 +254,9 @@ def test_la_correccion_pide_motivo_y_guarda_los_valores_anteriores(ctx):
 
     assert corregir(client, MEC, {**cambio, "motivo": "Se digitó mal el tiempo"}).status_code == 200
     with Sesion() as s:
-        assert s.query(RegistroTiemposProduccion).one().segundos_ejecutados == 50 * 60
+        registro = s.query(RegistroTiemposProduccion).one()
+        assert registro.segundos_ejecutados == 50 * 60
+        assert registro.fecha_hora_fin.replace(tzinfo=None) == datetime(2026, 11, 16, 0, 50)
         correccion = s.query(CorreccionTiempoManual).one()
         assert correccion.motivo == "Se digitó mal el tiempo" and correccion.corregido_por == "lider_mecanizados@prueba.test"
         assert correccion.valores_anteriores["minutos_operacion"] == 45
