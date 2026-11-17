@@ -90,6 +90,11 @@ LIDERES_VEN_DESDE_CREACION = [LIDER_SERVICIOS]
 LIDERES_CAMBIAN_UNIDAD: list = []
 # CALIDAD_PRODUCTO traslada cualquier OP; ningún otro rol cambia la unidad (tampoco ADMIN).
 ROLES_CAMBIAR_UNIDAD_OP = [*LIDERES_CAMBIAN_UNIDAD, CALIDAD_PRODUCTO]
+# Carga manual de tiempos desde la orden de fabricación (app/api/v1/tiempos_manuales.py): la hace
+# quien tiene PERM_TIEMPOS_REGISTRAR, salvo OPERARIO (registra con el cronómetro de su puesto, no
+# agrega tiempos a mano). Los costos de los tiempos solo los ven COSTOS y JEFE_PRODUCCION.
+ROLES_SIN_CARGA_MANUAL_TIEMPOS = [OPERARIO]
+ROLES_COSTOS_TIEMPOS = [COSTOS, JEFE_PRODUCCION]
 ROLES_APROBAR_PLANO = [ADMIN, LIDER_DISENO, DISENO]
 ROLES_REVISION_PLANO = [ADMIN, LIDER_DISENO, DIBUJANTE, DISENO]
 ROLES_CALIDAD_LOTE = [ADMIN, CALIDAD_PRODUCTO, CALIDAD]

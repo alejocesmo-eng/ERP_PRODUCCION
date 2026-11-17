@@ -5,6 +5,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { mensajeError } from '../../services/api';
 import { limpiarCachePermisos } from '../../services/permisos';
+import OperariosPorMaquina from '../../components/OperariosPorMaquina';
 import {
   crearRol,
   editarRol,
@@ -374,6 +375,8 @@ export default function ConfiguracionRolesView() {
           </div>
         </section>
       )}
+
+      <OperariosPorMaquina />
     </div>
   );
 }

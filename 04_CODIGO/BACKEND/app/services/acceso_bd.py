@@ -26,7 +26,8 @@ PERMISO_VALOR_COTIZADO = "PERM_VALOR_COTIZADO_VER"
 # petición: ADMIN lo asigna o retira desde Configuración de roles sin tocar código
 PERMISO_TIEMPOS = "PERM_TIEMPOS_REGISTRAR"
 
-# Lo único que puede usar CAPTURISTA_TIEMPOS: sesión, cola de sublotes y registro de tiempos.
+# Lo único que puede usar CAPTURISTA_TIEMPOS: sesión, cola de sublotes, registro de tiempos y
+# carga manual de tiempos (app/api/v1/tiempos_manuales.py).
 # Todo lo demás (cliente, planos, costos, valor cotizado, unidad, liberación, cierre,
 # retención) le responde 403, aunque la ruta solo pida token.
 RUTAS_CAPTURISTA = {
@@ -39,6 +40,9 @@ RUTAS_CAPTURISTA = {
     ("POST", "/api/v1/operaciones/mecanizado/conmutar"),
     ("POST", "/api/v1/operaciones/pausa/turno"),
     ("POST", "/api/v1/operaciones/sublotes/finalizar"),
+    ("GET", "/api/v1/tiempos-manuales"),
+    ("POST", "/api/v1/tiempos-manuales"),
+    ("POST", "/api/v1/tiempos-manuales/corregir"),
 }
 
 # Rol anterior que se trata como su sucesor durante la transición (decisión de Alejo, 2026-11-12)

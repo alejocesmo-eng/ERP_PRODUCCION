@@ -118,6 +118,13 @@ VERIFICACIONES = (
         "HAVING bool_or(id_permiso = 'PERM_OP_CERRAR') AND bool_or(id_permiso = 'PERM_TIEMPOS_REGISTRAR') "
         "AND NOT bool_or(id_permiso IN ('PERM_EXPEDIENTE_COSTOS_VER', 'PERM_VALOR_COTIZADO_VER'))",
     ),
+    (
+        "Carga manual de tiempos con correcciones y operarios por maquina (migracion 33)",
+        "SELECT 1 WHERE to_regclass('public.tiempos_manuales_correcciones') IS NOT NULL "
+        "AND to_regclass('public.maquina_operarios') IS NOT NULL "
+        "AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'registro_tiempos_produccion' "
+        "AND column_name = 'segundos_setup')",
+    ),
 )
 
 

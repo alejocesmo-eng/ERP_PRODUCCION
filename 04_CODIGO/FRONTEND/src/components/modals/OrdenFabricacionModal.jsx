@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import API, { API_ORIGIN, mensajeError } from '../../services/api';
+import CargaTiemposOp from '../CargaTiemposOp';
 
 // Orden de fabricación en solo lectura, con la distribución de la pantalla de SAP.
 // Datos de GET /ordenes/expediente/{op}: el backend ya quita los campos que el rol no ve
 // (valor cotizado, cliente), y este modal no pide costos. Un campo que la API no trae queda vacío.
-// Liberar la OP y aprobar planos siguen en ExpedienteOpModal.
+// Liberar la OP y aprobar planos siguen en ExpedienteOpModal. La única parte editable es la carga
+// de tiempos (menú Opciones), con los permisos que decide el backend.
 
 const PESTANAS = [
   { id: 'componentes', etiqueta: 'Componentes' },
@@ -12,7 +14,7 @@ const PESTANAS = [
   { id: 'anexos', etiqueta: 'Anexos' }
 ];
 
-// Entradas del menú de opciones, sin contenido todavía
+// Entradas del menú de opciones; el mapa de relaciones aún no tiene contenido
 const OPCIONES = [
   { id: 'mapa', etiqueta: 'Mapa de relaciones' },
   { id: 'tiempos', etiqueta: 'Carga de tiempos' }
@@ -236,13 +238,19 @@ export default function OrdenFabricacionModal({ abierto, codigoOp, onClose }) {
           {error && <p role="alert" className="rounded border border-red-200 bg-red-50 p-3 font-semibold text-red-800">{error}</p>}
 
           {opcionActiva && (
-            <div role="status" className="mb-3 flex items-center justify-between gap-2 rounded border border-slate-300 bg-white p-2">
-              <span><strong>{opcionActiva.etiqueta}</strong>: sin contenido todavía.</span>
-              <button type="button" onClick={() => setOpcion(null)} className="rounded border border-slate-300 px-2 py-0.5 hover:bg-slate-100">Volver</button>
+            <div className="mb-3 space-y-2">
+              <div className="flex items-center justify-between gap-2 rounded border border-slate-300 bg-white p-2">
+                <span>
+                  <strong>{opcionActiva.etiqueta}</strong>
+                  {opcion === 'mapa' && ': sin contenido todavía.'}
+                </span>
+                <button type="button" onClick={() => setOpcion(null)} className="rounded border border-slate-300 px-2 py-0.5 hover:bg-slate-100">Volver</button>
+              </div>
+              {opcion === 'tiempos' && <CargaTiemposOp codigoOp={codigoOp} />}
             </div>
           )}
 
-          {expediente && (
+          {expediente && !opcionActiva && (
             <>
               <div className="grid gap-x-8 gap-y-1 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
                 <div className="space-y-1">

@@ -20,7 +20,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.api.v1 import auth, busqueda, costos, ordenes, produccion, unidades_op, usuarios
+from app.api.v1 import auth, busqueda, costos, ordenes, produccion, tiempos_manuales, unidades_op, usuarios
 from app.api.v1.endpoints.produccion import cola_router
 from app.core import roles
 from app.core.security import create_access_token
@@ -59,6 +59,7 @@ def crear_app():
     app.include_router(produccion.router, prefix="/api/v1/operaciones")
     app.include_router(cola_router, prefix="/api/v1/operaciones")
     app.include_router(unidades_op.router, prefix="/api/v1/unidades-op")
+    app.include_router(tiempos_manuales.router, prefix="/api/v1/tiempos-manuales")
     return app
 
 

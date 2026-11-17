@@ -761,6 +761,13 @@ class RegistroTiemposProduccion(Base):
     pausado_por_turno = Column(Boolean, default=False, nullable=False)
     observacion_desviacion = Column(Text, nullable=True)
     creado_en = Column(DateTime(timezone=True), default=func.now())
+    # Carga manual desde la orden de fabricación (33_MIGRACION_CARGA_TIEMPOS_MANUAL.sql): una fila
+    # MANUAL es tipo MECANIZADO con el tiempo de operación en segundos_ejecutados y el setup aparte
+    id_operacion = Column(UUID(as_uuid=True), ForeignKey("operaciones_ot.id_operacion", ondelete="SET NULL"), nullable=True)
+    segundos_setup = Column(Integer, nullable=True)
+    fecha_trabajo = Column(Date, nullable=True)
+    origen = Column(String(20), nullable=False, default="CRONOMETRO")
+    registrado_por = Column(String(100), nullable=True)
 
     # Homologación con DDL / Nomenclaturas
     id_op = synonym("orden_produccion_id")
@@ -1293,6 +1300,30 @@ class TrasladoUnidadOP(Base):
     rol = Column(String(50), nullable=True)
     observacion = Column(Text, nullable=True)
     registrado_en = Column(DateTime(timezone=True), nullable=False, default=func.now())
+
+
+class CorreccionTiempoManual(Base):
+    """Corrección de una fila manual de registro_tiempos_produccion, con motivo
+    (33_MIGRACION_CARGA_TIEMPOS_MANUAL.sql). Solo se agregan filas."""
+    __tablename__ = "tiempos_manuales_correcciones"
+
+    id_correccion = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    id_registro = Column(Integer, ForeignKey("registro_tiempos_produccion.id", ondelete="RESTRICT"), nullable=False, index=True)
+    valores_anteriores = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    valores_nuevos = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    motivo = Column(Text, nullable=False)
+    corregido_por = Column(String(100), nullable=False)
+    corregido_en = Column(DateTime(timezone=True), nullable=False, default=func.now())
+
+
+class MaquinaOperario(Base):
+    """Operario asignado a una máquina en Configuración (33_MIGRACION_CARGA_TIEMPOS_MANUAL.sql)."""
+    __tablename__ = "maquina_operarios"
+
+    id_equipo = Column(UUID(as_uuid=True), ForeignKey("equipos_planta.id_equipo", ondelete="CASCADE"), primary_key=True)
+    id_usuario = Column(UUID(as_uuid=True), ForeignKey("usuarios.id_usuario", ondelete="CASCADE"), primary_key=True)
+    asignado_por = Column(String(100), nullable=False)
+    asignado_en = Column(DateTime(timezone=True), nullable=False, default=func.now())
 
 
 class ServicioTerceroOP(Base):

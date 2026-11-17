@@ -252,21 +252,33 @@ def obtener_costos_op(
     }
     horas_por_centro = {}
     if registros_tiempo:
+        # Carga manual (migración 33): la estación es una máquina del catálogo, que se costea con su
+        # centro de trabajo, y el setup va en segundos_setup de la misma fila
+        centro_de_maquina = {
+            equipo.codigo_maquina: equipo.centro_trabajo_asociado
+            for equipo in db.query(EquipoPlanta).filter(EquipoPlanta.centro_trabajo_asociado.isnot(None)).all()
+        }
         for registro in registros_tiempo:
             tipo = registro.tipo_tiempo.upper()
             if tipo not in {"SETUP", "MECANIZADO"}:
                 continue
             centro_codigo = registro.estacion_id or "SIN_CENTRO"
-            grupo = horas_por_centro.setdefault(
-                (centro_codigo, tipo),
-                {"horas": 0.0, "tarifa_hora": 0.0, "costo_total": 0.0},
-            )
-            grupo["horas"] += max(registro.segundos_ejecutados or 0, 0) / 3600
-            centro = centros.get(centro_codigo)
-            if centro:
-                tarifa = centro.tarifa_hora_setup if tipo == "SETUP" else centro.tarifa_hora_mecanizado
-                grupo["tarifa_hora"] = float(tarifa)
-                grupo["costo_total"] = grupo["horas"] * grupo["tarifa_hora"]
+            tramos = [(tipo, registro.segundos_ejecutados)]
+            if registro.origen == "MANUAL":
+                centro_codigo = centro_de_maquina.get(registro.estacion_id, centro_codigo)
+                if registro.segundos_setup:
+                    tramos.append(("SETUP", registro.segundos_setup))
+            for tipo_tramo, segundos in tramos:
+                grupo = horas_por_centro.setdefault(
+                    (centro_codigo, tipo_tramo),
+                    {"horas": 0.0, "tarifa_hora": 0.0, "costo_total": 0.0},
+                )
+                grupo["horas"] += max(segundos or 0, 0) / 3600
+                centro = centros.get(centro_codigo)
+                if centro:
+                    tarifa = centro.tarifa_hora_setup if tipo_tramo == "SETUP" else centro.tarifa_hora_mecanizado
+                    grupo["tarifa_hora"] = float(tarifa)
+                    grupo["costo_total"] = grupo["horas"] * grupo["tarifa_hora"]
     else:
         registros_mes = (
             db.query(RegistroTiempoOperario, SubLoteOperacion, OperacionOT)
