@@ -78,14 +78,18 @@ ROLES_NOTIFICAR_OP_TERMINADA = [ADMIN, JEFE_PRODUCCION, LIDER_MECANIZADOS, PRODU
 # LIDER_SERVICIOS también es respaldo, pero solo de las OP de su área (ROLES_CIERRE_SOLO_SU_UNIDAD)
 ROLES_CERRAR_OP = [ADMIN, JEFE_PRODUCCION, LIDER_MECANIZADOS, LIDER_SERVICIOS, PRODUCCION]
 ROLES_CIERRE_SOLO_SU_UNIDAD = [LIDER_SERVICIOS]
-# Unidad actual de la OP (app/services/unidad_op.py): el líder de cada unidad solo ve y traslada
-# las OP de su unidad. El líder de Metalistería se agrega aquí cuando exista su rol.
-# CALIDAD_PRODUCTO traslada cualquier OP; ningún otro rol cambia la unidad (tampoco ADMIN).
+# Unidad actual de la OP (app/services/unidad_op.py): el líder de cada unidad solo ve las OP de su
+# unidad. El líder de Metalistería se agrega aquí cuando exista su rol.
 UNIDAD_POR_LIDER = {LIDER_MECANIZADOS: "MECANIZADOS", LIDER_SERVICIOS: "SERVICIOS"}
 # Líderes que ven las OP de su área desde que se crean (aún sin unidad, por la unidad de sus
 # planos), no solo al llegar a su unidad
 LIDERES_VEN_DESDE_CREACION = [LIDER_SERVICIOS]
-ROLES_CAMBIAR_UNIDAD_OP = [*UNIDAD_POR_LIDER, CALIDAD_PRODUCTO]
+# Líderes que trasladan las OP de su unidad hacia otras unidades. LIDER_MECANIZADOS y
+# LIDER_SERVICIOS no cambian la unidad de la OP. LIDER_METALISTERIA se agrega aquí (y en
+# UNIDAD_POR_LIDER) cuando exista su rol; mientras tanto la lista queda vacía.
+LIDERES_CAMBIAN_UNIDAD: list = []
+# CALIDAD_PRODUCTO traslada cualquier OP; ningún otro rol cambia la unidad (tampoco ADMIN).
+ROLES_CAMBIAR_UNIDAD_OP = [*LIDERES_CAMBIAN_UNIDAD, CALIDAD_PRODUCTO]
 ROLES_APROBAR_PLANO = [ADMIN, LIDER_DISENO, DISENO]
 ROLES_REVISION_PLANO = [ADMIN, LIDER_DISENO, DIBUJANTE, DISENO]
 ROLES_CALIDAD_LOTE = [ADMIN, CALIDAD_PRODUCTO, CALIDAD]

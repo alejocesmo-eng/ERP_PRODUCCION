@@ -5,8 +5,9 @@ reglas/permisos-por-rol-modulo.md del proyecto PRISMA).
 - La OP está en una unidad: Mecanizados, Servicios, Metalistería, Tercero o Despacho. Mientras no
   llega a ninguna, queda SIN_ASIGNAR.
 - Al liberarla, el sistema la asigna a la unidad de sus planos vigentes (asignación inicial). Desde
-  ahí solo cambia con un traslado: lo hacen el líder de la unidad donde está la OP y
-  CALIDAD_PRODUCTO (ROLES_CAMBIAR_UNIDAD_OP); ningún otro rol, tampoco ADMIN.
+  ahí solo cambia con un traslado: lo hace CALIDAD_PRODUCTO (ROLES_CAMBIAR_UNIDAD_OP); ningún
+  otro rol, tampoco ADMIN. LIDER_MECANIZADOS y LIDER_SERVICIOS no cambian la unidad. Cuando exista
+  LIDER_METALISTERIA (roles.LIDERES_CAMBIAN_UNIDAD), trasladará las OP de su unidad hacia otras.
 - El líder de cada unidad solo ve las OP de su unidad; CALIDAD_PRODUCTO, las que le llegan para
   inspección y las que están en Tercero (vuelven por Calidad). LIDER_SERVICIOS además ve las OP de
   su área desde que se crean: aún sin unidad, si los planos vigentes de su producto son de su unidad

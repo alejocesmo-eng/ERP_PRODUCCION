@@ -8,8 +8,8 @@ Líderes de unidad (reglas/permisos-por-rol-modulo.md del proyecto PRISMA; migra
   si los planos vigentes de su producto son de Servicios), con datos técnicos; ve cliente e
   histórico; sin costos ni valor cotizado; cierra solo OP de su área; registra avance y tiempos con
   PERM_TIEMPOS_REGISTRAR, que ADMIN asigna o retira desde Configuración de roles.
-- Cambio de unidad: solo los líderes (OP que están en su unidad) y CALIDAD_PRODUCTO, con destino
-  obligatorio.
+- Cambio de unidad: solo CALIDAD_PRODUCTO, con destino obligatorio. LIDER_MECANIZADOS y
+  LIDER_SERVICIOS no cambian la unidad de la OP (403), aunque ven su historial de traslados.
 
 El rol se lee de la base. SQLite en memoria con override de get_db; aplicación FastAPI mínima con la
 misma dependencia global y el mismo middleware que app.main (no se importa app.main).
@@ -256,25 +256,30 @@ def trasladar(client, rol, codigo, cuerpo):
     return client.post(f"/api/v1/unidades-op/{codigo}/traslado", json=cuerpo, headers=token(rol))
 
 
-def test_lider_de_servicios_traslada_las_op_que_estan_en_servicios(ctx):
+@pytest.mark.parametrize("rol, codigo", [
+    (SER, "OP-SER"), (SER, "OP-MEC"), (SER, "OP-SER-NUEVA"), (MEC, "OP-MEC"), (MEC, "OP-SER"),
+])
+@pytest.mark.parametrize("cuerpo", [{"unidad_destino": "TERCERO"}, {"unidad_destino": "DESPACHO"}, {}])
+def test_los_lideres_no_cambian_la_unidad_en_ningun_destino(ctx, rol, codigo, cuerpo):
     client, _, _ = ctx
-    respuesta = trasladar(client, SER, "OP-SER", {"unidad_destino": "TERCERO"})
+    respuesta = trasladar(client, rol, codigo, cuerpo)
 
-    assert respuesta.status_code == 200, respuesta.text
-    assert (respuesta.json()["unidad_origen"], respuesta.json()["unidad_destino"]) == ("SERVICIOS", "TERCERO")
+    assert respuesta.status_code == 403
+    assert respuesta.json()["detail"] == "Su rol no puede cambiar la unidad de la OP."
 
 
-@pytest.mark.parametrize("rol, codigo", [(SER, "OP-MEC"), (MEC, "OP-SER"), (SER, "OP-SER-NUEVA")])
-def test_cada_lider_solo_traslada_las_op_que_estan_en_su_unidad(ctx, rol, codigo):
+@pytest.mark.parametrize("rol, codigo", [(SER, "OP-SER"), (MEC, "OP-MEC")])
+def test_los_lideres_ven_el_historial_de_traslados_sin_poder_trasladar(ctx, rol, codigo):
     client, _, _ = ctx
+    historial = client.get(f"/api/v1/unidades-op/{codigo}/traslados", headers=token(rol))
+
+    assert historial.status_code == 200, historial.text
     assert trasladar(client, rol, codigo, {"unidad_destino": "DESPACHO"}).status_code == 403
 
 
-@pytest.mark.parametrize("rol", [MEC, SER])
-def test_el_destino_es_obligatorio(ctx, rol):
+def test_el_destino_es_obligatorio(ctx):
     client, _, _ = ctx
-    codigo = "OP-MEC" if rol == MEC else "OP-SER"
-    assert trasladar(client, rol, codigo, {}).status_code == 422
+    assert trasladar(client, roles.CALIDAD_PRODUCTO, "OP-SER", {}).status_code == 422
 
 
 @pytest.mark.parametrize("rol", [roles.ADMIN, roles.JEFE_PRODUCCION, roles.VENTAS])
@@ -288,6 +293,7 @@ def test_calidad_de_producto_traslada_cualquier_op(ctx):
     assert trasladar(client, roles.CALIDAD_PRODUCTO, "OP-MEC", {"unidad_destino": "SERVICIOS"}).status_code == 200
 
 
-def test_cambian_la_unidad_solo_los_lideres_y_calidad_de_producto():
-    assert roles.ROLES_CAMBIAR_UNIDAD_OP == [MEC, SER, roles.CALIDAD_PRODUCTO]
+def test_cambia_la_unidad_solo_calidad_de_producto():
+    assert roles.ROLES_CAMBIAR_UNIDAD_OP == [roles.CALIDAD_PRODUCTO]
+    assert MEC not in roles.LIDERES_CAMBIAN_UNIDAD and SER not in roles.LIDERES_CAMBIAN_UNIDAD
     assert roles.ROLES_CIERRE_SOLO_SU_UNIDAD == [SER]

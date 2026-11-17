@@ -1,8 +1,9 @@
 # tests/test_unidad_op.py
 """
 Unidad actual de la OP y traslado obligatorio (app/services/unidad_op.py, migración 28):
-- Solo LIDER_MECANIZADOS (OP de su unidad) y CALIDAD_PRODUCTO trasladan; ningún otro rol, tampoco
-  ADMIN. El rol se lee de la base.
+- Solo CALIDAD_PRODUCTO traslada; ningún otro rol, tampoco ADMIN ni LIDER_MECANIZADOS o
+  LIDER_SERVICIOS. Cuando exista LIDER_METALISTERIA trasladará las OP de su unidad hacia otras
+  (roles.LIDERES_CAMBIAN_UNIDAD). El rol se lee de la base.
 - Sin unidad destino no hay traslado; cada traslado guarda quién, cuándo y de qué unidad a cuál.
 - El líder solo ve las OP de su unidad; CALIDAD_PRODUCTO, las que le llegan para inspección y las
   que están en Tercero.
@@ -14,7 +15,7 @@ import uuid
 from datetime import timedelta
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -28,8 +29,8 @@ from app.db.models import EstadoOPEnum, OrdenProduccion, Plano, Proyecto, Rol, T
 from app.services import unidad_op
 
 ROLES_PRUEBA = [
-    roles.ADMIN, roles.VENTAS, roles.JEFE_PRODUCCION, roles.LIDER_MECANIZADOS, roles.CALIDAD_PRODUCTO,
-    roles.ALMACEN,
+    roles.ADMIN, roles.VENTAS, roles.JEFE_PRODUCCION, roles.LIDER_MECANIZADOS, roles.LIDER_SERVICIOS,
+    roles.CALIDAD_PRODUCTO, roles.ALMACEN,
 ]
 OPS = {
     # codigo: (unidad_actual, estado)
@@ -97,9 +98,9 @@ def unidad_y_traslados(Sesion, codigo):
         return op.unidad_actual, s.query(TrasladoUnidadOP).filter_by(id_op=op.id_op).all()
 
 
-def test_el_lider_traslada_una_op_de_su_unidad_y_queda_registrado(ctx):
+def test_calidad_de_producto_traslada_y_queda_registrado(ctx):
     client, Sesion = ctx
-    r = trasladar(client, roles.LIDER_MECANIZADOS, "OP-MEC", {"unidad_destino": "SERVICIOS", "observacion": "Rectificado"})
+    r = trasladar(client, roles.CALIDAD_PRODUCTO, "OP-MEC", {"unidad_destino": "SERVICIOS", "observacion": "Rectificado"})
 
     assert r.status_code == 200, r.text
     assert (r.json()["unidad_origen"], r.json()["unidad_destino"]) == ("MECANIZADOS", "SERVICIOS")
@@ -107,14 +108,14 @@ def test_el_lider_traslada_una_op_de_su_unidad_y_queda_registrado(ctx):
     assert unidad == "SERVICIOS"
     (traslado,) = traslados
     assert (traslado.unidad_origen, traslado.unidad_destino) == ("MECANIZADOS", "SERVICIOS")
-    assert traslado.usuario_email == "lider_mecanizados@prueba.test" and traslado.rol == roles.LIDER_MECANIZADOS
+    assert traslado.usuario_email == "calidad_producto@prueba.test" and traslado.rol == roles.CALIDAD_PRODUCTO
     assert traslado.registrado_en is not None and traslado.observacion == "Rectificado"
 
 
 @pytest.mark.parametrize("cuerpo", [{}, {"unidad_destino": ""}, {"unidad_destino": "   "}])
 def test_sin_unidad_destino_no_se_confirma(ctx, cuerpo):
     client, Sesion = ctx
-    r = trasladar(client, roles.LIDER_MECANIZADOS, "OP-MEC", cuerpo)
+    r = trasladar(client, roles.CALIDAD_PRODUCTO, "OP-MEC", cuerpo)
 
     assert r.status_code == 422
     assert r.json()["detail"] == unidad_op.MENSAJE_SIN_DESTINO
@@ -124,14 +125,21 @@ def test_sin_unidad_destino_no_se_confirma(ctx, cuerpo):
 @pytest.mark.parametrize("destino, estado", [("SIN_ASIGNAR", 422), ("BODEGA", 422), ("MECANIZADOS", 409)])
 def test_destino_invalido_o_igual_al_actual(ctx, destino, estado):
     client, Sesion = ctx
-    assert trasladar(client, roles.LIDER_MECANIZADOS, "OP-MEC", {"unidad_destino": destino}).status_code == estado
+    assert trasladar(client, roles.CALIDAD_PRODUCTO, "OP-MEC", {"unidad_destino": destino}).status_code == estado
     assert unidad_y_traslados(Sesion, "OP-MEC") == ("MECANIZADOS", [])
 
 
-def test_el_lider_no_traslada_op_de_otra_unidad(ctx):
+@pytest.mark.parametrize("rol", [roles.LIDER_MECANIZADOS, roles.LIDER_SERVICIOS])
+@pytest.mark.parametrize("codigo, destino", [("OP-MEC", "DESPACHO"), ("OP-SER", "TERCERO"), ("OP-MEC", "SERVICIOS")])
+def test_los_lideres_de_mecanizados_y_servicios_no_cambian_la_unidad(ctx, rol, codigo, destino):
     client, Sesion = ctx
-    assert trasladar(client, roles.LIDER_MECANIZADOS, "OP-SER", {"unidad_destino": "DESPACHO"}).status_code == 403
-    assert unidad_y_traslados(Sesion, "OP-SER") == ("SERVICIOS", [])
+    antes = unidad_y_traslados(Sesion, codigo)[0]
+
+    r = trasladar(client, rol, codigo, {"unidad_destino": destino})
+
+    assert r.status_code == 403
+    assert r.json()["detail"] == "Su rol no puede cambiar la unidad de la OP."
+    assert unidad_y_traslados(Sesion, codigo) == (antes, [])
 
 
 @pytest.mark.parametrize("rol", [roles.ADMIN, roles.JEFE_PRODUCCION, roles.VENTAS, roles.ALMACEN])
@@ -174,9 +182,9 @@ def test_cada_rol_ve_las_op_que_le_tocan(ctx):
     assert codigos_listados(client, roles.JEFE_PRODUCCION) == set(OPS)
 
 
-def test_el_lider_deja_de_ver_la_op_que_traslada(ctx):
+def test_el_lider_deja_de_ver_la_op_que_sale_de_su_unidad(ctx):
     client, _ = ctx
-    trasladar(client, roles.LIDER_MECANIZADOS, "OP-MEC", {"unidad_destino": "TERCERO"})
+    assert trasladar(client, roles.CALIDAD_PRODUCTO, "OP-MEC", {"unidad_destino": "TERCERO"}).status_code == 200
 
     assert "OP-MEC" not in codigos_listados(client, roles.LIDER_MECANIZADOS)
     assert client.get("/api/v1/unidades-op/OP-MEC/traslados", headers=token(roles.LIDER_MECANIZADOS)).status_code == 404
@@ -194,6 +202,31 @@ def test_unidad_de_proceso_de_los_planos():
     assert unidad_op.unidad_de_planos([]) is None
 
 
-def test_solo_los_lideres_y_calidad_de_producto_cambian_la_unidad():
-    assert roles.ROLES_CAMBIAR_UNIDAD_OP == [roles.LIDER_MECANIZADOS, roles.LIDER_SERVICIOS, roles.CALIDAD_PRODUCTO]
+def test_solo_calidad_de_producto_cambia_la_unidad():
+    assert roles.ROLES_CAMBIAR_UNIDAD_OP == [roles.CALIDAD_PRODUCTO]
+    # Preparada para LIDER_METALISTERIA, sin asignar a nadie mientras el rol no exista
+    assert roles.LIDERES_CAMBIAN_UNIDAD == []
+    assert not hasattr(roles, "LIDER_METALISTERIA")
     assert roles.UNIDAD_POR_LIDER == {roles.LIDER_MECANIZADOS: "MECANIZADOS", roles.LIDER_SERVICIOS: "SERVICIOS"}
+
+
+def test_un_lider_que_cambia_unidad_traslada_las_op_de_su_unidad_hacia_otras(ctx, monkeypatch):
+    # Simula LIDER_METALISTERIA en LIDERES_CAMBIAN_UNIDAD (el rol aún no existe)
+    _, Sesion = ctx
+    lider = "LIDER_METALISTERIA"
+    monkeypatch.setattr(roles, "UNIDAD_POR_LIDER", {**roles.UNIDAD_POR_LIDER, lider: "METALISTERIA"})
+    monkeypatch.setattr(roles, "ROLES_CAMBIAR_UNIDAD_OP", [lider, roles.CALIDAD_PRODUCTO])
+    with Sesion() as s:
+        op = s.query(OrdenProduccion).filter_by(codigo_op="OP-MEC").one()
+        with pytest.raises(HTTPException) as fuera_de_su_unidad:
+            unidad_op.trasladar(s, op, "DESPACHO", "lider@prueba.test", lider)
+        assert fuera_de_su_unidad.value.status_code == 403
+
+        op.unidad_actual = "METALISTERIA"
+        with pytest.raises(HTTPException) as misma_unidad:
+            unidad_op.trasladar(s, op, "METALISTERIA", "lider@prueba.test", lider)
+        assert misma_unidad.value.status_code == 409
+
+        traslado = unidad_op.trasladar(s, op, "DESPACHO", "lider@prueba.test", lider)
+        assert (traslado.unidad_origen, traslado.unidad_destino, op.unidad_actual) == ("METALISTERIA", "DESPACHO", "DESPACHO")
+        s.rollback()
