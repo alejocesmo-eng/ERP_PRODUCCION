@@ -161,6 +161,7 @@ def test_registran_el_capturista_el_lider_y_el_jefe(ctx, rol):
         assert (registro.origen, registro.tipo_tiempo, registro.estacion_id) == ("MANUAL", "MECANIZADO", "TORNO-01")
         assert (registro.segundos_ejecutados, registro.segundos_setup) == (45 * 60, 15 * 60)
         assert registro.fecha_trabajo == date(2026, 11, 16)
+        assert registro.pausado_por_turno is False
         # Solo hay fecha: inicio a las 00:00 y fin = inicio + 45 min de operación (el setup no cuenta)
         inicio, fin = (valor.replace(tzinfo=None) for valor in (registro.fecha_hora_inicio, registro.fecha_hora_fin))
         assert (inicio, fin) == (datetime(2026, 11, 16), datetime(2026, 11, 16, 0, 45))

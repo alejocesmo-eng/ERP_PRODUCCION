@@ -255,7 +255,9 @@ def agregar_tiempo(
 
     registro = RegistroTiemposProduccion(
         orden_produccion_id=op.id_op,
+        # Columnas NOT NULL sin default en la base: se envían siempre
         tipo_tiempo="MECANIZADO",
+        pausado_por_turno=False,
         origen=ORIGEN_MANUAL,
         registrado_por=usuario["email"],
     )

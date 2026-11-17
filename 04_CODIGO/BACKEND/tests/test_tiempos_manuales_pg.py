@@ -45,9 +45,9 @@ def insertar_manual(sesion, id_op, id_operacion, **cambios):
     return sesion.execute(text(
         "INSERT INTO registro_tiempos_produccion (orden_produccion_id, operario_id, estacion_id, tipo_tiempo, "
         "segundos_ejecutados, segundos_setup, id_operacion, fecha_trabajo, origen, registrado_por, "
-        "fecha_hora_inicio, fecha_hora_fin) "
+        "fecha_hora_inicio, fecha_hora_fin, pausado_por_turno) "
         "VALUES (:op, 'operario@prueba.test', 'TORNO-01', 'MECANIZADO', 2700, 900, :proc, :fecha, 'MANUAL', :por, "
-        "'2026-11-16 00:00+00', '2026-11-16 00:45+00') "
+        "'2026-11-16 00:00+00', '2026-11-16 00:45+00', false) "
         "RETURNING id"
     ), valores).scalar_one()
 
