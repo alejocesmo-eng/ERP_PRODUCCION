@@ -5,8 +5,8 @@ export default function ProduccionOperarioView() {
   // =========================================================================
   // BLOQUE 1: ESTADOS DE SESIÓN DE OPERARIO Y ORDEN ACTIVA
   // =========================================================================
-  const [operarioLogueado, setOperarioLogueado] = useState('Carlos Ruiz');
-  const [estacionMaquina, setEstacionMaquina] = useState('TORN-CNC-01');
+  const [operarioLogueado] = useState('Carlos Ruiz');
+  const [estacionMaquina] = useState('TORN-CNC-01');
   const [colaOrdenes, setColaOrdenes] = useState([]);
   const [ordenEnCurso, setOrdenEnCurso] = useState(null);
   const [errorCola, setErrorCola] = useState('');

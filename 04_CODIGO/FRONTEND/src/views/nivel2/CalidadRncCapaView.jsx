@@ -20,23 +20,6 @@ const DISPOSICIONES = {
   CUARENTENA: 'Mantener en cuarentena'
 };
 const ESTADOS_ACCION = { ABIERTA: 'Abierta', CERRADA: 'Cerrada' };
-const ESTADOS_OP = {
-  BORRADOR: 'Borrador',
-  EN_REVISION_CALIDAD: 'En revisión de calidad',
-  APROBADA: 'Aprobada',
-  PENDIENTE_MATERIAL: 'Pendiente de materiales',
-  LIBERADA_PRODUCCION: 'Liberada a producción',
-  EN_PRODUCCION: 'En producción',
-  EN_PROCESO_CNC: 'En mecanizado',
-  EN_SETUP: 'En preparación de máquina',
-  MECANIZADO: 'En mecanizado',
-  EN_INSPECCION: 'En inspección de calidad',
-  LISTA_PARA_LIBERAR: 'Lista para liberación',
-  LIBERADA: 'Liberada',
-  CERRADA: 'Cerrada',
-  CANCELADA: 'Cancelada'
-};
-
 async function request(path, options = {}) {
   const response = await fetch(`${API}${path}`, {
     ...options,

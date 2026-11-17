@@ -1,10 +1,9 @@
 // src/components/RegistrarRetalForm.jsx
 import React, { useState } from 'react';
 
-export default function RegistrarRetalForm({ onRegistroExitoso, onCancelar }) {
+export default function RegistrarRetalForm({ onRegistroExitoso }) {
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState({ tipo: '', texto: '' });
-  const [fotoPreview, setFotoPreview] = useState(null);
 
   const [form, setForm] = useState({
     material_clasificacion: 'Acero Inoxidable 304',
@@ -29,18 +28,6 @@ export default function RegistrarRetalForm({ onRegistroExitoso, onCancelar }) {
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
-  };
-
-  const handleImageUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setFotoPreview(reader.result);
-        setForm(prev => ({ ...prev, fotografia_url: reader.result }));
-      };
-      reader.readAsDataURL(file);
-    }
   };
 
   const handleSubmit = async (e) => {

@@ -405,30 +405,6 @@ export default function DisenoPlanosView() {
     setPiezasExpandidas(prev => ({ ...prev, [id]: !estaAbierto }));
   };
 
-  const handleCambiarCausaEsperaTabla = async (plano, nuevaCausa) => {
-    setMensaje({ tipo: '', texto: '' });
-    try {
-      setLoading(true);
-      const idPlanoTarget = plano.id_plano;
-      if (!idPlanoTarget) return;
-
-      const causaFinal = (nuevaCausa === '' || nuevaCausa === 'RESUELTA') ? null : nuevaCausa;
-      await API.patch(`/planos/${idPlanoTarget}`, { causa_espera: causaFinal });
-
-      setMensaje({ 
-        tipo: 'exito', 
-        texto: causaFinal 
-          ? `✅ Causa de espera actualizada a "${causaFinal}" para OP-${plano.codigo_op}.` 
-          : `✅ Causa de espera resuelta correctamente para OP-${plano.codigo_op}. Pasa a EN COLA.` 
-      });
-      cargarPlanosYPedidos();
-    } catch (error) {
-      setMensaje({ tipo: 'error', texto: 'No se pudo actualizar la causa de espera.' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleCambiarEtapaOrden = async (plano, nuevoEstado) => {
     setMensaje({ tipo: '', texto: '' });
     const estadoActual = plano.estado_diseno || 'PLANIFICADA';
@@ -1012,6 +988,11 @@ export default function DisenoPlanosView() {
   const piezaSinArchivos = (pieza) => Object.fromEntries(
     Object.entries(pieza).filter(([campo]) => !CAMPOS_ARCHIVO_PIEZA.includes(campo))
   );
+  // Campos de la pieza que solo usa el formulario y no se envían
+  const CAMPOS_SOLO_FORMULARIO = ['id', 'cantidad_pendiente', 'cantidad_solicitada'];
+  const piezaSinCamposDeFormulario = (pieza) => Object.fromEntries(
+    Object.entries(pieza).filter(([campo]) => !CAMPOS_SOLO_FORMULARIO.includes(campo))
+  );
 
   // Sube los archivos pendientes de cada pieza al plano que POST /planos/ creó para ella
   // (misma posición en la respuesta). Devuelve los errores para informarlos.
@@ -1072,7 +1053,7 @@ export default function DisenoPlanosView() {
 
     try {
       setLoading(true);
-      const { id, cantidad_pendiente, cantidad_solicitada, ...piezaPayload } = pieza;
+      const piezaPayload = piezaSinCamposDeFormulario(pieza);
       
       const payload = {
         ...nuevoPlano,
@@ -1142,7 +1123,7 @@ export default function DisenoPlanosView() {
       let erroresArchivos = [];
       const payload = {
         ...datosPlano,
-        piezas: piezasOp.map(({ id, cantidad_pendiente, cantidad_solicitada, ...resto }) => resto)
+        piezas: piezasOp.map(piezaSinCamposDeFormulario)
       };
 
       if (nuevoPlano.id_plano) {
