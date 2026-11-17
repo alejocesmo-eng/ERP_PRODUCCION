@@ -268,7 +268,7 @@ export default function ModalCatalogoStockPT({ abierto, modo = 'cotizacion', lin
         aria-modal="true"
         aria-labelledby={idTitulo}
         aria-describedby={idAyuda}
-        className="flex max-h-[90vh] w-full max-w-4xl flex-col rounded-xl border border-slate-300 bg-white p-4 text-xs text-slate-800 shadow-2xl space-y-3"
+        className="flex max-h-[90vh] w-full max-w-6xl flex-col rounded-xl border border-slate-300 bg-white p-4 text-xs text-slate-800 shadow-2xl space-y-3"
       >
         <div className="flex items-start justify-between">
           <div>
