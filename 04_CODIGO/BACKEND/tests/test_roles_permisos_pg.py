@@ -35,6 +35,8 @@ MIGRACION_29 = RUTA_BASE_DATOS / "29_MIGRACION_ROL_CAPTURISTA_TIEMPOS.sql"
 REVERSION_29 = RUTA_BASE_DATOS / "29_REVERSION_ROL_CAPTURISTA_TIEMPOS.sql"
 MIGRACION_30 = RUTA_BASE_DATOS / "30_MIGRACION_TIEMPOS_LIDER_MECANIZADOS.sql"
 REVERSION_30 = RUTA_BASE_DATOS / "30_REVERSION_TIEMPOS_LIDER_MECANIZADOS.sql"
+# Crea LIDER_SERVICIOS, que está en el catálogo (roles.ROLES_CATALOGO)
+MIGRACION_32 = RUTA_BASE_DATOS / "32_MIGRACION_ROL_LIDER_SERVICIOS.sql"
 
 pytestmark = pytest.mark.pg
 
@@ -75,9 +77,10 @@ def conteo(sesion):
     )).one()
 
 
-def test_las_migraciones_25_27_y_29_dejan_los_roles_del_catalogo(sesion):
+def test_las_migraciones_25_27_29_y_32_dejan_los_roles_del_catalogo(sesion):
     ejecutar_sql(sesion, MIGRACION_27)
     ejecutar_sql(sesion, MIGRACION_29)
+    ejecutar_sql(sesion, MIGRACION_32)
     existentes = set(sesion.execute(text("SELECT id_rol FROM roles")).scalars())
 
     assert set(roles.ROLES_CATALOGO) <= existentes
