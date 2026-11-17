@@ -1,7 +1,8 @@
 // src/componentes/SidebarNavigation.jsx
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { cerrarSesion } from '../services/sesion';
+import { cerrarSesion, obtenerSesion } from '../services/sesion';
+import { RUTA_CAPTURA_TIEMPOS, esCapturista } from '../config/roles';
 import { useAccesoConfiguracion } from '../services/configuracionRoles';
 
 export const SidebarNavigation = () => {
@@ -10,6 +11,8 @@ export const SidebarNavigation = () => {
   const [visible, setVisible] = useState(false);
   // Configuración de roles: solo se muestra si el backend confirma el acceso (ADMIN)
   const accesoConfiguracion = useAccesoConfiguracion();
+  // CAPTURISTA_TIEMPOS solo ve la captura de tiempos; el resto de roles conserva su menú
+  const capturista = esCapturista(obtenerSesion()?.rol);
 
   const handleLogout = () => {
     cerrarSesion();
@@ -78,6 +81,18 @@ export const SidebarNavigation = () => {
         </div>
 
         {/* NAVEGACIÓN MISIONAL */}
+        {capturista ? (
+          <nav className="space-y-1 text-xs">
+            <Link
+              to={RUTA_CAPTURA_TIEMPOS}
+              onClick={() => setVisible(false)}
+              className={`flex items-center gap-2.5 py-1.5 px-2.5 rounded-lg transition ${isActive(RUTA_CAPTURA_TIEMPOS)}`}
+            >
+              <span className="text-sm">⏱️</span>
+              <span className="truncate">Captura de tiempos</span>
+            </Link>
+          </nav>
+        ) : (
         <nav className="space-y-4 text-xs overflow-y-auto max-h-[calc(100vh-140px)] pr-1">
           {/* NIVEL 2 — OPERACIÓN */}
           <div>
@@ -274,6 +289,7 @@ export const SidebarNavigation = () => {
             </ul>
           </div>
         </nav>
+        )}
 
         {/* PIE CON BOTÓN DE CERRAR SESIÓN */}
         <div className="border-t border-slate-800 pt-3">

@@ -27,7 +27,7 @@ PERMISO_VALOR_COTIZADO = "PERM_VALOR_COTIZADO_VER"
 PERMISO_TIEMPOS = "PERM_TIEMPOS_REGISTRAR"
 
 # Lo único que puede usar CAPTURISTA_TIEMPOS: sesión, cola de sublotes, registro de tiempos y
-# carga manual de tiempos (app/api/v1/tiempos_manuales.py).
+# carga manual de tiempos con su lista de OP abiertas (app/api/v1/tiempos_manuales.py).
 # Todo lo demás (cliente, planos, costos, valor cotizado, unidad, liberación, cierre,
 # retención) le responde 403, aunque la ruta solo pida token.
 RUTAS_CAPTURISTA = {
@@ -41,6 +41,7 @@ RUTAS_CAPTURISTA = {
     ("POST", "/api/v1/operaciones/pausa/turno"),
     ("POST", "/api/v1/operaciones/sublotes/finalizar"),
     ("GET", "/api/v1/tiempos-manuales"),
+    ("GET", "/api/v1/tiempos-manuales/ops"),
     ("POST", "/api/v1/tiempos-manuales"),
     ("POST", "/api/v1/tiempos-manuales/corregir"),
 }

@@ -1,7 +1,9 @@
 // src/AppLayout.jsx
 import React, { useCallback, useEffect, useState } from 'react';
 import SidebarNavigation from './components/SidebarNavigation';
-import { Outlet, useNavigate } from 'react-router-dom';
+import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { RUTA_CAPTURA_TIEMPOS, esCapturista } from './config/roles';
+import { obtenerSesion } from './services/sesion';
 import { ProyectosProvider } from './context/ProyectosContext';
 import ExpedienteOpModal from './components/modals/ExpedienteOpModal';
 import OrdenFabricacionModal from './components/modals/OrdenFabricacionModal';
@@ -55,6 +57,12 @@ export default function AppLayout() {
     window.addEventListener('sgi:abrir-expediente-op', abrirExpedienteOp);
     return () => window.removeEventListener('sgi:abrir-expediente-op', abrirExpedienteOp);
   }, []);
+
+  // CAPTURISTA_TIEMPOS solo tiene la captura de tiempos (el backend le cierra lo demás)
+  const location = useLocation();
+  if (esCapturista(obtenerSesion()?.rol) && location.pathname !== RUTA_CAPTURA_TIEMPOS) {
+    return <Navigate to={RUTA_CAPTURA_TIEMPOS} replace />;
+  }
 
   return (
     <ProyectosProvider>

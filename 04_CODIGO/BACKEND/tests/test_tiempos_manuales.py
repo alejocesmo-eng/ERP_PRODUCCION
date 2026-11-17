@@ -106,6 +106,7 @@ def ctx():
             ("OP-MEC", "MECANIZADOS", EstadoOPEnum.EN_PRODUCCION),
             ("OP-SER", "SERVICIOS", EstadoOPEnum.EN_PRODUCCION),
             ("OP-CERRADA", "MECANIZADOS", EstadoOPEnum.CERRADA),
+            ("OP-CANCELADA", "MECANIZADOS", EstadoOPEnum.CANCELADA),
         ):
             s.add(OrdenProduccion(id_proyecto=pedido.id_proyecto, codigo_op=codigo, cantidad_fabricar=1,
                                   unidad_actual=unidad, estado=estado))
@@ -359,6 +360,46 @@ def test_el_costo_de_la_op_suma_operacion_y_setup_manual_con_el_centro_de_la_maq
     tiempos = {(t["centro_trabajo"], t["tipo"]): t for t in respuesta.json()["detalle_tiempos"]}
     assert tiempos[("CT-TORNO", "MECANIZADO")]["costo_total"] == pytest.approx(45.0)
     assert tiempos[("CT-TORNO", "SETUP")]["costo_total"] == pytest.approx(7.5)
+
+
+# --- Pantalla "Captura de tiempos": OP abiertas ------------------------------------------------
+
+def ops_abiertas(client, rol):
+    return client.get(f"{RUTA}/ops", headers=token(rol))
+
+
+def test_el_capturista_ve_las_op_abiertas_solo_con_codigo_pedido_y_producto(ctx):
+    client, _, _ = ctx
+    respuesta = ops_abiertas(client, CAP)
+
+    assert respuesta.status_code == 200, respuesta.text
+    filas = respuesta.json()
+    assert [f["codigo_op"] for f in filas] == ["OP-MEC", "OP-SER"]
+    # Sin costos, cliente ni planos: solo estos campos
+    assert all(set(f) == {"codigo_op", "numero_pedido", "codigo_producto", "producto"} for f in filas)
+    assert {f["numero_pedido"] for f in filas} == {"PED-TM-1"}
+
+
+@pytest.mark.parametrize("rol", [roles.OPERARIO, roles.COSTOS, roles.VENTAS, roles.GESTION_CALIDAD])
+def test_sin_carga_de_tiempos_no_hay_lista(ctx, rol):
+    client, _, _ = ctx
+    assert ops_abiertas(client, rol).status_code == 403
+
+
+@pytest.mark.parametrize("rol, esperadas", [
+    (roles.JEFE_PRODUCCION, ["OP-MEC", "OP-SER"]), (MEC, ["OP-MEC"]), (SER, ["OP-SER"]),
+])
+def test_cada_rol_con_permiso_ve_las_op_abiertas_de_su_alcance(ctx, rol, esperadas):
+    client, _, _ = ctx
+    assert [f["codigo_op"] for f in ops_abiertas(client, rol).json()] == esperadas
+
+
+def test_el_capturista_carga_tiempos_en_una_op_de_la_lista(ctx):
+    client, _, ids = ctx
+    codigo = ops_abiertas(client, CAP).json()[0]["codigo_op"]
+
+    assert agregar(client, CAP, fila(ids, codigo)).status_code == 201
+    assert parrilla(client, CAP, codigo).json()["ve_costos"] is False
 
 
 # --- Configuración de operarios por máquina ---------------------------------------------------

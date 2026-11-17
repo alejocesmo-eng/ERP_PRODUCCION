@@ -13,6 +13,8 @@ PRISMA; 33_MIGRACION_CARGA_TIEMPOS_MANUAL.sql).
 - No se validan solapamientos entre registros.
 - Los costos de los tiempos solo salen para COSTOS y JEFE_PRODUCCION (roles.ROLES_COSTOS_TIEMPOS).
 - Sin parámetros en la ruta: CAPTURISTA_TIEMPOS solo pasa a rutas fijas (acceso_bd.RUTAS_CAPTURISTA).
+- GET /ops: OP abiertas para la pantalla "Captura de tiempos" (código, pedido y producto; sin
+  costos, cliente ni planos), con el mismo permiso que la carga.
 """
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
@@ -28,8 +30,8 @@ from app.api.deps import obtener_usuario_actual
 from app.core import roles
 from app.db.database import get_db
 from app.db.models import (
-    CentroTrabajo, CorreccionTiempoManual, EquipoPlanta, EstadoOPEnum, MaquinaOperario, OrdenProduccion,
-    RegistroTiemposProduccion, Usuario,
+    CentroTrabajo, CorreccionTiempoManual, EquipoPlanta, EstadoOPEnum, MaquinaOperario, OrdenProduccion, Producto,
+    Proyecto, RegistroTiemposProduccion, Usuario,
 )
 from app.db.models_produccion import OperacionOT
 from app.services import unidad_op
@@ -174,6 +176,32 @@ def _confirmar(db: Session, mensaje: str) -> None:
     except SQLAlchemyError as error:
         db.rollback()
         raise HTTPException(status_code=500, detail=mensaje) from error
+
+
+# OP que ya no reciben tiempos y no se listan en la captura
+ESTADOS_SIN_CAPTURA = [EstadoOPEnum.CERRADA, EstadoOPEnum.CANCELADA]
+
+
+@router.get("/ops")
+def listar_ops_abiertas(db: Session = Depends(get_db), usuario: dict = Depends(obtener_usuario_actual)):
+    """OP abiertas en las que el rol puede cargar tiempos: solo código, pedido y producto."""
+    rol, registra, _ = _carga(db, usuario)
+    if not registra:
+        raise HTTPException(status_code=403, detail=MENSAJE_SIN_ACCESO)
+    consulta = (
+        db.query(OrdenProduccion.codigo_op, Proyecto.numero_pedido, Producto.codigo_rn, Producto.descripcion)
+        .outerjoin(Proyecto, Proyecto.id_proyecto == OrdenProduccion.id_proyecto)
+        .outerjoin(Producto, Producto.id_producto == OrdenProduccion.id_producto)
+        .filter(OrdenProduccion.estado.notin_(ESTADOS_SIN_CAPTURA))
+    )
+    # Los líderes de unidad, solo las OP que ven
+    consulta = unidad_op.filtrar_op_visibles(consulta, rol)
+    return [{
+        "codigo_op": codigo_op,
+        "numero_pedido": numero_pedido,
+        "codigo_producto": codigo_rn,
+        "producto": descripcion,
+    } for codigo_op, numero_pedido, codigo_rn, descripcion in consulta.order_by(OrdenProduccion.codigo_op).all()]
 
 
 @router.get("")

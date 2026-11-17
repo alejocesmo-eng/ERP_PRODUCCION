@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import API from '../services/api';
 import { guardarSesion } from '../services/sesion';
 import { ACCESOS_DEMO } from '../config/accesosDemo';
+import { rutaInicio } from '../config/roles';
 
 // Solo en desarrollo: en el build de producción la constante es false y la lista no entra al bundle
 const accesosDemo = import.meta.env.DEV ? ACCESOS_DEMO : [];
@@ -39,7 +40,7 @@ export default function LoginView({ onLoginSuccess }) {
       if (onLoginSuccess) {
         onLoginSuccess(access_token);
       } else {
-        window.location.href = '/ventas/proyectos';
+        window.location.href = rutaInicio(response.data.rol);
       }
     } catch (err) {
       console.error("Error en autenticación:", err);
@@ -81,7 +82,7 @@ export default function LoginView({ onLoginSuccess }) {
       if (onLoginSuccess) {
         onLoginSuccess(access_token);
       } else {
-        window.location.href = '/ventas/proyectos';
+        window.location.href = rutaInicio(response.data.rol);
       }
     } catch (err) {
       setError('Error en acceso rápido: ' + (err.response?.data?.detail || err.message));

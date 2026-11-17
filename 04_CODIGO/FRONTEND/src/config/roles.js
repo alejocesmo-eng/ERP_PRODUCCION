@@ -40,6 +40,11 @@ export const ROLES_APERTURA_ASIGNACION_DISENO = ['ADMIN', 'LIDER_DISENO'];
 // Movimientos de remanentes y sobrantes (RemanetesSobrantesView)
 export const ROLES_MOVIMIENTOS_REMANENTES = ['ADMIN', 'ALMACEN', 'JEFE_PRODUCCION', 'LIDER_MECANIZADOS', 'PRODUCCION'];
 
+// Captura de tiempos (CapturaTiemposView): CAPTURISTA_TIEMPOS solo ve esta pantalla en el menú y entra
+// directo a ella. El backend exige PERM_TIEMPOS_REGISTRAR en cada petición.
+export const ROL_CAPTURISTA_TIEMPOS = 'CAPTURISTA_TIEMPOS';
+export const RUTA_CAPTURA_TIEMPOS = '/produccion/captura-tiempos';
+
 export function normalizarRol(rol) {
   return String(rol || '').trim().toUpperCase();
 }
@@ -52,4 +57,13 @@ export function rolConocido(rol) {
 
 export function rolEn(rol, grupo) {
   return grupo.includes(normalizarRol(rol));
+}
+
+export function esCapturista(rol) {
+  return normalizarRol(rol) === ROL_CAPTURISTA_TIEMPOS;
+}
+
+// Pantalla de inicio después de entrar: la captura para el capturista, Pedidos para los demás
+export function rutaInicio(rol) {
+  return esCapturista(rol) ? RUTA_CAPTURA_TIEMPOS : '/ventas/proyectos';
 }

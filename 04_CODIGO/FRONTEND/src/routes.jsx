@@ -4,6 +4,9 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import AppLayout from './AppLayout';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import LoginView from './views/LoginView';
+import CapturaTiemposView from './views/nivel3/CapturaTiemposView';
+import { RUTA_CAPTURA_TIEMPOS, rutaInicio } from './config/roles';
+import { obtenerSesion } from './services/sesion';
 
 import ProyectosView from './views/nivel2/ProyectosView';
 import DisenoPlanosView from './views/nivel2/DisenoPlanosView';
@@ -32,11 +35,12 @@ export const AppRoutes = () => {
     <Routes>
       <Route
         path="/login"
-        element={token ? <Navigate to="/ventas/proyectos" replace /> : <LoginView />}
+        element={token ? <Navigate to={rutaInicio(obtenerSesion()?.rol)} replace /> : <LoginView />}
       />
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
-          <Route path="/" element={<Navigate to="/ventas/proyectos" replace />} />
+          <Route path="/" element={<Navigate to={rutaInicio(obtenerSesion()?.rol)} replace />} />
+          <Route path={RUTA_CAPTURA_TIEMPOS} element={<CapturaTiemposView />} />
           <Route path="/ventas/proyectos" element={<ProyectosView />} />
           <Route path="/diseno/planos" element={<DisenoPlanosView />} />
           <Route path="/compras/gestion" element={<ComprasGestionView />} />
@@ -60,7 +64,7 @@ export const AppRoutes = () => {
           {/* RUTA DE CALIDAD DE PRODUCTO E INSPECCIÓN */}
           <Route path="/calidad/producto" element={<CalidadProductoView />} />
 
-          <Route path="*" element={<Navigate to="/ventas/proyectos" replace />} />
+          <Route path="*" element={<Navigate to={rutaInicio(obtenerSesion()?.rol)} replace />} />
         </Route>
       </Route>
     </Routes>
