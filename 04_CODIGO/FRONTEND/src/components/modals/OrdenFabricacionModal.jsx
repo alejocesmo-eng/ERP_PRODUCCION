@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import API, { API_ORIGIN, mensajeError } from '../../services/api';
 import CargaTiemposOp from '../CargaTiemposOp';
+import MapaOp from '../MapaOp';
 
 // Orden de fabricación en solo lectura, con la distribución de la pantalla de SAP.
 // Datos de GET /ordenes/expediente/{op}: el backend ya quita los campos que el rol no ve
@@ -14,7 +15,8 @@ const PESTANAS = [
   { id: 'anexos', etiqueta: 'Anexos' }
 ];
 
-// Entradas del menú de opciones; el mapa de relaciones aún no tiene contenido
+// Entradas del menú de opciones. El mapa muestra relaciones y procesos según lo que el backend
+// permita al rol
 const OPCIONES = [
   { id: 'mapa', etiqueta: 'Mapa de relaciones' },
   { id: 'tiempos', etiqueta: 'Carga de tiempos' }
@@ -242,11 +244,11 @@ export default function OrdenFabricacionModal({ abierto, codigoOp, onClose }) {
               <div className="flex items-center justify-between gap-2 rounded border border-slate-300 bg-white p-2">
                 <span>
                   <strong>{opcionActiva.etiqueta}</strong>
-                  {opcion === 'mapa' && ': sin contenido todavía.'}
                 </span>
                 <button type="button" onClick={() => setOpcion(null)} className="rounded border border-slate-300 px-2 py-0.5 hover:bg-slate-100">Volver</button>
               </div>
               {opcion === 'tiempos' && <CargaTiemposOp codigoOp={codigoOp} />}
+              {opcion === 'mapa' && <MapaOp codigoOp={codigoOp} />}
             </div>
           )}
 
