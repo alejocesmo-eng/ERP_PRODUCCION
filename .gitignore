@@ -16,3 +16,5 @@ tmp_ot8/
 *.local
 # PDF ficticios que escribe scripts/sembrar_escenarios_sandbox.py (SCRUM-33)
 04_CODIGO/BACKEND/static/planos/DEMO_*.pdf
+# Skills locales de Claude (no son parte del sistema)
+.agents/
