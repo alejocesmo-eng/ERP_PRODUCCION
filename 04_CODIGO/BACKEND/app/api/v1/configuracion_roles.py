@@ -25,6 +25,7 @@ from app.core import roles
 from app.db.database import get_db
 from app.db.models import Permiso, Rol, RolPermiso, RolPermisoHistorial, Usuario
 from app.services.acceso_bd import rol_en_bd
+from app.services.usuarios import con_usuarios
 
 PERMISO_CONFIGURACION = "PERM_CONFIGURACION_ROLES"
 CODIGO_ROL = re.compile(r"^[A-Z][A-Z0-9_]{1,49}$")
@@ -32,16 +33,16 @@ CODIGO_ROL = re.compile(r"^[A-Z][A-Z0-9_]{1,49}$")
 router = APIRouter()
 
 
-def puede_configurar(db: Session, email: str) -> Optional[str]:
+def puede_configurar(db: Session, id_usuario: str) -> Optional[str]:
     """Rol de la base si puede entrar a Configuración; None si no."""
-    rol = rol_en_bd(db, email)
+    rol = rol_en_bd(db, id_usuario)
     if rol == roles.ADMIN and rol_tiene_permiso(db, rol, PERMISO_CONFIGURACION):
         return rol
     return None
 
 
 def requerir_configuracion(usuario: dict = Depends(obtener_usuario_actual), db: Session = Depends(get_db)) -> dict:
-    rol = puede_configurar(db, usuario["email"])
+    rol = puede_configurar(db, usuario["id_usuario"])
     if not rol:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo ADMIN entra a Configuración de roles.")
     return {**usuario, "rol": rol}
@@ -114,7 +115,7 @@ def _salida_rol(rol: Rol, permisos: list[str], usuarios: int) -> dict:
 @router.get("/acceso")
 def acceso(usuario: dict = Depends(obtener_usuario_actual), db: Session = Depends(get_db)):
     """Si el usuario ve Configuración en el menú. No responde 403: el menú solo lo oculta."""
-    return {"acceso": puede_configurar(db, usuario["email"]) is not None}
+    return {"acceso": puede_configurar(db, usuario["id_usuario"]) is not None}
 
 
 @router.get("/")
@@ -191,7 +192,7 @@ def asignar_permisos(
         )
     db.add_all(RolPermiso(id_rol=id_rol, id_permiso=p) for p in asignados)
     db.add_all(
-        RolPermisoHistorial(id_rol=id_rol, id_permiso=p, accion=accion, usuario_email=usuario["email"])
+        RolPermisoHistorial(id_rol=id_rol, id_permiso=p, accion=accion, usuario_email=usuario["id_usuario"])
         for accion, lista in (("ASIGNADO", asignados), ("RETIRADO", retirados))
         for p in lista
     )
@@ -211,7 +212,9 @@ def historial_permisos(id_rol: str, _: dict = Depends(requerir_configuracion), d
         .order_by(RolPermisoHistorial.registrado_en.desc(), RolPermisoHistorial.id.desc())
         .all()
     )
-    return [
+    # usuario_email guarda el id_usuario desde la migración 34 (las filas anteriores, el correo):
+    # se muestra el usuario
+    return con_usuarios(db, [
         {
             "id_permiso": f.id_permiso,
             "accion": f.accion,
@@ -219,22 +222,22 @@ def historial_permisos(id_rol: str, _: dict = Depends(requerir_configuracion), d
             "registrado_en": f.registrado_en.isoformat() if f.registrado_en else None,
         }
         for f in filas
-    ]
+    ], "usuario_email")
 
 
 @router.delete("/{id_rol}", status_code=status.HTTP_204_NO_CONTENT)
 def eliminar_rol(id_rol: str, usuario: dict = Depends(requerir_configuracion), db: Session = Depends(get_db)):
     rol = _rol(db, id_rol)
-    con_usuarios = db.query(func.count(Usuario.id_usuario)).filter(Usuario.id_rol == id_rol).scalar()
-    if con_usuarios:
+    asignados = db.query(func.count(Usuario.id_usuario)).filter(Usuario.id_rol == id_rol).scalar()
+    if asignados:
         raise HTTPException(
             status_code=409,
-            detail=f"El rol {id_rol} tiene {con_usuarios} usuario(s) asignado(s); reasígnelos antes de eliminarlo.",
+            detail=f"El rol {id_rol} tiene {asignados} usuario(s) asignado(s); reasígnelos antes de eliminarlo.",
         )
     retirados = [p for (p,) in db.query(RolPermiso.id_permiso).filter(RolPermiso.id_rol == id_rol).all()]
     db.query(RolPermiso).filter(RolPermiso.id_rol == id_rol).delete(synchronize_session=False)
     db.add_all(
-        RolPermisoHistorial(id_rol=id_rol, id_permiso=p, accion="RETIRADO", usuario_email=usuario["email"])
+        RolPermisoHistorial(id_rol=id_rol, id_permiso=p, accion="RETIRADO", usuario_email=usuario["id_usuario"])
         for p in sorted(retirados)
     )
     db.delete(rol)

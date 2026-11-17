@@ -25,6 +25,7 @@ from app.core.security import create_access_token
 from app.db.database import Base, get_db
 from app.db.models import Permiso, Rol, RolPermiso, RolPermisoHistorial, Usuario
 from app.services import acceso_bd
+from tests.ayudantes_usuarios import datos_usuario, id_prueba
 
 RUTA = "/api/v1/configuracion/roles"
 SIN_ACCESO = [roles.OPERARIO, roles.LIDER_MECANIZADOS, roles.JEFE_PRODUCCION]
@@ -71,7 +72,7 @@ def entorno():
         s.add(RolPermiso(id_rol=roles.ADMIN, id_permiso=PERMISO_CONFIGURACION))
         s.add(RolPermiso(id_rol="ROL_SIN_USUARIOS", id_permiso=PERMISO_A))
         s.add_all(
-            Usuario(email=f"{rol.lower()}@prueba.test", password_hash="!SIN_CLAVE", nombre_completo=rol, id_rol=rol)
+            Usuario(**datos_usuario(f"{rol.lower()}"), password_hash="!SIN_CLAVE", nombre_completo=rol, id_rol=rol)
             for rol in con_usuario
         )
         s.commit()
@@ -87,7 +88,7 @@ def client(entorno):
 
 
 def token(rol, rol_en_token=None):
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol_en_token or rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol_en_token or rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 
@@ -133,7 +134,7 @@ def test_un_cambio_de_rol_en_la_base_cuenta_desde_la_siguiente_consulta(entorno)
     cabeceras = token(roles.JEFE_PRODUCCION)
     assert client.get(f"{RUTA}/", headers=cabeceras).status_code == 403
     with Sesion() as s:
-        s.query(Usuario).filter(Usuario.email == "jefe_produccion@prueba.test").update({"id_rol": roles.ADMIN})
+        s.query(Usuario).filter(Usuario.usuario == "jefe_produccion").update({"id_rol": roles.ADMIN})
         s.commit()
     assert client.get(f"{RUTA}/", headers=cabeceras).status_code == 200
 
@@ -204,7 +205,8 @@ def test_asigna_permisos_del_catalogo_y_registra_quien_y_cuando(entorno):
     assert sorted((h["id_permiso"], h["accion"]) for h in historial) == [
         (PERMISO_A, "ASIGNADO"), (PERMISO_A, "RETIRADO"), (PERMISO_B, "ASIGNADO"),
     ]
-    assert {h["usuario_email"] for h in historial} == {"admin@prueba.test"}
+    # Se guarda el identificador interno y se muestra el usuario
+    assert {h["usuario_email"] for h in historial} == {"admin"}
     assert all(h["registrado_en"] for h in historial)
     with Sesion() as s:
         assert s.query(RolPermisoHistorial).count() == 3

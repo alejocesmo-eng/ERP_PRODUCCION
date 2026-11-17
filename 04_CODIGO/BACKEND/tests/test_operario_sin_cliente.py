@@ -26,6 +26,7 @@ from app.db.models import (
     Cliente, Cotizacion, EstadoOPEnum, OrdenProduccion, Plano, Proyecto, Rol, SocioNegocio, Usuario,
 )
 from app.db.models_produccion import OperacionOT, SubLoteOperacion
+from tests.ayudantes_usuarios import datos_usuario, id_prueba
 
 # Datos del cliente ficticio que no deben llegarle a OPERARIO
 RAZON_SOCIAL = "Cliente Reservado Zeta SAS"
@@ -59,7 +60,7 @@ def ctx():
     with Sesion() as s:
         s.add_all(Rol(id_rol=rol, nombre_rol=rol) for rol in ROLES_PRUEBA)
         s.add_all(
-            Usuario(email=f"{rol.lower()}@prueba.test", password_hash="!SIN_CLAVE", nombre_completo=rol, id_rol=rol)
+            Usuario(**datos_usuario(f"{rol.lower()}"), password_hash="!SIN_CLAVE", nombre_completo=rol, id_rol=rol)
             for rol in ROLES_PRUEBA
         )
         cliente = Cliente(nit_rut=NIT, razon_social=RAZON_SOCIAL, contacto=CONTACTO, email_contacto=CORREO, telefono=TELEFONO)
@@ -100,7 +101,7 @@ def ctx():
 
 
 def token(rol):
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 

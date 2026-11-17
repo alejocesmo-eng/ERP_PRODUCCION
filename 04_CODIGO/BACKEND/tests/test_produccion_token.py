@@ -25,6 +25,7 @@ from app.core.security import create_access_token
 from app.db.database import Base, get_db
 from app.db.models import Permiso, Rol, RolPermiso, Usuario
 from app.db.models_produccion import SubLoteOperacion
+from tests.ayudantes_usuarios import datos_usuario, id_prueba
 
 SUBLOTE = str(uuid.uuid4())
 LECTURAS = [
@@ -79,7 +80,7 @@ def ctx():
         s.add_all([Rol(id_rol="JEFE_PRODUCCION", nombre_rol="JEFE_PRODUCCION"), Rol(id_rol="PRODUCCION", nombre_rol="PRODUCCION")])
         s.add(Permiso(id_permiso="PERM_TIEMPOS_REGISTRAR", modulo="PRODUCCION"))
         s.add(RolPermiso(id_rol="JEFE_PRODUCCION", id_permiso="PERM_TIEMPOS_REGISTRAR"))
-        s.add_all(Usuario(email=f"{rol.lower()}@prueba.test", password_hash="!SIN_CLAVE", nombre_completo=rol, id_rol=rol)
+        s.add_all(Usuario(**datos_usuario(f"{rol.lower()}"), password_hash="!SIN_CLAVE", nombre_completo=rol, id_rol=rol)
                   for rol in ("JEFE_PRODUCCION", "PRODUCCION"))
         s.commit()
     client = TestClient(app)
@@ -90,7 +91,7 @@ def ctx():
 
 
 def token(rol="PRODUCCION"):
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 

@@ -284,7 +284,7 @@ def listar_personal(
     return [
         {
             **_serializar_trabajador(trabajador),
-            "usuario": usuarios[trabajador.id_usuario_sistema].email
+            "usuario": usuarios[trabajador.id_usuario_sistema].usuario
             if trabajador.id_usuario_sistema in usuarios else None,
         }
         for trabajador in trabajadores
@@ -300,7 +300,8 @@ def listar_usuarios_disponibles(
         TrabajadorUsuario.id_usuario_sistema.is_not(None)
     )
     return [
-        {"id_usuario": cuenta.id_usuario, "nombre": cuenta.nombre_completo, "email": cuenta.email, "rol": cuenta.id_rol}
+        {"id_usuario": cuenta.id_usuario, "usuario": cuenta.usuario, "nombre": cuenta.nombre_completo,
+         "email": cuenta.email, "rol": cuenta.id_rol}
         for cuenta in db.query(Usuario).filter(
             Usuario.activo.is_(True),
             ~Usuario.id_usuario.in_(vinculados),

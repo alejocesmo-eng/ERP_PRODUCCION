@@ -25,6 +25,7 @@ from app.api.v1 import planos as planos_api
 from app.core.security import create_access_token
 from app.db.database import get_db
 from app.db.models import Plano, PlanoArchivo
+from tests.ayudantes_usuarios import id_prueba
 
 URL_PG = os.environ.get("SGI_TEST_PG_URL")
 
@@ -57,7 +58,7 @@ def ctx(tmp_path, monkeypatch):
 
 
 def token(rol="DISENO"):
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 
@@ -105,7 +106,7 @@ def test_carga_de_cada_tipo_registra_hash_tamano_y_sincroniza_la_columna(ctx, ru
         assert registro.tamano_bytes == len(contenido)
         assert registro.sha256 == hashlib.sha256(contenido).hexdigest()
         assert registro.revision == "V-02"
-        assert registro.subido_por == "diseno@prueba.test"
+        assert registro.subido_por == str(id_prueba("diseno"))
         assert (directorio / os.path.basename(registro.ruta)).read_bytes() == contenido
         assert getattr(sesion.get(Plano, plano.id_plano), campo) == registro.ruta
         assert respuesta.json()[campo] == registro.ruta

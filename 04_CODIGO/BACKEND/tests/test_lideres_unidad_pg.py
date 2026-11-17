@@ -79,12 +79,14 @@ def cliente(sesion):
     aplicar(sesion)
     sufijo = uuid.uuid4().hex[:8]
     emails = {}
+    # El token lleva el id_usuario (migración 34), no el correo
+    ids = {}
     for rol in (roles.LIDER_MECANIZADOS, roles.LIDER_SERVICIOS):
         emails[rol] = f"lid32-{rol.lower()}-{sufijo}@prueba.test"
         sesion.execute(
-            text("INSERT INTO usuarios (id_usuario, email, password_hash, nombre_completo, id_rol, activo) "
-                 "VALUES (:id, :email, '!SIN_CLAVE', 'Prueba líderes 32', :rol, true)"),
-            {"id": str(uuid.uuid4()), "email": emails[rol], "rol": rol},
+            text("INSERT INTO usuarios (id_usuario, usuario, email, password_hash, nombre_completo, id_rol, activo) "
+                 "VALUES (:id, split_part(:email, '@', 1), :email, '!SIN_CLAVE', 'Prueba líderes 32', :rol, true)"),
+            {"id": ids.setdefault(rol, str(uuid.uuid4())), "email": emails[rol], "rol": rol},
         )
     app = FastAPI(dependencies=[Depends(acceso_bd.alcance_por_rol)])
     app.add_middleware(acceso_bd.OcultarCamposPorRol)
@@ -92,28 +94,28 @@ def cliente(sesion):
     app.include_router(produccion.router, prefix="/api/v1/operaciones")
     app.dependency_overrides[get_db] = lambda: sesion
     with TestClient(app) as client:
-        yield client, emails
+        yield client, ids
 
 
-def cabeceras(email, rol):
-    t = create_access_token({"sub": email, "rol": rol}, timedelta(minutes=5))
+def cabeceras(id_usuario, rol):
+    t = create_access_token({"sub": id_usuario, "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 
 @pytest.mark.parametrize("rol", [roles.LIDER_MECANIZADOS, roles.LIDER_SERVICIOS])
 def test_los_lideres_ven_cliente_y_op_sin_costos_ni_valor_cotizado(cliente, rol):
-    client, emails = cliente
+    client, ids = cliente
     # El token dice ADMIN: el alcance sale del rol de la base
-    alcance = client.get("/api/v1/busqueda/alcance", headers=cabeceras(emails[rol], roles.ADMIN)).json()
+    alcance = client.get("/api/v1/busqueda/alcance", headers=cabeceras(ids[rol], roles.ADMIN)).json()
 
     assert set(alcance["tipos"]) == {roles.BUSQUEDA_OP, roles.BUSQUEDA_CLIENTE}
     assert alcance["costos"] is False and alcance["valor_cotizado"] is False
 
 
 def test_lider_de_servicios_registra_tiempos_hasta_que_se_le_retira_el_permiso(cliente, sesion):
-    client, emails = cliente
+    client, ids = cliente
     ruta = "/api/v1/operaciones/setup/iniciar"
-    lider = cabeceras(emails[roles.LIDER_SERVICIOS], roles.LIDER_SERVICIOS)
+    lider = cabeceras(ids[roles.LIDER_SERVICIOS], roles.LIDER_SERVICIOS)
     # Cuerpo vacío: pasa el permiso y llega a la validación del endpoint
     assert client.post(ruta, json={}, headers=lider).status_code == 422
 
@@ -132,8 +134,8 @@ def test_la_reversion_se_detiene_con_usuarios_o_asignaciones_y_si_no_deja_los_mi
     sesion.execute(text("UPDATE usuarios SET id_rol = 'JEFE_PRODUCCION' WHERE id_rol = :r"),
                    {"r": roles.LIDER_SERVICIOS})
     sesion.execute(
-        text("INSERT INTO usuarios (id_usuario, email, password_hash, nombre_completo, id_rol, activo) "
-             "VALUES (:id, :email, '!SIN_CLAVE', 'Prueba reversión 32', :rol, true)"),
+        text("INSERT INTO usuarios (id_usuario, usuario, email, password_hash, nombre_completo, id_rol, activo) "
+             "VALUES (:id, split_part(:email, '@', 1), :email, '!SIN_CLAVE', 'Prueba reversión 32', :rol, true)"),
         {"id": str(uuid.uuid4()), "email": f"rev32-{uuid.uuid4().hex[:8]}@prueba.test", "rol": roles.LIDER_SERVICIOS},
     )
     registrados = set(sesion.execute(text("SELECT tipo FROM migracion_32_registro")).scalars())

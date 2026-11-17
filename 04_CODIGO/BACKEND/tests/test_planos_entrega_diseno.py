@@ -11,8 +11,9 @@ from app.api.v1 import planos as planos_api
 from app.api.v1.planos import PlanoUpdateRequest, actualizar_plano
 from app.db.database import Base
 from app.db.models import BOMListaMateriales, EstadoPlanoEnum, Plano, PlanoArchivo, PlanoHistorial, Proyecto
+from tests.ayudantes_usuarios import id_prueba
 
-USUARIO = {"email": "dibujante1@prueba.test", "rol": "DISENO"}
+USUARIO = {"id_usuario": str(id_prueba("dibujante1")), "rol": "DISENO"}
 
 
 @pytest.fixture

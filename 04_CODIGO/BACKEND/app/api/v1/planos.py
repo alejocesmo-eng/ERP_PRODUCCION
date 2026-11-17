@@ -26,6 +26,7 @@ from app.api.v1.quality_gate import (
     validar_liberacion_op,
 )
 from app.services.auditoria import agregar_evento_trazabilidad
+from app.services.usuarios import etiquetas_usuarios, mostrar
 from app.services.historial_planos import (
     exigir_justificacion,
     historial_por_plano,
@@ -136,7 +137,7 @@ def _guardar_archivo_cad(
                 registrar_evento_plano(
                     db, plano,
                     "CAMBIO_ARCHIVO" if cambio_archivo else "CARGA_ARCHIVO",
-                    usuario_actual["email"],
+                    usuario_actual["id_usuario"],
                     tipo_archivo=tipo_archivo,
                     sha256=sha256,
                     justificacion=texto_justificacion,
@@ -153,7 +154,7 @@ def _guardar_archivo_cad(
                 sha256=sha256,
                 revision=plano.version,
                 vigente=True,
-                subido_por=usuario_actual["email"],
+                subido_por=usuario_actual["id_usuario"],
             ))
         setattr(plano, campo, ruta)
         db.commit()
@@ -346,14 +347,24 @@ def generar_token_plano_ttl(id_plano: UUID, ttl_minutos: int = 15) -> str:
 # ENDPOINTS GESTIÓN Y SERVIDO DE PLANOS CON TOKENS TTL
 # =============================================================================
 
+def _respuestas(db: Session, planos) -> List[PlanoResponse]:
+    """aprobado_por guarda el id_usuario desde la migración 34: se muestra el usuario. Las
+    aprobaciones anteriores guardan el correo y quedan tal cual."""
+    respuestas = [PlanoResponse.model_validate(plano) for plano in planos]
+    etiquetas = etiquetas_usuarios(db, [respuesta.aprobado_por for respuesta in respuestas])
+    for respuesta in respuestas:
+        respuesta.aprobado_por = mostrar(etiquetas, respuesta.aprobado_por)
+    return respuestas
+
+
 @router.get("/", response_model=List[PlanoResponse])
 def listar_planos(
     db: Session = Depends(get_db),
     usuario_actual: dict = Depends(obtener_usuario_actual),
 ):
-    return db.query(Plano).options(
+    return _respuestas(db, db.query(Plano).options(
         joinedload(Plano.bom_items)
-    ).order_by(Plano.creado_en.desc()).all()
+    ).order_by(Plano.creado_en.desc()).all())
 
 
 def _datos_pieza(plano_in: PlanoWriteRequest, pieza: PiezaPlanoWrite):
@@ -414,7 +425,7 @@ def crear_planos(
             )
             db.add(plano)
             db.flush()
-            registrar_evento_plano(db, plano, "CREACION", usuario_actual["email"])
+            registrar_evento_plano(db, plano, "CREACION", usuario_actual["id_usuario"])
             for tipo, archivo in archivos.items():
                 db.add(PlanoArchivo(
                     id_plano=plano.id_plano,
@@ -425,11 +436,11 @@ def crear_planos(
                     sha256=archivo["sha256"],
                     revision=plano.version,
                     vigente=True,
-                    subido_por=usuario_actual["email"],
+                    subido_por=usuario_actual["id_usuario"],
                 ))
                 setattr(plano, FORMATOS_CAD[tipo][0], archivo["ruta"])
                 registrar_evento_plano(
-                    db, plano, "CARGA_ARCHIVO", usuario_actual["email"],
+                    db, plano, "CARGA_ARCHIVO", usuario_actual["id_usuario"],
                     tipo_archivo=tipo.upper(), sha256=archivo["sha256"],
                 )
             db.flush()
@@ -452,7 +463,7 @@ def crear_planos(
     except SQLAlchemyError as error:
         db.rollback()
         raise HTTPException(status_code=500, detail="No se pudieron guardar los planos.") from error
-    return planos_creados
+    return _respuestas(db, planos_creados)
 
 
 @router.patch("/{id_plano}", response_model=PlanoResponse)
@@ -555,7 +566,7 @@ def actualizar_plano(
                         continue
                     _detener_cronometro_diseno(orden_activa, ahora)
                     orden_activa.estado_diseno = "PAUSADA"
-                    registrar_evento_plano(db, orden_activa, "CAMBIO_ESTADO", usuario_actual["email"])
+                    registrar_evento_plano(db, orden_activa, "CAMBIO_ESTADO", usuario_actual["id_usuario"])
             if estado_anterior == "PAUSADA" or not plano.fecha_inicio_diseno:
                 _reanudar_cronometro_diseno(plano, ahora)
         if estado_anterior == "EN_DISENO" and plano.estado_diseno in ESTADOS_ENTREGA_DISENO | {"PAUSADA"}:
@@ -565,17 +576,17 @@ def actualizar_plano(
         if cambio_version:
             plano.fecha_ultima_revision = ahora
             registrar_evento_plano(
-                db, plano, "CAMBIO_VERSION", usuario_actual["email"],
+                db, plano, "CAMBIO_VERSION", usuario_actual["id_usuario"],
                 version_anterior=version_anterior, justificacion=texto_justificacion,
             )
         if plano.estado_diseno != estado_anterior:
-            registrar_evento_plano(db, plano, "CAMBIO_ESTADO", usuario_actual["email"])
+            registrar_evento_plano(db, plano, "CAMBIO_ESTADO", usuario_actual["id_usuario"])
         db.commit()
         db.refresh(plano)
     except SQLAlchemyError as error:
         db.rollback()
         raise HTTPException(status_code=500, detail="No se pudo actualizar el plano.") from error
-    return plano
+    return _respuestas(db, [plano])[0]
 
 
 @router.post("/{id_plano}/aprobar", response_model=PlanoResponse)
@@ -593,11 +604,11 @@ def aprobar_plano(
 
     estado_anterior = plano.estado.value if hasattr(plano.estado, "value") else plano.estado
     plano.estado = EstadoPlanoEnum.APROBADO
-    plano.aprobado_por = usuario_actual["email"]
+    plano.aprobado_por = usuario_actual["id_usuario"]
     plano.fecha_aprobacion = datetime.now(timezone.utc)
     try:
         registrar_evento_plano(
-            db, plano, "APROBACION", usuario_actual["email"],
+            db, plano, "APROBACION", usuario_actual["id_usuario"],
             justificacion=justificacion_opcional(datos.justificacion if datos else None),
         )
         agregar_evento_trazabilidad(
@@ -605,7 +616,7 @@ def aprobar_plano(
             tipo_entidad="PLANO",
             identificador=plano.codigo_plano,
             accion="PLANO_APROBADO",
-            usuario=usuario_actual["email"],
+            usuario=usuario_actual["id_usuario"],
             area=usuario_actual["rol"],
             estado_anterior=str(estado_anterior) if estado_anterior else None,
             estado_nuevo=EstadoPlanoEnum.APROBADO.value,
@@ -615,7 +626,7 @@ def aprobar_plano(
     except SQLAlchemyError as error:
         db.rollback()
         raise HTTPException(status_code=500, detail="No se pudo aprobar el plano.") from error
-    return plano
+    return _respuestas(db, [plano])[0]
 
 
 @router.get("/{id_plano}/historial")
@@ -646,13 +657,13 @@ def registrar_revision_plano(
 
     plano.fecha_ultima_revision = datetime.now(timezone.utc)
     try:
-        registrar_evento_plano(db, plano, "REVISION", usuario_actual["email"], justificacion=texto_justificacion)
+        registrar_evento_plano(db, plano, "REVISION", usuario_actual["id_usuario"], justificacion=texto_justificacion)
         db.commit()
         db.refresh(plano)
     except SQLAlchemyError as error:
         db.rollback()
         raise HTTPException(status_code=500, detail="No se pudo registrar la revisión del plano.") from error
-    return plano
+    return _respuestas(db, [plano])[0]
 
 
 @router.get("/token/{id_plano}", response_model=TokenPlanoResponse)

@@ -48,6 +48,7 @@ from app.db.models_produccion import (
     SubLoteOperacion,
     TipoNotificacionEnum,
 )
+from tests.ayudantes_usuarios import id_prueba
 
 
 @pytest.fixture
@@ -236,7 +237,7 @@ def test_liberacion_actualiza_estado_despues_de_validar_gate(db):
     resultado = liberar_orden_produccion(
         "4001234",
         db=db,
-        usuario_actual={"email": "diseno@hd.com", "rol": "DISENO"},
+        usuario_actual={"id_usuario": str(id_prueba("diseno")), "rol": "DISENO"},
     )
 
     op = db.query(OrdenProduccion).filter_by(codigo_op="4001234").one()
@@ -245,11 +246,11 @@ def test_liberacion_actualiza_estado_despues_de_validar_gate(db):
     assert op.liberada_en is not None
     evento = db.query(HistorialAccionesDocumento).filter_by(identificador_documento="4001234").one()
     assert evento.accion == "OP_LIBERADA"
-    assert evento.usuario_responsable == "diseno@hd.com"
+    assert evento.usuario_responsable == str(id_prueba("diseno"))
     # Asignación inicial: la OP llega a la unidad de sus planos vigentes (Mecanizados por defecto)
     assert op.unidad_actual == "MECANIZADOS"
     traslado = db.query(TrasladoUnidadOP).filter_by(id_op=op.id_op).one()
-    assert (traslado.unidad_origen, traslado.unidad_destino, traslado.usuario_email) == ("SIN_ASIGNAR", "MECANIZADOS", "diseno@hd.com")
+    assert (traslado.unidad_origen, traslado.unidad_destino, traslado.usuario_email) == ("SIN_ASIGNAR", "MECANIZADOS", str(id_prueba("diseno")))
 
 
 def test_expediente_no_expone_otra_op_del_mismo_pedido(db):

@@ -9,6 +9,7 @@ import uuid
 from app.api.deps import requerir_roles
 from app.core.roles import ROLES_HISTORIAL_CONSULTA, ROLES_SUSPENDER
 from app.db.database import get_db
+from app.services.usuarios import con_usuarios
 from app.db.models import HistorialAccionesDocumento
 
 router = APIRouter(prefix="/historial", tags=["Historial & Trazabilidad"])
@@ -70,7 +71,7 @@ def obtener_historial_documento(
         HistorialAccionesDocumento.identificador_documento == str(identificador)
     ).order_by(HistorialAccionesDocumento.fecha_hora.asc()).all()
 
-    return [
+    return con_usuarios(db, [
         {
             "id": str(r.id_historial),
             "accion": r.accion,
@@ -83,7 +84,7 @@ def obtener_historial_documento(
             "fecha_hora": r.fecha_hora.isoformat() if r.fecha_hora else ""
         }
         for r in registros
-    ]
+    ], "usuario")
 
 # 2. Registrar suspensión (congelamiento de reloj de productividad)
 @router.post("/suspender", status_code=status.HTTP_201_CREATED)
@@ -100,7 +101,7 @@ def suspender_documento(
         tipo_entidad=req.tipo_entidad,
         identificador=req.identificador,
         accion="SUSPENDIDO_COMERCIAL",
-        usuario=usuario["email"],
+        usuario=usuario["id_usuario"],
         area=usuario["rol"],
         estado_ant="ACTIVO",
         estado_nuev="SUSPENDIDO",
@@ -124,7 +125,7 @@ def reactivar_documento(
         tipo_entidad=req.tipo_entidad,
         identificador=req.identificador,
         accion="REACTIVADO",
-        usuario=usuario["email"],
+        usuario=usuario["id_usuario"],
         area=usuario["rol"],
         estado_ant="SUSPENDIDO",
         estado_nuev="ACTIVO",

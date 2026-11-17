@@ -27,6 +27,7 @@ from app.core.security import create_access_token
 from app.db.database import Base, get_db
 from app.db.models import EstadoOPEnum, OrdenProduccion, Plano, Proyecto, Rol, TrasladoUnidadOP, Usuario
 from app.services import unidad_op
+from tests.ayudantes_usuarios import datos_usuario, id_prueba
 
 ROLES_PRUEBA = [
     roles.ADMIN, roles.VENTAS, roles.JEFE_PRODUCCION, roles.LIDER_MECANIZADOS, roles.LIDER_SERVICIOS,
@@ -63,7 +64,7 @@ def ctx():
     with Sesion() as s:
         s.add_all(Rol(id_rol=rol, nombre_rol=rol) for rol in ROLES_PRUEBA)
         s.add_all(
-            Usuario(email=f"{rol.lower()}@prueba.test", password_hash="!SIN_CLAVE", nombre_completo=rol, id_rol=rol)
+            Usuario(**datos_usuario(f"{rol.lower()}"), password_hash="!SIN_CLAVE", nombre_completo=rol, id_rol=rol)
             for rol in ROLES_PRUEBA
         )
         pedido = Proyecto(id_proyecto=uuid.uuid4(), numero_pedido="PED-UNI-1", codigo_proyecto="PED-UNI-1",
@@ -84,7 +85,7 @@ def ctx():
 
 
 def token(rol, rol_en_token=None):
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol_en_token or rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol_en_token or rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 
@@ -108,7 +109,7 @@ def test_calidad_de_producto_traslada_y_queda_registrado(ctx):
     assert unidad == "SERVICIOS"
     (traslado,) = traslados
     assert (traslado.unidad_origen, traslado.unidad_destino) == ("MECANIZADOS", "SERVICIOS")
-    assert traslado.usuario_email == "calidad_producto@prueba.test" and traslado.rol == roles.CALIDAD_PRODUCTO
+    assert traslado.usuario_email == str(id_prueba("calidad_producto")) and traslado.rol == roles.CALIDAD_PRODUCTO
     assert traslado.registrado_en is not None and traslado.observacion == "Rectificado"
 
 

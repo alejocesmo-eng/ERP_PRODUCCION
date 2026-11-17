@@ -8,15 +8,17 @@ SQLite en memoria con override de get_db y una aplicación FastAPI mínima con e
 """
 import pytest
 from fastapi import FastAPI
+from jose import jwt
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.v1 import auth
-from app.core.security import get_password_hash
+from app.core.security import ALGORITHM, SECRET_KEY, get_password_hash
 from app.db.database import Base, get_db
 from app.db.models import Rol, Usuario
+from tests.ayudantes_usuarios import datos_usuario, id_prueba
 
 CLAVE = "clave-de-prueba-login"
 GENERICO = "Credenciales inválidas o usuario no registrado."
@@ -35,8 +37,8 @@ def ctx():
 
     s = Sesion()
     s.add(Rol(id_rol="VENTAS", nombre_rol="Ventas"))
-    for email, activo in (("activo@prueba.test", True), ("inactivo@prueba.test", False), ("sin_estado@prueba.test", None)):
-        s.add(Usuario(email=email, password_hash=get_password_hash(CLAVE), nombre_completo=email,
+    for usuario, activo in (("activo", True), ("inactivo", False), ("sin_estado", None)):
+        s.add(Usuario(**datos_usuario(usuario), password_hash=get_password_hash(CLAVE), nombre_completo=usuario,
                       id_rol="VENTAS", activo=activo))
     s.commit()
     s.close()
@@ -57,19 +59,37 @@ def ctx():
     engine.dispose()
 
 
-def login(client, email, clave=CLAVE):
-    return client.post("/api/v1/auth/token", data={"username": email, "password": clave})
+def login(client, usuario, clave=CLAVE):
+    return client.post("/api/v1/auth/token", data={"username": usuario, "password": clave})
 
 
 def test_usuario_activo_recibe_token(ctx):
-    respuesta = login(ctx, "activo@prueba.test")
+    respuesta = login(ctx, "activo")
 
     assert respuesta.status_code == 200, respuesta.text
     assert respuesta.json()["access_token"]
+    assert respuesta.json()["nombre_usuario"] == "activo"
+
+
+def test_el_token_lleva_el_identificador_interno(ctx):
+    token = login(ctx, "activo").json()["access_token"]
+
+    assert jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])["sub"] == str(id_prueba("activo"))
+
+
+def test_el_correo_no_sirve_para_entrar(ctx):
+    respuesta = login(ctx, "activo@prueba.test")
+
+    assert respuesta.status_code == 401
+    assert respuesta.json()["detail"] == GENERICO
+
+
+def test_las_mayusculas_y_espacios_del_usuario_no_importan(ctx):
+    assert login(ctx, "  Activo ").status_code == 200
 
 
 def test_usuario_inactivo_no_recibe_token(ctx):
-    respuesta = login(ctx, "inactivo@prueba.test")
+    respuesta = login(ctx, "inactivo")
 
     assert respuesta.status_code == 401
     assert "access_token" not in respuesta.json()
@@ -77,7 +97,7 @@ def test_usuario_inactivo_no_recibe_token(ctx):
 
 
 def test_inactivo_con_clave_errada_recibe_el_mensaje_generico(ctx):
-    respuesta = login(ctx, "inactivo@prueba.test", "otra-clave")
+    respuesta = login(ctx, "inactivo", "otra-clave")
 
     assert respuesta.status_code == 401
     assert respuesta.json()["detail"] == GENERICO
@@ -85,4 +105,4 @@ def test_inactivo_con_clave_errada_recibe_el_mensaje_generico(ctx):
 
 def test_activo_sin_valor_se_trata_como_activo(ctx):
     # Filas antiguas con activo NULL: no se bloquean (solo False es inactivo)
-    assert login(ctx, "sin_estado@prueba.test").status_code == 200
+    assert login(ctx, "sin_estado").status_code == 200

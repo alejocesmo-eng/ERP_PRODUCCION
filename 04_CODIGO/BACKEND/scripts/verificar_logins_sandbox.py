@@ -23,7 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from scripts.preparar_sandbox import USUARIOS_DEMO, VARIABLE_CLAVE_DEMO
+from scripts.preparar_sandbox import USUARIOS_DEMO, VARIABLE_CLAVE_DEMO, usuario_demo
 
 VARIABLE_API = "SGI_SANDBOX_API_URL"
 API_POR_DEFECTO = "http://127.0.0.1:8000"
@@ -77,9 +77,9 @@ def rutas_get(base: str) -> dict[str, list[str]]:
     return dict(sorted(por_modulo.items()))
 
 
-def iniciar_sesion(base: str, email: str, clave: str) -> tuple[int, str | None, str | None]:
+def iniciar_sesion(base: str, usuario: str, clave: str) -> tuple[int, str | None, str | None]:
     """(codigo, token, rol). El token solo se usa en memoria."""
-    datos = urllib.parse.urlencode({"username": email, "password": clave}).encode("utf-8")
+    datos = urllib.parse.urlencode({"username": usuario, "password": clave}).encode("utf-8")
     codigo, cuerpo = peticion(
         "POST", f"{base}/api/v1/auth/token", datos, {"Content-Type": "application/x-www-form-urlencoded"}
     )
@@ -112,10 +112,12 @@ def main() -> None:
     print("|---|---|---|---|---|---|---|")
     fallos = 0
     for email, _, rol_esperado in USUARIOS_DEMO:
-        codigo, token, rol = iniciar_sesion(base, email, clave)
+        # Se entra con el usuario (migración 34), no con el correo
+        usuario = usuario_demo(email)
+        codigo, token, rol = iniciar_sesion(base, usuario, clave)
         if not token:
             fallos += 1
-            print(f"| {email} | {rol_esperado} | — | FALLO (HTTP {codigo}) | — | — | — |")
+            print(f"| {usuario} | {rol_esperado} | — | FALLO (HTTP {codigo}) | — | — | — |")
             continue
         if rol != rol_esperado:
             fallos += 1
@@ -126,7 +128,7 @@ def main() -> None:
         errores = [m for m, e in estados.items() if e == "error"]
         login = "OK" if rol == rol_esperado else "OK, rol distinto"
         print(
-            f"| {email} | {rol_esperado} | {rol} | {login} | {', '.join(visibles) or '—'} | "
+            f"| {usuario} | {rol_esperado} | {rol} | {login} | {', '.join(visibles) or '—'} | "
             f"{', '.join(bloqueados) or '—'} | {', '.join(errores) or '—'} |"
         )
     print()

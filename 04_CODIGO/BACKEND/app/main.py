@@ -30,6 +30,7 @@ from app.api.v1 import (
     busqueda,
     unidades_op,
     configuracion_roles,
+    configuracion_usuarios,
     maquina_operarios,
     tiempos_manuales,
 )
@@ -92,6 +93,7 @@ app.include_router(stock_pt.router, prefix="/api/v1")
 app.include_router(busqueda.router, prefix="/api/v1/busqueda", tags=["Búsqueda general"])
 app.include_router(unidades_op.router, prefix="/api/v1/unidades-op", tags=["Unidad de la OP"])
 app.include_router(configuracion_roles.router, prefix="/api/v1/configuracion/roles", tags=["Configuración de roles y permisos"])
+app.include_router(configuracion_usuarios.router, prefix="/api/v1/configuracion/usuarios", tags=["Configuración de usuarios"])
 app.include_router(maquina_operarios.router, prefix="/api/v1/configuracion/maquinas", tags=["Operarios por máquina"])
 app.include_router(tiempos_manuales.router, prefix="/api/v1/tiempos-manuales", tags=["Carga manual de tiempos"])
 

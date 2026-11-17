@@ -22,6 +22,7 @@ from app.api.v1 import mantenimiento_planta, mantenimientos
 from app.core.security import create_access_token
 from app.db.database import Base, get_db
 from app.db.models import EquipoPlanta, MantenimientoMaquina
+from tests.ayudantes_usuarios import id_prueba
 
 BASE = "/api/v1/mantenimientos"
 OTRO = str(uuid.uuid4())
@@ -74,7 +75,7 @@ def ctx():
 
 
 def token(rol="PRODUCCION"):
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 

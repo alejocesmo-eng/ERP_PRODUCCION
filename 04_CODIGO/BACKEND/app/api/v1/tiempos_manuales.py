@@ -34,6 +34,7 @@ from app.db.models import (
 from app.db.models_produccion import OperacionOT
 from app.services import unidad_op
 from app.services.acceso_bd import PERMISO_TIEMPOS, puede, rol_en_bd
+from app.services.usuarios import a_uuid, normalizar_usuario
 
 router = APIRouter()
 
@@ -48,7 +49,8 @@ class TiempoManual(BaseModel):
 
     id_operacion: UUID
     codigo_maquina: str = Field(..., min_length=1)
-    operario_email: str = Field(..., min_length=1)
+    # Usuario del operario (no el correo, que es opcional)
+    operario: str = Field(..., min_length=1)
     minutos_operacion: float = Field(..., gt=0)
     minutos_setup: Optional[float] = Field(None, ge=0)
     fecha: Optional[date] = None
@@ -65,7 +67,7 @@ class TiempoManualCorregir(TiempoManual):
 
 def _carga(db: Session, usuario: dict) -> tuple[Optional[str], bool, bool]:
     """(rol de la base, puede registrar, ve costos)."""
-    rol = rol_en_bd(db, usuario["email"])
+    rol = rol_en_bd(db, usuario["id_usuario"])
     registra = rol not in roles.ROLES_SIN_CARGA_MANUAL_TIEMPOS and puede(db, rol, PERMISO_TIEMPOS)
     return rol, registra, rol in roles.ROLES_COSTOS_TIEMPOS
 
@@ -103,7 +105,7 @@ def _validar(db: Session, op: OrdenProduccion, datos: TiempoManual) -> tuple[Ope
     operario = (
         db.query(Usuario)
         .join(MaquinaOperario, MaquinaOperario.id_usuario == Usuario.id_usuario)
-        .filter(MaquinaOperario.id_equipo == maquina.id_equipo, Usuario.email == datos.operario_email.strip())
+        .filter(MaquinaOperario.id_equipo == maquina.id_equipo, Usuario.usuario == normalizar_usuario(datos.operario))
         .first()
     )
     if not operario:
@@ -115,7 +117,8 @@ def _aplicar(registro: RegistroTiemposProduccion, datos: TiempoManual, maquina: 
     fecha = datos.fecha or date.today()
     registro.id_operacion = datos.id_operacion
     registro.estacion_id = maquina.codigo_maquina
-    registro.operario_id = operario.email
+    # Identificador interno del operario, como la auditoría
+    registro.operario_id = str(operario.id_usuario)
     registro.segundos_ejecutados = _segundos(datos.minutos_operacion)
     registro.segundos_setup = _segundos(datos.minutos_setup)
     registro.fecha_trabajo = fecha
@@ -129,7 +132,8 @@ def _valores(registro: RegistroTiemposProduccion) -> dict:
     return {
         "id_operacion": str(registro.id_operacion) if registro.id_operacion else None,
         "codigo_maquina": registro.estacion_id,
-        "operario_email": registro.operario_id,
+        # Identificador interno del operario; las respuestas agregan su usuario y nombre
+        "id_operario": registro.operario_id,
         "minutos_operacion": _minutos(registro.segundos_ejecutados),
         "minutos_setup": _minutos(registro.segundos_setup),
         "fecha": registro.fecha_trabajo.isoformat() if registro.fecha_trabajo else None,
@@ -150,6 +154,18 @@ def _costo(registro: RegistroTiemposProduccion, maquinas: dict, centros: dict) -
 
 def _fecha(valor):
     return valor.isoformat() if valor else None
+
+
+def _personas(db: Session, valores) -> dict:
+    """{id_usuario: {"usuario", "nombre"}} de los identificadores que son cuentas."""
+    ids = {a_uuid(valor) for valor in valores if valor} - {None}
+    if not ids:
+        return {}
+    return {
+        str(id_usuario): {"usuario": usuario, "nombre": nombre}
+        for id_usuario, usuario, nombre in db.query(Usuario.id_usuario, Usuario.usuario, Usuario.nombre_completo)
+        .filter(Usuario.id_usuario.in_(ids)).all()
+    }
 
 
 def _confirmar(db: Session, mensaje: str) -> None:
@@ -178,13 +194,12 @@ def listar_tiempos(
     nombre_proceso = {proceso.id_operacion: proceso.nombre_proceso for proceso in procesos}
     maquinas = db.query(EquipoPlanta).order_by(EquipoPlanta.codigo_maquina).all()
     asignados = {}
-    for id_equipo, email, nombre in (
-        db.query(MaquinaOperario.id_equipo, Usuario.email, Usuario.nombre_completo)
+    for id_equipo, usuario_operario, nombre in (
+        db.query(MaquinaOperario.id_equipo, Usuario.usuario, Usuario.nombre_completo)
         .join(Usuario, Usuario.id_usuario == MaquinaOperario.id_usuario)
         .filter(Usuario.activo.isnot(False)).order_by(Usuario.nombre_completo).all()
     ):
-        asignados.setdefault(id_equipo, []).append({"email": email, "nombre": nombre})
-    nombres = dict(db.query(Usuario.email, Usuario.nombre_completo).all())
+        asignados.setdefault(id_equipo, []).append({"usuario": usuario_operario, "nombre": nombre})
 
     registros = (
         db.query(RegistroTiemposProduccion)
@@ -204,6 +219,13 @@ def listar_tiempos(
                 "corregido_en": _fecha(correccion.corregido_en),
                 "valores_anteriores": correccion.valores_anteriores,
             })
+    # Operario, registrado_por y corregido_por guardan el id_usuario: se muestran con su usuario
+    personas = _personas(db, [registro.operario_id for registro in registros]
+                         + [registro.registrado_por for registro in registros]
+                         + [c["corregido_por"] for lista in correcciones.values() for c in lista])
+    for lista in correcciones.values():
+        for correccion in lista:
+            correccion["corregido_por"] = personas.get(correccion["corregido_por"], {}).get("usuario", correccion["corregido_por"])
     maquina_por_codigo = {maquina.codigo_maquina: maquina for maquina in maquinas}
     centros = {centro.codigo_centro: centro for centro in db.query(CentroTrabajo).all()} if ve_costos else {}
 
@@ -213,8 +235,9 @@ def listar_tiempos(
             "id_registro": registro.id,
             **_valores(registro),
             "proceso": nombre_proceso.get(registro.id_operacion),
-            "operario_nombre": nombres.get(registro.operario_id),
-            "registrado_por": registro.registrado_por,
+            "operario": personas.get(registro.operario_id, {}).get("usuario"),
+            "operario_nombre": personas.get(registro.operario_id, {}).get("nombre"),
+            "registrado_por": personas.get(registro.registrado_por, {}).get("usuario", registro.registrado_por),
             "correcciones": correcciones.get(registro.id, []),
         }
         if ve_costos:
@@ -259,7 +282,7 @@ def agregar_tiempo(
         tipo_tiempo="MECANIZADO",
         pausado_por_turno=False,
         origen=ORIGEN_MANUAL,
-        registrado_por=usuario["email"],
+        registrado_por=usuario["id_usuario"],
     )
     _aplicar(registro, datos, maquina, operario)
     db.add(registro)
@@ -300,7 +323,7 @@ def corregir_tiempo(
         valores_anteriores=anteriores,
         valores_nuevos=nuevos,
         motivo=motivo,
-        corregido_por=usuario["email"],
+        corregido_por=usuario["id_usuario"],
     ))
     _confirmar(db, "No se pudo registrar la corrección.")
     return {"id_registro": registro.id, **nuevos}

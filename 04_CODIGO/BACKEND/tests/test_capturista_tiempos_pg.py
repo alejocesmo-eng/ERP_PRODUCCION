@@ -92,8 +92,8 @@ def test_la_reversion_se_detiene_con_usuarios_y_si_no_deja_los_mismos_conteos(se
     ).scalars().all()
     sesion.execute(text("UPDATE usuarios SET id_rol = 'OPERARIO' WHERE id_rol = :r"), {"r": roles.CAPTURISTA_TIEMPOS})
     sesion.execute(
-        text("INSERT INTO usuarios (id_usuario, email, password_hash, nombre_completo, id_rol, activo) "
-             "VALUES (:id, :email, '!SIN_CLAVE', 'Prueba reversión 29', :rol, true)"),
+        text("INSERT INTO usuarios (id_usuario, usuario, email, password_hash, nombre_completo, id_rol, activo) "
+             "VALUES (:id, split_part(:email, '@', 1), :email, '!SIN_CLAVE', 'Prueba reversión 29', :rol, true)"),
         {"id": str(uuid.uuid4()), "email": f"rev29-{uuid.uuid4().hex[:8]}@prueba.test", "rol": roles.CAPTURISTA_TIEMPOS},
     )
 

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import obtener_usuario_actual, requerir_roles
 from app.core.roles import ROLES_CALIDAD_LOTE, ROLES_GESTION_ALMACEN, ROLES_SOLO_ADMIN
 from app.db.database import get_db
+from app.services.usuarios import con_usuarios
 from app.db.models import (
     ArticuloInventario,
     BOMListaMateriales,
@@ -520,7 +521,7 @@ def actualizar_estado_calidad_lote(
                 estado_anterior=estado_anterior,
                 estado_nuevo=actualizacion.estado_calidad,
                 motivo=actualizacion.motivo.strip(),
-                registrado_por=usuario["email"],
+                registrado_por=usuario["id_usuario"],
             )
         )
         lote.estado_calidad = actualizacion.estado_calidad
@@ -552,7 +553,7 @@ def actualizar_estado_calidad_lote(
                             referencia_tipo="TRASLADO_QM",
                             referencia_id=lote.codigo_lote,
                             documento_externo="Liberación de lote QM",
-                            registrado_por=usuario["email"],
+                            registrado_por=usuario["id_usuario"],
                             destino=almacen_destino,
                         )
                     )
@@ -565,7 +566,7 @@ def actualizar_estado_calidad_lote(
                             costo_unitario=Decimal(str(lote.costo_unitario)),
                             cuenta_debito=catalogo.cuenta_contable_activo,
                             cuenta_credito=catalogo.cuenta_contable_activo,
-                            registrado_por=usuario["email"],
+                            registrado_por=usuario["id_usuario"],
                             codigo_centro=centro,
                             almacen_origen=almacen_origen,
                             almacen_destino=almacen_destino,
@@ -638,7 +639,7 @@ def consultar_auditoria_lote(
     registros = db.query(RegistroCalidadLote).filter(
         RegistroCalidadLote.id_lote == id_lote
     ).order_by(RegistroCalidadLote.creado_en.desc()).all()
-    return [
+    return con_usuarios(db, [
         {
             "estado_anterior": registro.estado_anterior,
             "estado_nuevo": registro.estado_nuevo,
@@ -647,7 +648,7 @@ def consultar_auditoria_lote(
             "creado_en": registro.creado_en,
         }
         for registro in registros
-    ]
+    ], "registrado_por")
 
 
 @router.get("/kardex")
@@ -667,7 +668,7 @@ def consultar_kardex(
     if codigo_sku:
         consulta = consulta.filter(ArticuloInventario.codigo_sku == codigo_sku)
     filas = consulta.order_by(MovimientoInventario.creado_en.desc()).limit(limite).all()
-    return [
+    return con_usuarios(db, [
         {
             "id_movimiento": movimiento.id_movimiento,
             "codigo_sku": articulo.codigo_sku,
@@ -690,7 +691,7 @@ def consultar_kardex(
             "creado_en": movimiento.creado_en,
         }
         for movimiento, articulo, lote in filas
-    ]
+    ], "registrado_por")
 
 
 @router.get("/kardex-sap")
@@ -704,7 +705,7 @@ def consultar_kardex_sap(
     if sku_codigo:
         consulta = consulta.filter(MovimientoKardexSAP.sku_codigo == sku_codigo)
     documentos = consulta.order_by(MovimientoKardexSAP.fecha_hora.desc()).limit(limite).all()
-    return [
+    return con_usuarios(db, [
         {
             "id_movimiento": documento.id_movimiento,
             "numero_documento_material": documento.numero_documento_material,
@@ -725,4 +726,4 @@ def consultar_kardex_sap(
             "fecha_hora": documento.fecha_hora,
         }
         for documento in documentos
-    ]
+    ], "registrado_por")

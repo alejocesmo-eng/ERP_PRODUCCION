@@ -10,9 +10,14 @@ from app.db.models import RolPermiso, Usuario
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
 
 
-def usuario_vigente(db: Session, email: str) -> bool:
+def usuario_vigente(db: Session, id_usuario: str) -> bool:
     """El usuario del token sigue existiendo y no está desactivado (activo NULL cuenta como activo)."""
-    fila = db.query(Usuario.activo).filter(Usuario.email == email).first()
+    from app.services.usuarios import a_uuid
+
+    identificador = a_uuid(id_usuario)
+    if identificador is None:
+        return False
+    fila = db.query(Usuario.activo).filter(Usuario.id_usuario == identificador).first()
     return fila is not None and fila.activo is not False
 
 
@@ -24,17 +29,19 @@ def obtener_usuario_actual(token: str = Depends(oauth2_scheme), db: Session = De
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
+        # sub es el identificador interno (usuarios.id_usuario), no el correo ni el usuario: no
+        # cambia si ADMIN edita el usuario y es lo que guarda la auditoría
+        id_usuario: str = payload.get("sub")
         rol: str = payload.get("rol")
-        if email is None or rol is None:
+        if id_usuario is None or rol is None:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
     # El JWT no tiene estado: se revisa el usuario en cada petición para que desactivarlo
     # (o eliminarlo) invalide de inmediato sus tokens vigentes.
-    if not usuario_vigente(db, email):
+    if not usuario_vigente(db, id_usuario):
         raise credentials_exception
-    return {"email": email, "rol": rol}
+    return {"id_usuario": id_usuario, "rol": rol}
 
 def detalle_acceso_denegado(roles_permitidos: list[str]) -> str:
     """Mensaje del 403 con los roles del catálogo (SCRUM-27). Los roles anteriores (DISENO,

@@ -25,6 +25,7 @@ from app.db.models import (
 )
 from app.services.socios import codigo_socio_o_none, normalizar_nit
 from app.services.stock_pt import CATEGORIA_PT, ORIGEN_STOCK_PT
+from app.services.usuarios import a_uuid
 
 router = APIRouter(prefix="/ventas/cotizaciones", tags=["Cotizaciones Comerciales"])
 
@@ -172,9 +173,17 @@ def _elaborado_por(db: Session, cot: Cotizacion) -> dict:
         HistorialAccionesDocumento.accion == "COTIZACION_CREADA",
     ).order_by(HistorialAccionesDocumento.fecha_hora).first()
     if not evento:
-        return {"email": None, "nombre": None}
-    usuario = db.query(Usuario).filter(Usuario.email == evento.usuario_responsable).first()
-    return {"email": evento.usuario_responsable, "nombre": usuario.nombre_completo if usuario else evento.usuario_responsable}
+        return {"email": None, "usuario": None, "nombre": None}
+    # Desde la migración 34 el historial guarda el id_usuario; las filas anteriores, el correo
+    responsable = evento.usuario_responsable
+    identificador = a_uuid(responsable)
+    usuario = (
+        db.query(Usuario).filter(Usuario.id_usuario == identificador).first() if identificador
+        else db.query(Usuario).filter(Usuario.email == responsable).first()
+    )
+    if not usuario:
+        return {"email": None if identificador else responsable, "usuario": None, "nombre": responsable}
+    return {"email": usuario.email, "usuario": usuario.usuario, "nombre": usuario.nombre_completo}
 
 
 def _resolver_socio(db: Session, data: "CotizacionCreateIn") -> SocioNegocio:
@@ -300,7 +309,7 @@ def crear_cotizacion(
             tipo_entidad="COTIZACION",
             identificador=nueva_cot.numero_cotizacion,
             accion="COTIZACION_CREADA",
-            usuario=usuario["email"],
+            usuario=usuario["id_usuario"],
             area="VENTAS",
             estado_nuevo="BORRADOR",
             motivo=f"id_cotizacion={nueva_cot.id_cotizacion}; id_socio={socio.id_socio}",
@@ -415,7 +424,7 @@ def editar_cotizacion_borrador(
             tipo_entidad="COTIZACION",
             identificador=cot.numero_cotizacion,
             accion="COTIZACION_EDITADA",
-            usuario=usuario["email"],
+            usuario=usuario["id_usuario"],
             area="VENTAS",
             estado_anterior="BORRADOR",
             estado_nuevo="BORRADOR",
@@ -456,7 +465,7 @@ def eliminar_cotizacion_borrador(
         tipo_entidad="COTIZACION",
         identificador=numero,
         accion="COTIZACION_ELIMINADA",
-        usuario=usuario["email"],
+        usuario=usuario["id_usuario"],
         area="VENTAS",
         estado_anterior="BORRADOR",
         motivo=f"id_cotizacion={cot.id_cotizacion}",
@@ -485,7 +494,7 @@ def emitir_cotizacion(
         tipo_entidad="COTIZACION",
         identificador=cot.numero_cotizacion,
         accion="COTIZACION_EMITIDA",
-        usuario=usuario["email"],
+        usuario=usuario["id_usuario"],
         area="VENTAS",
         estado_anterior="BORRADOR",
         estado_nuevo="EMITIDA",
@@ -603,7 +612,7 @@ def aprobar_cotizacion_y_generar_pedido(
         tipo_entidad="COTIZACION",
         identificador=cot.numero_cotizacion,
         accion="COTIZACION_CONVERTIDA_EN_PEDIDO",
-        usuario=usuario["email"],
+        usuario=usuario["id_usuario"],
         area="VENTAS",
         estado_anterior=estado_actual,
         estado_nuevo=estado_actual,
@@ -614,7 +623,7 @@ def aprobar_cotizacion_y_generar_pedido(
         tipo_entidad="PEDIDO",
         identificador=numero_ped,
         accion="PEDIDO_CREADO_DESDE_COTIZACION",
-        usuario=usuario["email"],
+        usuario=usuario["id_usuario"],
         area="VENTAS",
         estado_nuevo="BORRADOR",
         motivo=f"id_proyecto={nuevo_pedido.id_proyecto}; cotizacion={cot.numero_cotizacion}",

@@ -25,6 +25,7 @@ import app.api.v1 as v1
 from app.api.deps import obtener_usuario_actual, requerir_roles
 from app.api.v1 import ordenes
 from app.core import roles
+from tests.ayudantes_usuarios import id_prueba
 
 # Listas escritas a mano (no importadas de app.core.roles). ADMIN en todas durante la transición;
 # los roles anteriores (DISENO, PRODUCCION, CALIDAD) siguen donde estaban.
@@ -188,7 +189,7 @@ def client():
     def ruta_prueba(usuario: dict = Depends(requerir_roles(["ADMIN", "VENTAS"]))):
         return {"rol": usuario["rol"]}
 
-    app.dependency_overrides[obtener_usuario_actual] = lambda: {"email": "x@prueba.test", "rol": app.state.rol}
+    app.dependency_overrides[obtener_usuario_actual] = lambda: {"id_usuario": str(id_prueba("x.prueba")), "rol": app.state.rol}
     with TestClient(app) as cliente:
         yield cliente, app
 

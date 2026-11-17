@@ -33,10 +33,11 @@ def backend_simulado(fallan=()):
             return 200, json.dumps(OPENAPI).encode()
         if ruta == "/api/v1/auth/token":
             formulario = dict(p.split("=", 1) for p in datos.decode().split("&"))
-            email = formulario["username"].replace("%40", "@")
-            if email in fallan or formulario["password"] != CLAVE:
+            # El login es por usuario (migración 34), no por correo
+            usuario = formulario["username"]
+            if usuario in fallan or formulario["password"] != CLAVE:
                 return 401, b'{"detail": "Credenciales incorrectas"}'
-            rol = {e: r for e, _, r in preparar_sandbox.USUARIOS_DEMO}[email]
+            rol = {preparar_sandbox.usuario_demo(e): r for e, _, r in preparar_sandbox.USUARIOS_DEMO}[usuario]
             return 200, json.dumps({"access_token": f"tok-secreto-{rol}", "rol": rol}).encode()
         autorizacion = (cabeceras or {}).get("Authorization", "")
         rol = autorizacion.replace("Bearer tok-secreto-", "") if autorizacion else None
@@ -60,7 +61,12 @@ def entorno(monkeypatch):
 
 
 def filas(salida):
-    return {linea.split(" | ")[0].lstrip("| "): linea for linea in salida.splitlines() if "@" in linea}
+    # Filas de la tabla de usuarios demo: empiezan con "| " y un usuario conocido
+    usuarios = {preparar_sandbox.usuario_demo(email) for email, _, _ in preparar_sandbox.USUARIOS_DEMO}
+    return {
+        linea.split(" | ")[0].lstrip("| "): linea for linea in salida.splitlines()
+        if linea.startswith("| ") and linea.split(" | ")[0].lstrip("| ") in usuarios
+    }
 
 
 def test_tabla_con_login_rol_y_modulos(entorno, monkeypatch, capsys):
@@ -70,11 +76,11 @@ def test_tabla_con_login_rol_y_modulos(entorno, monkeypatch, capsys):
 
     salida = capsys.readouterr().out
     tabla = filas(salida)
-    assert set(tabla) == {email for email, _, _ in preparar_sandbox.USUARIOS_DEMO}
-    ventas = tabla["ventas@sgi.local"]
+    assert set(tabla) == {preparar_sandbox.usuario_demo(email) for email, _, _ in preparar_sandbox.USUARIOS_DEMO}
+    ventas = tabla["ventas"]
     assert "| VENTAS | VENTAS | OK |" in ventas
     assert "calidad (sin proteccion)" in ventas and "ventas/cotizaciones" in ventas and "maestros" in ventas
-    operario = tabla["operario@sgi.local"]
+    operario = tabla["operario"]
     assert operario.split(" | ")[5] == "maestros, ventas/cotizaciones"
     assert operario.split(" | ")[6].strip(" |") == "costos"
     assert "planos" not in salida  # las rutas con parámetros no se consultan
@@ -82,13 +88,13 @@ def test_tabla_con_login_rol_y_modulos(entorno, monkeypatch, capsys):
 
 
 def test_un_login_fallido_se_reporta_y_termina_con_error(entorno, monkeypatch, capsys):
-    monkeypatch.setattr(verificador, "peticion", backend_simulado(fallan={"calidadprod@sgi.local"}))
+    monkeypatch.setattr(verificador, "peticion", backend_simulado(fallan={"calidadprod"}))
 
     with pytest.raises(SystemExit) as salida_error:
         verificador.main()
 
     assert salida_error.value.code == 1
-    assert "FALLO (HTTP 401)" in filas(capsys.readouterr().out)["calidadprod@sgi.local"]
+    assert "FALLO (HTTP 401)" in filas(capsys.readouterr().out)["calidadprod"]
 
 
 def test_no_imprime_la_clave_ni_los_tokens(entorno, monkeypatch, capsys):

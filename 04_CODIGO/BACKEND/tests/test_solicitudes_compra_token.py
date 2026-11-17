@@ -20,6 +20,7 @@ from app.api.v1 import solicitudes_compra
 from app.core.security import create_access_token
 from app.db.database import Base, get_db
 from app.db.models import EjecucionMRP, RequisicionMRP, SolicitudCompra
+from tests.ayudantes_usuarios import id_prueba
 
 RUTAS = [
     ("post", "/api/v1/solicitudes-compra/mrp/retales"),
@@ -63,7 +64,7 @@ def ctx():
 
 
 def token(rol="ALMACEN"):
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 

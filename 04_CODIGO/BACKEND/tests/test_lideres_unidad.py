@@ -32,6 +32,7 @@ from app.db.models import (
     EstadoOPEnum, OrdenProduccion, Permiso, Plano, Producto, Proyecto, Rol, RolPermiso, Usuario,
 )
 from app.services import acceso_bd
+from tests.ayudantes_usuarios import datos_usuario, id_prueba
 
 MEC, SER = roles.LIDER_MECANIZADOS, roles.LIDER_SERVICIOS
 ROLES_PRUEBA = [roles.ADMIN, roles.VENTAS, roles.JEFE_PRODUCCION, MEC, SER, roles.CALIDAD_PRODUCTO]
@@ -80,7 +81,7 @@ def ctx():
         s.add_all(Permiso(id_permiso=p, modulo="PRUEBA") for p in {p for lista in PERMISOS.values() for p in lista})
         s.add_all(RolPermiso(id_rol=rol, id_permiso=p) for rol, lista in PERMISOS.items() for p in lista)
         s.add_all(
-            Usuario(email=f"{rol.lower()}@prueba.test", password_hash="!SIN_CLAVE", nombre_completo=rol, id_rol=rol)
+            Usuario(**datos_usuario(f"{rol.lower()}"), password_hash="!SIN_CLAVE", nombre_completo=rol, id_rol=rol)
             for rol in ROLES_PRUEBA
         )
         pedido = Proyecto(id_proyecto=uuid.uuid4(), numero_pedido="PED-LID-1", codigo_proyecto="PED-LID-1",
@@ -120,7 +121,7 @@ def ctx():
 
 
 def token(rol, rol_en_token=None):
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol_en_token or rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol_en_token or rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 
@@ -221,7 +222,7 @@ def test_lider_de_servicios_cierra_solo_op_de_su_area(ctx):
 def test_el_cierre_por_area_usa_el_rol_de_la_base(ctx):
     client, _, ids = ctx
     # El token dice JEFE_PRODUCCION, pero en la base es LIDER_SERVICIOS
-    t = create_access_token({"sub": "lider_servicios@prueba.test", "rol": roles.JEFE_PRODUCCION}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba("lider_servicios")), "rol": roles.JEFE_PRODUCCION}, timedelta(minutes=5))
     respuesta = client.patch(f"/api/v1/ordenes/{ids['OP-MEC']}", json={"estado": "CERRADA"},
                              headers={"Authorization": f"Bearer {t}"})
     assert respuesta.status_code == 403

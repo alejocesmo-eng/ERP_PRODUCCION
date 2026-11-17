@@ -21,6 +21,7 @@ from app.api.v1 import costos
 from app.core.security import create_access_token
 from app.db.database import Base, get_db
 from app.db.models import CentroTrabajo, OrdenProduccion, Permiso, Proyecto, Rol, RolPermiso, Usuario
+from tests.ayudantes_usuarios import datos_usuario, id_prueba
 
 CODIGO_OP = "OP-COS-1"
 RUTAS = [
@@ -69,7 +70,7 @@ def ctx():
         Rol(id_rol="COSTOS", nombre_rol="Costos"),
         Permiso(id_permiso="PERM_EXPEDIENTE_COSTOS_VER", modulo="COSTOS"),
         RolPermiso(id_rol="COSTOS", id_permiso="PERM_EXPEDIENTE_COSTOS_VER"),
-        Usuario(email="costos@prueba.test", password_hash="!SIN_CLAVE", nombre_completo="Costos", id_rol="COSTOS"),
+        Usuario(**datos_usuario("costos"), password_hash="!SIN_CLAVE", nombre_completo="Costos", id_rol="COSTOS"),
     ])
     s.commit()
     s.close()
@@ -80,7 +81,7 @@ def ctx():
 
 
 def token(rol="ADMIN"):
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 

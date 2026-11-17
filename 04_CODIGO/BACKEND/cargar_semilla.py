@@ -221,6 +221,9 @@ def _crear_maestros(db: Session) -> Dict[str, Any]:
         ("calidad@sgi.local", "Paula Rojas - Calidad", "CALIDAD"),
         ("mantenimiento@sgi.local", "Diego Castro - Mantenimiento", "MANTENIMIENTO"),
     )
+    # Usuario con que se entra (migración 34): la parte del correo antes de la @, salvo el ADMIN
+    # técnico, que chocaría con admin@sgi.local (cuenta demo de scripts/preparar_sandbox.py)
+    usuario_de = {"admin@sgi.com": "admin.tecnico"}
     usuarios = {}
     for email, nombre, rol in usuarios_data:
         # Solo crea los que faltan: un usuario existente conserva su clave, nombre, rol y estado
@@ -230,6 +233,7 @@ def _crear_maestros(db: Session) -> Dict[str, Any]:
             Usuario,
             ("email",),
             {
+                "usuario": usuario_de.get(email, email.split("@")[0]),
                 "email": email,
                 "password_hash": get_password_hash(password),
                 "nombre_completo": nombre,
@@ -1420,7 +1424,7 @@ def _crear_compras_almacen(
                 "referencia_id": f"{codigo_op}:{sku}",
                 "codigo_op": codigo_op,
                 "destino": "PLANTA",
-                "registrado_por": maestros["usuarios"]["ALMACEN"].email,
+                "registrado_por": str(maestros["usuarios"]["ALMACEN"].id_usuario),
                 "creado_en": datetime(2026, 10, 20, 10, index),
             },
         )
@@ -1473,7 +1477,7 @@ def _crear_compras_almacen(
             "referencia_tipo": "SEMILLA_TRASLADO",
             "referencia_id": f"{sku_traslado}:BOD-MP-02",
             "destino": "BOD-MP-02",
-            "registrado_por": maestros["usuarios"]["ALMACEN"].email,
+            "registrado_por": str(maestros["usuarios"]["ALMACEN"].id_usuario),
             "creado_en": datetime(2026, 10, 21, 9, 0),
         },
     )

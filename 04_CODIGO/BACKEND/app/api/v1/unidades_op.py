@@ -15,6 +15,7 @@ from app.db.database import get_db
 from app.db.models import OrdenProduccion, TrasladoUnidadOP
 from app.services import unidad_op
 from app.services.acceso_bd import rol_en_bd
+from app.services.usuarios import con_usuarios, etiquetas_usuarios, mostrar
 
 router = APIRouter()
 
@@ -49,13 +50,13 @@ def trasladar_op(
     db: Session = Depends(get_db),
     usuario: dict = Depends(obtener_usuario_actual),
 ):
-    rol = rol_en_bd(db, usuario["email"])
+    rol = rol_en_bd(db, usuario["id_usuario"])
     if rol not in roles.ROLES_CAMBIAR_UNIDAD_OP:
         raise HTTPException(status_code=403, detail="Su rol no puede cambiar la unidad de la OP.")
     op = db.query(OrdenProduccion).filter(OrdenProduccion.codigo_op == codigo_op).first()
     if not op:
         raise HTTPException(status_code=404, detail="No se encontró la Orden de Producción indicada.")
-    traslado = unidad_op.trasladar(db, op, datos.unidad_destino, usuario["email"], rol, datos.observacion)
+    traslado = unidad_op.trasladar(db, op, datos.unidad_destino, usuario["id_usuario"], rol, datos.observacion)
     try:
         db.commit()
         db.refresh(traslado)
@@ -66,7 +67,7 @@ def trasladar_op(
         "codigo_op": op.codigo_op,
         "unidad_origen": traslado.unidad_origen,
         "unidad_destino": traslado.unidad_destino,
-        "trasladado_por": traslado.usuario_email,
+        "trasladado_por": mostrar(etiquetas_usuarios(db, [traslado.usuario_email]), traslado.usuario_email),
         "trasladado_en": _fecha(traslado.registrado_en),
     }
 
@@ -77,7 +78,7 @@ def listar_traslados(
     db: Session = Depends(get_db),
     usuario: dict = Depends(obtener_usuario_actual),
 ):
-    rol = rol_en_bd(db, usuario["email"])
+    rol = rol_en_bd(db, usuario["id_usuario"])
     if rol not in roles.ROLES_EXPEDIENTE_OP and rol not in roles.ROLES_CAMBIAR_UNIDAD_OP:
         raise HTTPException(status_code=404, detail="No se encontró la Orden de Producción indicada.")
     op = _op_visible(db, codigo_op, rol)
@@ -88,12 +89,12 @@ def listar_traslados(
     return {
         "codigo_op": op.codigo_op,
         "unidad_actual": op.unidad_actual,
-        "traslados": [{
+        "traslados": con_usuarios(db, [{
             "unidad_origen": t.unidad_origen,
             "unidad_destino": t.unidad_destino,
             "usuario": t.usuario_email,
             "rol": t.rol,
             "observacion": t.observacion,
             "registrado_en": _fecha(t.registrado_en),
-        } for t in traslados],
+        } for t in traslados], "usuario"),
     }

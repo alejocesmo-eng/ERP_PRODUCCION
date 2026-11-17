@@ -49,11 +49,15 @@ RUTAS_CAPTURISTA = {
 EQUIVALENTES = {roles.CALIDAD: roles.GESTION_CALIDAD}
 
 
-def rol_en_bd(db: Session, email: str) -> str | None:
-    """Rol vigente del usuario en usuarios.id_rol, con la equivalencia de transición."""
-    if not email:
+def rol_en_bd(db: Session, id_usuario) -> str | None:
+    """Rol vigente del usuario (por id_usuario, el sub del token) en usuarios.id_rol, con la
+    equivalencia de transición."""
+    from app.services.usuarios import a_uuid
+
+    identificador = a_uuid(id_usuario)
+    if identificador is None:
         return None
-    fila = db.query(Usuario.id_rol).filter(Usuario.email == email).first()
+    fila = db.query(Usuario.id_rol).filter(Usuario.id_usuario == identificador).first()
     rol = fila.id_rol if fila else None
     return EQUIVALENTES.get(rol, rol)
 
@@ -66,7 +70,7 @@ def puede(db: Session, rol: str | None, id_permiso: str) -> bool:
 
 def requerir_permiso_bd(id_permiso: str):
     def verificar(usuario: dict = Depends(obtener_usuario_actual), db: Session = Depends(get_db)) -> dict:
-        rol = rol_en_bd(db, usuario["email"])
+        rol = rol_en_bd(db, usuario["id_usuario"])
         if not puede(db, rol, id_permiso):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Su rol no tiene acceso a esta información.")
         return {**usuario, "rol": rol}
@@ -116,10 +120,10 @@ def alcance_por_rol(request: Request, db: Session = Depends(get_db)) -> None:
     if not cabecera.lower().startswith("bearer "):
         return
     try:
-        email = jwt.decode(cabecera[7:].strip(), SECRET_KEY, algorithms=[ALGORITHM]).get("sub")
+        id_usuario = jwt.decode(cabecera[7:].strip(), SECRET_KEY, algorithms=[ALGORITHM]).get("sub")
     except JWTError:
         return
-    rol = rol_en_bd(db, email)
+    rol = rol_en_bd(db, id_usuario)
     if rol in CAMPOS_OCULTOS_POR_ROL:
         request.state.campos_ocultos = CAMPOS_OCULTOS_POR_ROL[rol]
     # Ruta completa de la petición: RUTAS_CAPTURISTA no tiene rutas con parámetros

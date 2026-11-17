@@ -21,6 +21,7 @@ from app.core.security import create_access_token
 from app.db.database import Base, get_db
 from app.db.models import SocioNegocio
 from app.services.socios import codigo_socio_o_none, normalizar_nit
+from tests.ayudantes_usuarios import id_prueba
 
 CLIENTE = {
     "razon_social": "Cliente SCRUM-22",
@@ -59,7 +60,7 @@ def ctx():
 
 
 def token(rol="ADMIN"):
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 

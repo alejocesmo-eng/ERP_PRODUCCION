@@ -185,7 +185,7 @@ def registrar_recepcion_compra(
                 referencia_id=str(solicitud.id_solicitud),
                 documento_externo=entrada.numero_factura,
                 documento_url=entrada.factura_digital_url,
-                registrado_por=usuario["email"],
+                registrado_por=usuario["id_usuario"],
                 proveedor=entrada.proveedor,
             )
         )
@@ -197,7 +197,7 @@ def registrar_recepcion_compra(
                 costo_unitario=precio,
                 cuenta_debito=catalogo.cuenta_contable_activo,
                 cuenta_credito=catalogo.cuenta_contable_transitoria,
-                registrado_por=usuario["email"],
+                registrado_por=usuario["id_usuario"],
                 codigo_centro=catalogo.codigo_centro,
                 almacen_destino="BOD-CUARENTENA-QM",
                 centro_costo_imputado=catalogo.centro_costo_defecto,
@@ -383,7 +383,7 @@ def registrar_salida_almacen(
                 documento_externo=salida.observaciones,
                 codigo_op=orden.codigo_op if orden else None,
                 destino=salida.tipo_destino.value,
-                registrado_por=usuario["email"],
+                registrado_por=usuario["id_usuario"],
             )
             movimientos.append(movimiento)
             if salida.tipo_destino == TipoDestinoEnum.SCRAP:
@@ -406,7 +406,7 @@ def registrar_salida_almacen(
                     costo_unitario=costo,
                     cuenta_debito=cuenta_debito,
                     cuenta_credito=cuenta_credito,
-                    registrado_por=usuario["email"],
+                    registrado_por=usuario["id_usuario"],
                     codigo_centro=lote.codigo_centro or catalogo.codigo_centro,
                     almacen_origen=lote.almacen_fisico or catalogo.almacen_fisico,
                     centro_costo_imputado=(
@@ -546,7 +546,7 @@ def registrar_traslado_almacen(
             documento_externo=traslado.observaciones,
             codigo_op=None,
             destino=traslado.almacen_destino,
-            registrado_por=usuario["email"],
+            registrado_por=usuario["id_usuario"],
         )
         db.add(movimiento)
         documento_sap = crear_documento_material_sap(
@@ -556,7 +556,7 @@ def registrar_traslado_almacen(
             costo_unitario=costo,
             cuenta_debito=catalogo.cuenta_contable_activo,
             cuenta_credito=catalogo.cuenta_contable_activo,
-            registrado_por=usuario["email"],
+            registrado_por=usuario["id_usuario"],
             codigo_centro=centro_destino.codigo_centro,
             almacen_origen=almacen_origen,
             almacen_destino=traslado.almacen_destino,

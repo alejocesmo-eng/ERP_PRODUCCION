@@ -43,6 +43,7 @@ from app.api.v1.quality_gate import (
 )
 from app.services.auditoria import agregar_evento_trazabilidad
 from app.services.historial_planos import historial_por_plano
+from app.services.usuarios import con_usuarios
 from app.services import unidad_op
 from app.services.acceso_bd import rol_en_bd
 
@@ -97,7 +98,7 @@ def obtener_expediente_op(
 ):
     op = db.query(OrdenProduccion).filter(OrdenProduccion.codigo_op == codigo_op).first()
     # El líder de una unidad solo ve las OP que están en ella (rol leído de la base)
-    if not op or not unidad_op.puede_ver_op(rol_en_bd(db, usuario_actual.get("email")), op, db):
+    if not op or not unidad_op.puede_ver_op(rol_en_bd(db, usuario_actual.get("id_usuario")), op, db):
         raise HTTPException(status_code=404, detail="No se encontró la Orden de Producción indicada.")
 
     proyecto = db.query(Proyecto).filter(Proyecto.id_proyecto == op.id_proyecto).first()
@@ -216,6 +217,11 @@ def obtener_expediente_op(
             # Línea de tiempo append-only del plano (migración 21)
             "historial": historial_planos.get(plano.id_plano, []),
         })
+
+    # aprobado_por y subido_por guardan el id_usuario desde la migración 34: se muestra el usuario
+    archivos_expediente = [archivo for plano_data in planos_expediente for archivo in plano_data["archivos"].values()]
+    con_usuarios(db, planos_expediente, "aprobado_por")
+    con_usuarios(db, archivos_expediente, "subido_por")
 
     estados_bom = [linea.estado_abastecimiento for linea in lineas_bom]
     estados_solicitud = [solicitud.estado_bom for solicitud in solicitudes if solicitud.estado_bom]
@@ -449,7 +455,7 @@ def registrar_excepcion_admin(db: Session, usuario_actual: dict, codigo_op: str,
         tipo_entidad="ORDEN_PRODUCCION",
         identificador=codigo_op,
         accion="OP_LIBERADA_EXCEPCION_ADMIN",
-        usuario=usuario_actual["email"],
+        usuario=usuario_actual["id_usuario"],
         area=usuario_actual["rol"],
         estado_anterior=str(estado_anterior) if estado_anterior is not None else None,
         estado_nuevo=str(estado_nuevo),
@@ -480,14 +486,14 @@ def liberar_orden_produccion(
     op.estado = EstadoOPEnum.LIBERADA
     op.reserva_stock_100 = True
     op.liberada_en = datetime.now().astimezone()
-    unidad_op.asignar_unidad_inicial(db, op, planos, usuario_actual["email"], usuario_actual.get("rol"))
+    unidad_op.asignar_unidad_inicial(db, op, planos, usuario_actual["id_usuario"], usuario_actual.get("rol"))
     try:
         agregar_evento_trazabilidad(
             db,
             tipo_entidad="ORDEN_PRODUCCION",
             identificador=op.codigo_op,
             accion="OP_LIBERADA",
-            usuario=usuario_actual["email"],
+            usuario=usuario_actual["id_usuario"],
             area=usuario_actual["rol"],
             estado_anterior=str(estado_anterior),
             estado_nuevo=_valor_enum(op.estado),
@@ -653,7 +659,7 @@ def listar_ordenes_produccion(
     """PM-03: Listar las Órdenes de Producción en Planta. El líder de una unidad solo recibe las OP
     de su unidad y CALIDAD_PRODUCTO las que le llegan para inspección (app/services/unidad_op.py)."""
     ordenes_db = unidad_op.filtrar_op_visibles(
-        db.query(OrdenProduccion), rol_en_bd(db, usuario_actual.get("email"))
+        db.query(OrdenProduccion), rol_en_bd(db, usuario_actual.get("id_usuario"))
     ).all()
     resultado = []
 
@@ -784,7 +790,7 @@ def crear_orden_produccion(
             tipo_entidad="ORDEN_PRODUCCION",
             identificador=nueva_op.codigo_op,
             accion="OP_CREADA",
-            usuario=usuario_actual["email"],
+            usuario=usuario_actual["id_usuario"],
             area=usuario_actual["rol"],
             estado_nuevo=_valor_enum(nueva_op.estado),
             motivo=f"id_proyecto={proj.id_proyecto}; pedido={proj.numero_pedido}; detalle_id={linea.detalle_id}; id_producto={linea.id_producto}",
@@ -872,7 +878,7 @@ def actualizar_estado_produccion(
 
     # LIDER_SERVICIOS cierra como respaldo solo las OP de su área (rol leído de la base)
     if nuevo_estado == EstadoOPEnum.CERRADA.value:
-        rol_bd = rol_en_bd(db, usuario_actual.get("email"))
+        rol_bd = rol_en_bd(db, usuario_actual.get("id_usuario"))
         if rol_bd in ROLES_CIERRE_SOLO_SU_UNIDAD and not unidad_op.puede_ver_op(rol_bd, op_db, db):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -893,7 +899,7 @@ def actualizar_estado_produccion(
             motivo_excepcion, planos_gate = autorizar_liberacion(db, usuario_actual, op_db.id_producto, op_up.motivo)
             revisar = planos_por_revisar(planos_gate)
             op_db.reserva_stock_100 = True
-            unidad_op.asignar_unidad_inicial(db, op_db, planos_gate, usuario_actual["email"], usuario_actual.get("rol"))
+            unidad_op.asignar_unidad_inicial(db, op_db, planos_gate, usuario_actual["id_usuario"], usuario_actual.get("rol"))
         elif estado_enum == EstadoOPEnum.LISTA_PARA_LIBERAR:
             # Misma regla de liberación sobre los planos vigentes del producto de la OP
             if not op_db.id_producto:
@@ -915,7 +921,7 @@ def actualizar_estado_produccion(
                 tipo_entidad="ORDEN_PRODUCCION",
                 identificador=op_db.codigo_op,
                 accion="OP_ESTADO_ACTUALIZADO",
-                usuario=usuario_actual["email"],
+                usuario=usuario_actual["id_usuario"],
                 area=usuario_actual["rol"],
                 estado_anterior=str(estado_anterior),
                 estado_nuevo=str(estado_nuevo),
@@ -929,7 +935,7 @@ def actualizar_estado_produccion(
                 tipo_entidad="ORDEN_PRODUCCION",
                 identificador=op_db.codigo_op,
                 accion="OP_AVANCE_ACTUALIZADO",
-                usuario=usuario_actual["email"],
+                usuario=usuario_actual["id_usuario"],
                 area=usuario_actual["rol"],
                 estado_anterior=str(avance_anterior),
                 estado_nuevo=str(float(op_up.porcentaje_avance)),

@@ -22,6 +22,7 @@ from app.core.security import create_access_token
 from app.db.database import Base, get_db
 from app.db.models import EstadoPlanoEnum, Plano, PlanoArchivo, PlanoHistorial, Proyecto
 from app.services.historial_planos import MENSAJE_JUSTIFICACION
+from tests.ayudantes_usuarios import id_prueba
 
 JUSTIFICACION = "  Corrección de cotas pedida por el cliente  "
 
@@ -57,7 +58,7 @@ def ctx(tmp_path, monkeypatch):
 
 
 def token(rol="DISENO"):
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 
@@ -116,7 +117,7 @@ def test_crear_planos_exige_token_y_registra_creacion(ctx):
     assert respuesta.status_code == 201, respuesta.text
     [evento] = eventos(Sesion, uuid.UUID(respuesta.json()[0]["id_plano"]))
     assert (evento.tipo_evento, evento.version, evento.estado, evento.usuario) == (
-        "CREACION", "V-03", "PLANIFICADA", "diseno@prueba.test"
+        "CREACION", "V-03", "PLANIFICADA", str(id_prueba("diseno"))
     )
     assert evento.justificacion is None
 
@@ -273,7 +274,7 @@ def test_aprobacion_con_justificacion_opcional(ctx, cuerpo, esperada):
 
     assert respuesta.status_code == 200, respuesta.text
     [evento] = eventos(Sesion, plano.id_plano)
-    assert (evento.tipo_evento, evento.justificacion, evento.usuario) == ("APROBACION", esperada, "diseno@prueba.test")
+    assert (evento.tipo_evento, evento.justificacion, evento.usuario) == ("APROBACION", esperada, str(id_prueba("diseno")))
 
 
 @pytest.mark.parametrize("cuerpo", [None, {}, {"justificacion": "corta"}, {"justificacion": "          "}])

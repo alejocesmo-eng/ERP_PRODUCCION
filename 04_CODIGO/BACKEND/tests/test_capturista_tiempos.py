@@ -28,6 +28,7 @@ from app.db.database import Base, get_db
 from app.db.models import Permiso, Plano, Rol, RolPermiso, Usuario
 from app.db.models_produccion import OperacionOT, SubLoteOperacion
 from app.services import acceso_bd
+from tests.ayudantes_usuarios import datos_usuario, id_prueba
 
 CAPTURISTA = roles.CAPTURISTA_TIEMPOS
 REGISTRO_TIEMPOS = [
@@ -86,7 +87,7 @@ def ctx():
         s.add_all(RolPermiso(id_rol=rol, id_permiso=acceso_bd.PERMISO_TIEMPOS)
                   for rol in (CAPTURISTA, roles.JEFE_PRODUCCION, roles.LIDER_MECANIZADOS))
         s.add_all(
-            Usuario(email=f"{rol.lower()}@prueba.test", password_hash="!SIN_CLAVE", nombre_completo=rol, id_rol=rol)
+            Usuario(**datos_usuario(f"{rol.lower()}"), password_hash="!SIN_CLAVE", nombre_completo=rol, id_rol=rol)
             for rol in todos
         )
         plano = Plano(codigo_plano="PLN-CAP-1", material_requerido="Acero 1045", archivo_url="/static/planos/PLN-CAP-1.pdf")
@@ -106,7 +107,7 @@ def ctx():
 
 
 def token(rol, rol_en_token=None):
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol_en_token or rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol_en_token or rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 

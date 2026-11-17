@@ -5,6 +5,7 @@ from app.db.database import get_db
 from app.api.deps import obtener_usuario_actual, permisos_de_rol
 from app.core import security
 from app.db import models
+from app.services.usuarios import normalizar_usuario
 
 router = APIRouter()
 
@@ -13,11 +14,12 @@ def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
-    username = (form_data.username or "").strip()
+    # Solo se entra con el usuario (34_MIGRACION_ACCESO_POR_USUARIO.sql); el correo no sirve.
+    # Las mayúsculas se convierten a minúsculas, como al crear la cuenta.
+    username = normalizar_usuario(form_data.username)
     password = form_data.password or ""
 
-    # Buscar usuario en PostgreSQL por email
-    usuario = db.query(models.Usuario).filter(models.Usuario.email == username).first()
+    usuario = db.query(models.Usuario).filter(models.Usuario.usuario == username).first() if username else None
 
     if not usuario:
         raise HTTPException(
@@ -45,13 +47,15 @@ def login_for_access_token(
         )
 
     access_token = security.create_access_token(
-        data={"sub": usuario.email, "rol": usuario.id_rol}
+        data={"sub": str(usuario.id_usuario), "rol": usuario.id_rol}
     )
 
     return {
         "access_token": access_token,
         "token_type": "bearer",
+        # Nombre para mostrar (la interfaz lo usa así desde antes) y usuario con que se entró
         "usuario": usuario.nombre_completo,
+        "nombre_usuario": usuario.usuario,
         "rol": usuario.id_rol,
     }
 

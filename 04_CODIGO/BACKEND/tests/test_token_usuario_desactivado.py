@@ -19,11 +19,12 @@ from app.api.v1.endpoints import empresa
 from app.core.security import get_password_hash
 from app.db.database import Base, get_db
 from app.db.models import Rol, Usuario
+from tests.ayudantes_usuarios import datos_usuario
 
 pytestmark = pytest.mark.usuario_real
 
 CLAVE = "clave-de-prueba-token"
-EMAIL = "ventas@prueba.test"
+USUARIO = "ventas"
 RUTAS = ["/api/v1/configuracion/empresa/", "/api/v1/maestros/socios"]
 
 
@@ -39,7 +40,7 @@ def ctx():
 
     s = Sesion()
     s.add(Rol(id_rol="VENTAS", nombre_rol="Ventas"))
-    s.add(Usuario(email=EMAIL, password_hash=get_password_hash(CLAVE), nombre_completo="Ventas", id_rol="VENTAS", activo=True))
+    s.add(Usuario(**datos_usuario(USUARIO), password_hash=get_password_hash(CLAVE), nombre_completo="Ventas", id_rol="VENTAS", activo=True))
     s.commit()
     s.close()
 
@@ -62,14 +63,14 @@ def ctx():
 
 
 def cabecera(client):
-    respuesta = client.post("/api/v1/auth/token", data={"username": EMAIL, "password": CLAVE})
+    respuesta = client.post("/api/v1/auth/token", data={"username": USUARIO, "password": CLAVE})
     assert respuesta.status_code == 200, respuesta.text
     return {"Authorization": f"Bearer {respuesta.json()['access_token']}"}
 
 
 def fijar_activo(Sesion, valor):
     with Sesion() as s:
-        s.query(Usuario).filter(Usuario.email == EMAIL).update({"activo": valor})
+        s.query(Usuario).filter(Usuario.usuario == USUARIO).update({"activo": valor})
         s.commit()
 
 
@@ -92,7 +93,7 @@ def test_el_token_de_un_usuario_eliminado_no_sirve(ctx, ruta):
     token = cabecera(client)
 
     with Sesion() as s:
-        s.query(Usuario).filter(Usuario.email == EMAIL).delete()
+        s.query(Usuario).filter(Usuario.usuario == USUARIO).delete()
         s.commit()
 
     assert client.get(ruta, headers=token).status_code == 401

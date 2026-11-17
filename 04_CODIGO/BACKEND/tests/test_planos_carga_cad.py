@@ -11,8 +11,9 @@ from app.api.v1 import planos as planos_api
 from app.api.v1.planos import descargar_cad_plano, subir_archivo_cad_por_tipo
 from app.db.database import Base
 from app.db.models import BOMListaMateriales, Plano, PlanoArchivo, PlanoHistorial, Proyecto
+from tests.ayudantes_usuarios import id_prueba
 
-USUARIO = {"email": "dibujante1@prueba.test", "rol": "DISENO"}
+USUARIO = {"id_usuario": str(id_prueba("dibujante1")), "rol": "DISENO"}
 CONTENIDO = b"contenido-cad"
 SHA_CONTENIDO = hashlib.sha256(CONTENIDO).hexdigest()
 

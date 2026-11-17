@@ -122,7 +122,7 @@ def _productos(db: Session, texto: str) -> list[dict]:
 @router.get("/alcance")
 def alcance_busqueda(db: Session = Depends(get_db), usuario: dict = Depends(obtener_usuario_actual)):
     """Qué tipos encuentra el rol y si abre el expediente de OP; sin tipos, la caja no se muestra."""
-    return _alcance(db, rol_en_bd(db, usuario["email"]))
+    return _alcance(db, rol_en_bd(db, usuario["id_usuario"]))
 
 
 @router.get("/")
@@ -131,7 +131,7 @@ def buscar(
     db: Session = Depends(get_db),
     usuario: dict = Depends(obtener_usuario_actual),
 ):
-    rol = rol_en_bd(db, usuario["email"])
+    rol = rol_en_bd(db, usuario["id_usuario"])
     alcance = _alcance(db, rol)
     texto = q.strip()
     if len(texto) < LONGITUD_MINIMA or not alcance["tipos"]:

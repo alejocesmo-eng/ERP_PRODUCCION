@@ -89,11 +89,12 @@ REUTILIZADAS = {"ventas@sgi.local", "almacen@sgi.local", "mantenimiento@sgi.loca
 
 
 class CursorFalso:
-    """Registra las sentencias. INSERT: 0 filas si el correo ya existe. UPDATE de un usuario demo:
-    1 fila si existe. UPDATE de desactivación: tantas filas como cuentas anteriores activas."""
+    """Registra las sentencias. INSERT: 0 filas si el usuario ya existe. UPDATE de un usuario demo:
+    1 fila si existe. UPDATE de desactivación: tantas filas como cuentas anteriores activas.
+    existentes se da con correos y se guarda con el usuario que les corresponde (migración 34)."""
 
     def __init__(self, existentes=(), roles=None, anteriores_activas=()):
-        self.existentes = set(existentes)
+        self.existentes = {preparar_sandbox.usuario_demo(email) for email in existentes}
         self.roles = set(roles_demo() if roles is None else roles)
         self.anteriores_activas = set(anteriores_activas)
         self.sentencias = []
@@ -145,9 +146,12 @@ def test_los_18_usuarios_demo_son_los_de_usuarios_demo_md_uno_por_rol():
 
 
 def test_el_acceso_rapido_del_login_usa_exactamente_los_18_usuarios_demo():
-    botones = re.findall(r"email: '([^']+)'", ACCESOS_DEMO.read_text(encoding="utf-8"))
+    # Se entra con el usuario (migración 34): el acceso rápido no lleva correos
+    texto = ACCESOS_DEMO.read_text(encoding="utf-8")
+    botones = re.findall(r"usuario: '([^']+)'", texto)
 
-    assert sorted(botones) == sorted(email for email, _, _ in preparar_sandbox.USUARIOS_DEMO)
+    assert sorted(botones) == sorted(preparar_sandbox.usuario_demo(email) for email, _, _ in preparar_sandbox.USUARIOS_DEMO)
+    assert "@sgi.local" not in texto
     # El login no repite correos: los toma del módulo, solo en desarrollo
     login = LOGIN.read_text(encoding="utf-8")
     assert "@sgi.local" not in login
@@ -166,10 +170,11 @@ def test_las_filas_guardan_hash_bcrypt_y_nunca_la_clave():
     filas = preparar_sandbox.filas_usuarios_demo(CLAVE_DEMO)
 
     assert len(filas) == len(preparar_sandbox.USUARIOS_DEMO)
-    for _, _, hash_clave, _, _ in filas:
+    for _, usuario, email, hash_clave, _, _ in filas:
+        assert usuario == preparar_sandbox.usuario_demo(email)
         assert hash_clave != CLAVE_DEMO and hash_clave.startswith("$2")
         assert bcrypt.checkpw(CLAVE_DEMO.encode("utf-8"), hash_clave.encode("utf-8"))
-    assert len({hash_clave for _, _, hash_clave, _, _ in filas}) == len(filas)
+    assert len({hash_clave for _, _, _, hash_clave, _, _ in filas}) == len(filas)
 
 
 def test_sin_variable_de_clave_omite_los_usuarios_sin_conectar(monkeypatch, capsys):
@@ -212,12 +217,12 @@ def test_crea_los_que_faltan_reutiliza_los_existentes_y_desactiva_los_anteriores
     assert CLAVE_DEMO not in salida
     assert conexion.cerrada
     # Los reutilizados toman nombre, rol y activo de la tabla, sin tocar la clave
-    nombres = {email: (nombre, rol) for email, nombre, rol in preparar_sandbox.USUARIOS_DEMO}
+    nombres = {preparar_sandbox.usuario_demo(email): (nombre, rol) for email, nombre, rol in preparar_sandbox.USUARIOS_DEMO}
     cambios = actualizaciones(cursor)
-    assert {p[-1] for _, p in cambios} == REUTILIZADAS
-    for sentencia, (nombre, rol, email) in cambios:
-        assert "password_hash" not in sentencia
-        assert (nombre, rol) == nombres[email]
+    assert {p[-1] for _, p in cambios} == {preparar_sandbox.usuario_demo(email) for email in REUTILIZADAS}
+    for sentencia, (nombre, rol, usuario) in cambios:
+        assert "password_hash" not in sentencia and "WHERE usuario = %s" in sentencia
+        assert (nombre, rol) == nombres[usuario]
     # Desactivar, nunca borrar; solo las cuentas anteriores
     assert not any("DELETE" in s for s, _ in cursor.sentencias)
     desactivacion = [p for s, p in cursor.sentencias if "activo = FALSE" in s]
@@ -233,10 +238,10 @@ def test_restablecer_devuelve_tambien_la_clave(monkeypatch, capsys):
     preparar_sandbox._cargar_usuarios_demo(restablecer=True)
 
     cambios = actualizaciones(cursor)
-    assert {p[-1] for _, p in cambios} == {"ventas@sgi.local", "admin@sgi.local"}
-    for _, (hash_clave, _, rol, email) in cambios:
+    assert {p[-1] for _, p in cambios} == {"ventas", "admin"}
+    for _, (hash_clave, _, rol, usuario) in cambios:
         assert bcrypt.checkpw(CLAVE_DEMO.encode("utf-8"), hash_clave.encode("utf-8"))
-        assert rol == {e: r for e, _, r in preparar_sandbox.USUARIOS_DEMO}[email]
+        assert rol == {preparar_sandbox.usuario_demo(e): r for e, _, r in preparar_sandbox.USUARIOS_DEMO}[usuario]
     salida = capsys.readouterr().out
     assert "16 creados y 2 actualizados (clave, nombre, rol y activo)" in salida
     assert CLAVE_DEMO not in salida

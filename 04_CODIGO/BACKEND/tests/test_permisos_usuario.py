@@ -24,6 +24,7 @@ from app.api.v1 import auth, ordenes
 from app.core.security import create_access_token
 from app.db.database import Base, get_db
 from app.db.models import Permiso, Rol, RolPermiso
+from tests.ayudantes_usuarios import id_prueba
 
 PERMISOS = {
     "ADMIN": ["PERM_ADMIN_ALL"],
@@ -68,7 +69,7 @@ def client():
 
 
 def token(rol):
-    return {"Authorization": f"Bearer {create_access_token(data={'sub': f'{rol.lower()}@prueba.test', 'rol': rol})}"}
+    return {"Authorization": f"Bearer {create_access_token(data={'sub': str(id_prueba(f'{rol.lower()}')), 'rol': rol})}"}
 
 
 @pytest.mark.parametrize("rol", sorted(PERMISOS))

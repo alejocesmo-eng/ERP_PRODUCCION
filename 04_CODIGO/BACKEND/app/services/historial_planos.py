@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.models import Plano, PlanoHistorial
+from app.services.usuarios import con_usuarios
 
 LONGITUD_MINIMA_JUSTIFICACION = 10
 MENSAJE_JUSTIFICACION = (
@@ -87,4 +88,6 @@ def historial_por_plano(db: Session, ids_plano: Iterable[UUID]) -> dict[UUID, li
     resultado: dict[UUID, list[dict]] = {}
     for evento in eventos:
         resultado.setdefault(evento.id_plano, []).append(serializar_evento_plano(evento))
+    # usuario guarda el id_usuario desde la migración 34: se muestra el usuario
+    con_usuarios(db, [fila for filas in resultado.values() for fila in filas], "usuario")
     return resultado

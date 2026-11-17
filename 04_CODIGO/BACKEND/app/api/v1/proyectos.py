@@ -756,7 +756,7 @@ def confirmar_proyecto(
         if lineas_stock:
             validar_lineas_stock(db, lineas_stock, bloquear=True)
             picking = crear_picking_para_pedido(
-                db, proyecto, lineas_stock, usuario=usuario.get("email")
+                db, proyecto, lineas_stock, usuario=usuario.get("id_usuario")
             )
         proyecto.confirmado = True
         agregar_evento_trazabilidad(
@@ -764,7 +764,7 @@ def confirmar_proyecto(
             tipo_entidad="PEDIDO",
             identificador=proyecto.numero_pedido,
             accion="PEDIDO_CONFIRMADO",
-            usuario=usuario["email"],
+            usuario=usuario["id_usuario"],
             area="VENTAS",
             estado_anterior="BORRADOR",
             estado_nuevo="CONFIRMADO",

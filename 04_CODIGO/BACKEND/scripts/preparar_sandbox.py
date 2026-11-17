@@ -125,6 +125,13 @@ VERIFICACIONES = (
         "AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'registro_tiempos_produccion' "
         "AND column_name = 'segundos_setup')",
     ),
+    (
+        "Inicio de sesion por usuario, correo opcional e historial de cuentas (migracion 34)",
+        "SELECT 1 FROM information_schema.columns WHERE table_name = 'usuarios' AND column_name = 'usuario' "
+        "AND is_nullable = 'NO' AND to_regclass('public.usuarios_historial') IS NOT NULL "
+        "AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'usuarios' "
+        "AND column_name = 'email' AND is_nullable = 'YES')",
+    ),
 )
 
 
@@ -164,10 +171,17 @@ CUENTAS_ANTERIORES = (
 )
 
 
+def usuario_demo(email: str) -> str:
+    """Usuario con que entra la cuenta demo (migración 34): la parte del correo antes de la @."""
+    return email.split("@")[0]
+
+
 def filas_usuarios_demo(clave: str) -> list[tuple]:
-    """(id_usuario, email, hash bcrypt, nombre, rol) por usuario; bcrypt con 12 rondas como la app."""
+    """(id_usuario, usuario, email, hash bcrypt, nombre, rol) por usuario; bcrypt con 12 rondas
+    como la app."""
     return [
-        (str(uuid.uuid4()), email, bcrypt.hashpw(clave.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8"), nombre, rol)
+        (str(uuid.uuid4()), usuario_demo(email), email,
+         bcrypt.hashpw(clave.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8"), nombre, rol)
         for email, nombre, rol in USUARIOS_DEMO
     ]
 
@@ -282,26 +296,26 @@ def _cargar_usuarios_demo(restablecer: bool = False, base: str = SANDBOX) -> Non
         creados = actualizados = 0
         for fila in filas_usuarios_demo(clave):
             cur.execute(
-                "INSERT INTO usuarios (id_usuario, email, password_hash, nombre_completo, id_rol, activo, creado_en) "
-                "VALUES (%s, %s, %s, %s, %s, TRUE, now()) ON CONFLICT (email) DO NOTHING",
+                "INSERT INTO usuarios (id_usuario, usuario, email, password_hash, nombre_completo, id_rol, activo, creado_en) "
+                "VALUES (%s, %s, %s, %s, %s, %s, TRUE, now()) ON CONFLICT (usuario) DO NOTHING",
                 fila,
             )
             if cur.rowcount:
                 creados += 1
                 continue
             # Ya existia: vuelve al nombre, rol y estado de usuarios-demo.md; la clave solo con
-            # --restablecer-claves. Solo correos de USUARIOS_DEMO y solo en sgi_sandbox o sgi_test_*.
-            _, email, hash_clave, nombre, rol = fila
+            # --restablecer-claves. Solo usuarios de USUARIOS_DEMO y solo en sgi_sandbox o sgi_test_*.
+            _, usuario, _, hash_clave, nombre, rol = fila
             if restablecer:
                 cur.execute(
                     "UPDATE usuarios SET password_hash = %s, nombre_completo = %s, id_rol = %s, activo = TRUE "
-                    "WHERE email = %s",
-                    (hash_clave, nombre, rol, email),
+                    "WHERE usuario = %s",
+                    (hash_clave, nombre, rol, usuario),
                 )
             else:
                 cur.execute(
-                    "UPDATE usuarios SET nombre_completo = %s, id_rol = %s, activo = TRUE WHERE email = %s",
-                    (nombre, rol, email),
+                    "UPDATE usuarios SET nombre_completo = %s, id_rol = %s, activo = TRUE WHERE usuario = %s",
+                    (nombre, rol, usuario),
                 )
             actualizados += cur.rowcount
         cur.execute(

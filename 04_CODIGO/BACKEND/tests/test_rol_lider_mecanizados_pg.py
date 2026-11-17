@@ -75,8 +75,8 @@ def test_los_usuarios_pasan_al_rol_nuevo_y_vuelven_con_la_reversion(sesion):
 
     id_usuario = str(uuid.uuid4())
     sesion.execute(
-        text("INSERT INTO usuarios (id_usuario, email, password_hash, nombre_completo, id_rol, activo) "
-             "VALUES (:id, :email, '!SIN_CLAVE', 'Prueba migración 27', :rol, true)"),
+        text("INSERT INTO usuarios (id_usuario, usuario, email, password_hash, nombre_completo, id_rol, activo) "
+             "VALUES (:id, split_part(:email, '@', 1), :email, '!SIN_CLAVE', 'Prueba migración 27', :rol, true)"),
         {"id": id_usuario, "email": f"mig27-{uuid.uuid4().hex[:8]}@prueba.test", "rol": ANTERIOR},
     )
 

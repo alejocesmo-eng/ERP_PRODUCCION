@@ -380,7 +380,7 @@ def bloque_planos_pdf_bom(s: Sembrador, ctx: dict) -> str:
             {"id_producto": ctx["productos"][producto].id_producto, "unidad_planta": UNIDAD_PLANTA,
              "estado_diseno": estado_diseno,
              "estado": EstadoPlanoEnum.APROBADO if aprobado else EstadoPlanoEnum.BORRADOR,
-             "aprobado_por": diseno.email if aprobado else None,
+             "aprobado_por": str(diseno.id_usuario) if aprobado else None,
              "dibujante_asignado": "Dibujante Demo", "archivo_pdf_url": ruta,
              "material_requerido": ", ".join(sku for sku, _, _ in bom)},
             al_crear={"creado_por": diseno.id_usuario},
@@ -394,7 +394,7 @@ def bloque_planos_pdf_bom(s: Sembrador, ctx: dict) -> str:
         s.asegurar(
             PlanoArchivo, {"id_plano": plano.id_plano, "tipo": "PDF", "vigente": True},
             {"ruta": ruta, "nombre_original": nombre, "tamano_bytes": len(contenido),
-             "sha256": hashlib.sha256(contenido).hexdigest(), "revision": REVISION, "subido_por": diseno.email},
+             "sha256": hashlib.sha256(contenido).hexdigest(), "revision": REVISION, "subido_por": str(diseno.id_usuario)},
         )
         for sku, cantidad, estado in bom:
             articulo = ctx["articulos"][sku]

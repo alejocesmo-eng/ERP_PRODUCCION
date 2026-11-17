@@ -24,6 +24,7 @@ from app.api.v1 import cotizaciones
 from app.core.security import create_access_token
 from app.db.database import get_db
 from app.db.models import Cotizacion, SocioNegocio
+from tests.ayudantes_usuarios import id_prueba
 
 URL_PG = os.environ.get("SGI_TEST_PG_URL")
 
@@ -63,7 +64,7 @@ def ctx():
 
 
 def token(rol="VENTAS"):
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 

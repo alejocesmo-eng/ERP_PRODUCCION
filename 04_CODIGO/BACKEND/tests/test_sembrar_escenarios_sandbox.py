@@ -50,7 +50,7 @@ def crear_usuarios_demo(Sesion, activos=True):
     with Sesion() as s:
         s.add(Rol(id_rol="DEMO", nombre_rol="Demo"))
         for correo in semilla.CORREOS.values():
-            s.add(Usuario(id_usuario=uuid.uuid4(), email=correo, password_hash="!SIN_CLAVE",
+            s.add(Usuario(id_usuario=uuid.uuid4(), usuario=correo.split("@")[0], email=correo, password_hash="!SIN_CLAVE",
                           nombre_completo=correo, id_rol="DEMO", activo=activos))
         s.commit()
 

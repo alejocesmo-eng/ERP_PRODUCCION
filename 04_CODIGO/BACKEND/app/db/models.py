@@ -135,7 +135,9 @@ class Usuario(Base):
     __tablename__ = "usuarios"
 
     id_usuario = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    email = Column(String(100), unique=True, nullable=False)
+    # Con lo que se entra (34_MIGRACION_ACCESO_POR_USUARIO.sql); el correo es solo contacto
+    usuario = Column(String(50), unique=True, nullable=False)
+    email = Column(String(100), unique=True, nullable=True)
     password_hash = Column(String(255), nullable=False)
     nombre_completo = Column(String(150), nullable=False)
     id_rol = Column(String(50), ForeignKey("roles.id_rol"), nullable=True)
@@ -1299,6 +1301,19 @@ class TrasladoUnidadOP(Base):
     usuario_email = Column(String(150), nullable=False)
     rol = Column(String(50), nullable=True)
     observacion = Column(Text, nullable=True)
+    registrado_en = Column(DateTime(timezone=True), nullable=False, default=func.now())
+
+
+class UsuarioHistorial(Base):
+    """Cambio de una cuenta hecho desde Configuración (34_MIGRACION_ACCESO_POR_USUARIO.sql).
+    realizado_por es el id_usuario de quien lo hizo; cambios nunca guarda contraseñas."""
+    __tablename__ = "usuarios_historial"
+
+    id_historial = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    id_usuario = Column(UUID(as_uuid=True), ForeignKey("usuarios.id_usuario", ondelete="RESTRICT"), nullable=False, index=True)
+    accion = Column(String(30), nullable=False)
+    cambios = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    realizado_por = Column(String(100), nullable=False)
     registrado_en = Column(DateTime(timezone=True), nullable=False, default=func.now())
 
 

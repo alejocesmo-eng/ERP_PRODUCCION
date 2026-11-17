@@ -20,6 +20,7 @@ from app.api.v1 import diseno
 from app.core.security import create_access_token
 from app.db.database import Base, get_db
 from app.db.models import Plano, SolicitudCambioTecnico, Usuario
+from tests.ayudantes_usuarios import id_prueba
 
 RUTAS = [
     ("post", "/api/v1/diseno/op/{id}/iniciar-trabajo"),
@@ -58,7 +59,7 @@ def ctx():
 
 
 def token(rol="DISENO"):
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 
@@ -126,7 +127,7 @@ def test_resolver_ecr_con_token(ctx):
     client, Sesion = ctx
     plano = crear_plano(Sesion)
     s = Sesion()
-    usuario = Usuario(id_usuario=uuid.uuid4(), email="jefe@prueba.test", password_hash="!", nombre_completo="Jefe")
+    usuario = Usuario(id_usuario=uuid.uuid4(), usuario="jefe", email="jefe@prueba.test", password_hash="!", nombre_completo="Jefe")
     ecr = SolicitudCambioTecnico(
         id_solicitud=uuid.uuid4(), id_plano=plano.id_plano, version_origen="V-01",
         descripcion_cambio="Corregir cota", solicitado_por=usuario.id_usuario,

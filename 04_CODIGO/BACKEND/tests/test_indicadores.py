@@ -19,6 +19,7 @@ from app.api.v1 import indicadores
 from app.core.security import create_access_token
 from app.db.database import Base, get_db
 from app.db.models import OrdenProduccion, Proyecto
+from tests.ayudantes_usuarios import id_prueba
 
 
 @pytest.fixture
@@ -48,7 +49,7 @@ def ctx():
 
 
 def token():
-    return {"Authorization": f"Bearer {create_access_token(data={'sub': 'gestioncal@prueba.test', 'rol': 'GESTION_CALIDAD'})}"}
+    return {"Authorization": f"Bearer {create_access_token(data={'sub': str(id_prueba('gestioncal')), 'rol': 'GESTION_CALIDAD'})}"}
 
 
 def crear_ops(Sesion, reservas):

@@ -138,6 +138,7 @@ def test_crear_trabajador_y_unidad_de_medida(db):
     db.add(rol)
     db.flush()
     usuario_sistema = Usuario(
+        usuario="operario",
         email="operario@sgi.test",
         password_hash="hash-prueba",
         nombre_completo="Operario de prueba",
@@ -171,7 +172,7 @@ def test_crear_trabajador_y_unidad_de_medida(db):
     assert trabajador["area"] == "PRODUCCION"
     personal = listar_personal(db=db, usuario={"rol": "ADMIN"})
     assert len(personal) == 1
-    assert personal[0]["usuario"] == "operario@sgi.test"
+    assert personal[0]["usuario"] == "operario"
     catalogos = listar_catalogos(db=db, usuario={"rol": "ADMIN"})
     assert catalogos["unidades_medida"][0]["simbolo"] == "kg"
     assert catalogos["categorias"][0]["codigo"] == "MATERIA_PRIMA"

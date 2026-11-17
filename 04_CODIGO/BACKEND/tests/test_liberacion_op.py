@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from app.api.v1 import ordenes, planos
 from app.core.security import create_access_token
 from app.db.database import get_db
+from tests.ayudantes_usuarios import id_prueba
 from app.db.models import (
     BOMListaMateriales,
     EstadoOPEnum,
@@ -71,7 +72,7 @@ def ctx(tmp_path, monkeypatch):
 
 
 def token(rol: str) -> dict:
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 
@@ -242,7 +243,7 @@ def test_op_liberable_con_las_tres_condiciones(ctx):
     assert respuesta.json()["estado_operativo"] == "LIBERADA"
     assert respuesta.json()["revisar"] is False
     assert estado_op(sesion, op.codigo_op) == EstadoOPEnum.LIBERADA
-    assert eventos(sesion, op.codigo_op, "OP_LIBERADA")[0].usuario_responsable == "lider_diseno@prueba.test"
+    assert eventos(sesion, op.codigo_op, "OP_LIBERADA")[0].usuario_responsable == str(id_prueba("lider_diseno"))
     assert eventos(sesion, op.codigo_op, "OP_LIBERADA_EXCEPCION_ADMIN") == []
 
 
@@ -363,7 +364,7 @@ def test_admin_con_motivo_libera_saltando_la_regla_y_audita(ctx, ruta):
     assert reserva_stock(sesion, codigo_op) is True
     [evento] = eventos(sesion, codigo_op, "OP_LIBERADA_EXCEPCION_ADMIN")
     assert evento.motivo_observacion == motivo
-    assert evento.usuario_responsable == "admin@prueba.test"
+    assert evento.usuario_responsable == str(id_prueba("admin"))
     assert evento.fecha_hora >= antes - timedelta(seconds=5)
 
 
@@ -396,11 +397,11 @@ def test_aprobacion_de_diseno_registra_quien_y_cuando(ctx):
     sesion.expire_all()
     plano_db = sesion.get(Plano, plano.id_plano)
     assert plano_db.estado == EstadoPlanoEnum.APROBADO
-    assert plano_db.aprobado_por == "diseno@prueba.test"
+    assert plano_db.aprobado_por == str(id_prueba("diseno"))
     assert plano_db.fecha_aprobacion >= antes - timedelta(seconds=5)
-    assert respuesta.json()["aprobado_por"] == "diseno@prueba.test"
+    assert respuesta.json()["aprobado_por"] == str(id_prueba("diseno"))
     [evento] = eventos(sesion, plano.codigo_plano, "PLANO_APROBADO")
-    assert evento.usuario_responsable == "diseno@prueba.test"
+    assert evento.usuario_responsable == str(id_prueba("diseno"))
     assert evento.estado_nuevo == "APROBADO"
 
 

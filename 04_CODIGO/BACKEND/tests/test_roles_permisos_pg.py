@@ -218,8 +218,8 @@ def test_la_reversion_se_detiene_si_un_usuario_tiene_un_rol_nuevo(sesion):
     if not registrados:
         pytest.skip("La copia ya tenía todos los roles: la migración 25 no creó ninguno.")
     sesion.execute(
-        text("INSERT INTO usuarios (id_usuario, email, password_hash, nombre_completo, id_rol, activo) "
-             "VALUES (:id, :email, '!SIN_CLAVE', 'Prueba reversión 25', :rol, true)"),
+        text("INSERT INTO usuarios (id_usuario, usuario, email, password_hash, nombre_completo, id_rol, activo) "
+             "VALUES (:id, split_part(:email, '@', 1), :email, '!SIN_CLAVE', 'Prueba reversión 25', :rol, true)"),
         {"id": str(uuid.uuid4()), "email": f"rev25-{uuid.uuid4().hex[:8]}@prueba.test", "rol": registrados[0]},
     )
     antes = conteo(sesion)

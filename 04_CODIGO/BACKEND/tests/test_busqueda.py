@@ -25,6 +25,7 @@ from app.db.database import Base, get_db
 from app.db.models import (
     Cotizacion, OrdenProduccion, Permiso, Producto, Proyecto, Rol, RolPermiso, SocioNegocio, Usuario,
 )
+from tests.ayudantes_usuarios import datos_usuario, id_prueba
 
 URL = "/api/v1/busqueda/"
 PERMISOS = {
@@ -62,7 +63,7 @@ def ctx():
             s.add(Permiso(id_permiso=id_permiso, modulo="PRUEBA"))
             s.add_all(RolPermiso(id_rol=rol, id_permiso=id_permiso) for rol in con_permiso)
         s.add_all(
-            Usuario(email=f"{rol.lower()}@prueba.test", password_hash="!SIN_CLAVE", nombre_completo=rol, id_rol=rol)
+            Usuario(**datos_usuario(f"{rol.lower()}"), password_hash="!SIN_CLAVE", nombre_completo=rol, id_rol=rol)
             for rol in ROLES_PRUEBA
         )
         socio = SocioNegocio(codigo_socio="900111222", nit_cedula="900111222", razon_social="Metales Ficticios SAS",
@@ -91,7 +92,7 @@ def ctx():
 
 def token(rol, rol_en_token=None):
     """Token del usuario de prueba del rol; rol_en_token permite que el token diga otro rol."""
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol_en_token or rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol_en_token or rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 

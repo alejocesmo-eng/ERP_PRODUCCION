@@ -20,6 +20,7 @@ from app.api.v1 import planos as planos_api
 from app.core.security import create_access_token
 from app.db.database import Base, get_db
 from app.db.models import BOMListaMateriales, Plano, PlanoArchivo, PlanoHistorial, Proyecto
+from tests.ayudantes_usuarios import id_prueba
 
 
 @pytest.fixture
@@ -53,7 +54,7 @@ def ctx(tmp_path, monkeypatch):
 
 
 def token(rol="DISENO"):
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 
@@ -161,7 +162,7 @@ def test_archivos_de_las_piezas_se_registran_con_hash_y_evento(ctx):
     assert set(por_tipo) == {"PDF", "STEP"}
     assert por_tipo["PDF"].sha256 == hashlib.sha256(b"%PDF plano A").hexdigest()
     assert por_tipo["PDF"].tamano_bytes == len(b"%PDF plano A")
-    assert all(a.vigente and a.subido_por == "diseno@prueba.test" for a in archivos)
+    assert all(a.vigente and a.subido_por == str(id_prueba("diseno")) for a in archivos)
     assert eventos[0].tipo_evento == "CREACION"
     cargas = {e.tipo_archivo: e for e in eventos[1:]}
     assert {e.tipo_evento for e in eventos[1:]} == {"CARGA_ARCHIVO"}

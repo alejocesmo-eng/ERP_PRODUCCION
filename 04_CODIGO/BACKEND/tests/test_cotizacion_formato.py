@@ -25,6 +25,7 @@ from app.api.v1.cotizaciones import siguiente_numero_hd
 from app.core.security import create_access_token
 from app.db.database import Base, get_db
 from app.db.models import CondicionPago, Cotizacion, Rol, Usuario
+from tests.ayudantes_usuarios import datos_usuario, id_prueba
 
 URL = "/api/v1/ventas/cotizaciones"
 CONDICIONES = [("ANTICIPADO", "Anticipado", 10, True), ("30_DIAS", "30 días", 30, True), ("VIEJA", "Condición retirada", 5, False)]
@@ -39,7 +40,7 @@ def ctx():
         for codigo, descripcion, orden, activo in CONDICIONES:
             s.add(CondicionPago(codigo=codigo, descripcion=descripcion, orden=orden, activo=activo))
         s.add(Rol(id_rol="VENTAS", nombre_rol="Ventas"))
-        s.add(Usuario(id_usuario=uuid.uuid4(), email="ventas@prueba.test", password_hash="!", nombre_completo="Vendedora Prueba", id_rol="VENTAS"))
+        s.add(Usuario(**datos_usuario("ventas"), password_hash="!", nombre_completo="Vendedora Prueba", id_rol="VENTAS"))
         s.commit()
 
     def _get_db():
@@ -60,7 +61,7 @@ def ctx():
 
 
 def token(rol="VENTAS"):
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 
@@ -122,7 +123,7 @@ def test_guarda_el_formato_y_la_firma_de_quien_elaboro(ctx):
     assert detalle["moneda"] == "USD" and detalle["validez_oferta_dias"] == 8
     assert detalle["condicion_pago"]["descripcion"] == "30 días"
     assert (detalle["referencia"], detalle["observaciones"]) == ("DADO IMPO", "MAS FLETE")
-    assert detalle["elaborado_por"] == {"email": "ventas@prueba.test", "nombre": "Vendedora Prueba"}
+    assert detalle["elaborado_por"] == {"email": "ventas@prueba.test", "usuario": "ventas", "nombre": "Vendedora Prueba"}
     assert client.get(f"{URL}/", headers=token()).json()[0]["moneda"] == "USD"
 
 

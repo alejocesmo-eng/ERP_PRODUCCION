@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.api.v1 import ordenes, planos
 from app.core.security import create_access_token
 from app.db.database import get_db
+from tests.ayudantes_usuarios import id_prueba
 from app.db.models import (
     BOMListaMateriales,
     EstadoOPEnum,
@@ -71,7 +72,7 @@ def ctx(tmp_path, monkeypatch):
 
 
 def token(rol="LIDER_DISENO"):
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 

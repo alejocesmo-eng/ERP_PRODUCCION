@@ -33,6 +33,7 @@ from app.db.models import (
 )
 from app.db.models_produccion import OperacionOT
 from app.services import acceso_bd
+from tests.ayudantes_usuarios import datos_usuario, id_prueba
 
 MEC, SER, CAP = roles.LIDER_MECANIZADOS, roles.LIDER_SERVICIOS, roles.CAPTURISTA_TIEMPOS
 REGISTRAN = [CAP, MEC, SER, roles.JEFE_PRODUCCION, roles.OPERARIO, roles.ADMIN]
@@ -46,7 +47,8 @@ PERMISOS = {
     roles.GESTION_CALIDAD: [acceso_bd.PERMISO_COSTOS],
 }
 RUTA = "/api/v1/tiempos-manuales"
-OPERARIOS = ["operario.uno@prueba.test", "operario.dos@prueba.test"]
+# Usuarios de los operarios (se entra y se eligen por usuario, no por correo)
+OPERARIOS = ["operario.uno", "operario.dos"]
 
 
 def crear_app():
@@ -79,12 +81,13 @@ def ctx():
         s.add_all(Permiso(id_permiso=p, modulo="PRUEBA") for p in {p for lista in PERMISOS.values() for p in lista})
         s.add_all(RolPermiso(id_rol=rol, id_permiso=p) for rol, lista in PERMISOS.items() for p in lista)
         s.add_all(
-            Usuario(email=f"{rol.lower()}@prueba.test", password_hash="!SIN_CLAVE", nombre_completo=rol, id_rol=rol)
+            Usuario(**datos_usuario(f"{rol.lower()}"), password_hash="!SIN_CLAVE", nombre_completo=rol, id_rol=rol)
             for rol in ROLES_PRUEBA
         )
         s.add_all(
-            Usuario(email=email, password_hash="!SIN_CLAVE", nombre_completo=f"Operario {indice}", id_rol=roles.OPERARIO)
-            for indice, email in enumerate(OPERARIOS, start=1)
+            Usuario(**datos_usuario(usuario), password_hash="!SIN_CLAVE", nombre_completo=f"Operario {indice}",
+                    id_rol=roles.OPERARIO)
+            for indice, usuario in enumerate(OPERARIOS, start=1)
         )
         s.add(CentroTrabajo(codigo_centro="CT-TORNO", tarifa_hora_mecanizado=60, tarifa_hora_setup=30))
         s.flush()
@@ -115,9 +118,9 @@ def ctx():
 
     with TestClient(app) as client:
         # Operario 1 en el torno y operario 2 en la fresa, desde Configuración
-        assert client.put("/api/v1/configuracion/maquinas/TORNO-01/operarios", json={"emails": [OPERARIOS[0]]},
+        assert client.put("/api/v1/configuracion/maquinas/TORNO-01/operarios", json={"usuarios": [OPERARIOS[0]]},
                           headers=token(roles.ADMIN)).status_code == 200
-        assert client.put("/api/v1/configuracion/maquinas/FRESA-01/operarios", json={"emails": [OPERARIOS[1]]},
+        assert client.put("/api/v1/configuracion/maquinas/FRESA-01/operarios", json={"usuarios": [OPERARIOS[1]]},
                           headers=token(roles.ADMIN)).status_code == 200
         yield client, Sesion, ids
     Base.metadata.drop_all(engine)
@@ -125,13 +128,13 @@ def ctx():
 
 
 def token(rol):
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 
 def fila(ids, codigo="OP-MEC", **cambios):
     return {
-        "codigo_op": codigo, "id_operacion": ids[codigo], "codigo_maquina": "TORNO-01", "operario_email": OPERARIOS[0],
+        "codigo_op": codigo, "id_operacion": ids[codigo], "codigo_maquina": "TORNO-01", "operario": OPERARIOS[0],
         "minutos_operacion": 45, "minutos_setup": 15, "fecha": "2026-11-16", **cambios,
     }
 
@@ -165,7 +168,8 @@ def test_registran_el_capturista_el_lider_y_el_jefe(ctx, rol):
         # Solo hay fecha: inicio a las 00:00 y fin = inicio + 45 min de operación (el setup no cuenta)
         inicio, fin = (valor.replace(tzinfo=None) for valor in (registro.fecha_hora_inicio, registro.fecha_hora_fin))
         assert (inicio, fin) == (datetime(2026, 11, 16), datetime(2026, 11, 16, 0, 45))
-        assert registro.operario_id == OPERARIOS[0] and registro.registrado_por == f"{rol.lower()}@prueba.test"
+        # Operario y autor se guardan con el identificador interno
+        assert registro.operario_id == str(id_prueba(OPERARIOS[0])) and registro.registrado_por == str(id_prueba(rol.lower()))
 
 
 def test_el_lider_de_servicios_registra_en_su_area(ctx):
@@ -208,7 +212,7 @@ def test_setup_opcional_y_fecha_de_hoy_por_defecto(ctx):
 
 @pytest.mark.parametrize("cambios, mensaje", [
     ({"codigo_maquina": "NO-EXISTE"}, "catálogo de máquinas"),
-    ({"operario_email": OPERARIOS[1]}, "no está asignado a esa máquina"),
+    ({"operario": OPERARIOS[1]}, "no está asignado a esa máquina"),
 ])
 def test_maquina_del_catalogo_y_operario_asignado_a_ella(ctx, cambios, mensaje):
     client, _, ids = ctx
@@ -259,7 +263,7 @@ def test_la_correccion_pide_motivo_y_guarda_los_valores_anteriores(ctx):
         assert registro.segundos_ejecutados == 50 * 60
         assert registro.fecha_hora_fin.replace(tzinfo=None) == datetime(2026, 11, 16, 0, 50)
         correccion = s.query(CorreccionTiempoManual).one()
-        assert correccion.motivo == "Se digitó mal el tiempo" and correccion.corregido_por == "lider_mecanizados@prueba.test"
+        assert correccion.motivo == "Se digitó mal el tiempo" and correccion.corregido_por == str(id_prueba("lider_mecanizados"))
         assert correccion.valores_anteriores["minutos_operacion"] == 45
         assert correccion.valores_nuevos["minutos_operacion"] == 50
 
@@ -314,11 +318,13 @@ def test_la_parrilla_trae_procesos_maquinas_y_operarios_asignados(ctx):
 
     assert datos["puede_registrar"] is True and datos["op_cerrada"] is False
     assert [p["nombre_proceso"] for p in datos["procesos"]] == ["Torneado"]
-    operarios = {m["codigo_maquina"]: [o["email"] for o in m["operarios"]] for m in datos["maquinas"]}
+    operarios = {m["codigo_maquina"]: [o["usuario"] for o in m["operarios"]] for m in datos["maquinas"]}
     assert operarios == {"FRESA-01": [OPERARIOS[1]], "TORNO-01": [OPERARIOS[0]]}
     (registro,) = datos["registros"]
     assert (registro["proceso"], registro["minutos_operacion"], registro["minutos_setup"]) == ("Torneado", 45, 15)
-    assert registro["operario_nombre"] == "Operario 1"
+    assert (registro["operario"], registro["operario_nombre"]) == (OPERARIOS[0], "Operario 1")
+    # registrado_por se muestra con el usuario, no con el identificador interno
+    assert registro["registrado_por"] == "capturista_tiempos"
 
 
 @pytest.mark.parametrize("rol, ve", [
@@ -359,7 +365,7 @@ def test_el_costo_de_la_op_suma_operacion_y_setup_manual_con_el_centro_de_la_maq
 
 def test_solo_admin_asigna_operarios(ctx):
     client, _, _ = ctx
-    respuesta = client.put("/api/v1/configuracion/maquinas/TORNO-01/operarios", json={"emails": OPERARIOS},
+    respuesta = client.put("/api/v1/configuracion/maquinas/TORNO-01/operarios", json={"usuarios": OPERARIOS},
                            headers=token(roles.JEFE_PRODUCCION))
     assert respuesta.status_code == 403
 
@@ -367,16 +373,16 @@ def test_solo_admin_asigna_operarios(ctx):
 def test_solo_se_asignan_operarios_activos(ctx):
     client, _, _ = ctx
     respuesta = client.put("/api/v1/configuracion/maquinas/TORNO-01/operarios",
-                           json={"emails": ["jefe_produccion@prueba.test"]}, headers=token(roles.ADMIN))
+                           json={"usuarios": ["jefe_produccion"]}, headers=token(roles.ADMIN))
     assert respuesta.status_code == 422
 
 
 def test_la_asignacion_reemplaza_la_lista_de_la_maquina(ctx):
     client, _, _ = ctx
     ruta = "/api/v1/configuracion/maquinas/TORNO-01/operarios"
-    assert client.put(ruta, json={"emails": [OPERARIOS[1]]}, headers=token(roles.ADMIN)).status_code == 200
+    assert client.put(ruta, json={"usuarios": [OPERARIOS[1]]}, headers=token(roles.ADMIN)).status_code == 200
 
     datos = client.get("/api/v1/configuracion/maquinas", headers=token(roles.ADMIN)).json()
     torno = next(m for m in datos["maquinas"] if m["codigo_maquina"] == "TORNO-01")
-    assert [o["email"] for o in torno["operarios"]] == [OPERARIOS[1]]
-    assert {o["email"] for o in datos["operarios_disponibles"]} >= set(OPERARIOS)
+    assert [o["usuario"] for o in torno["operarios"]] == [OPERARIOS[1]]
+    assert {o["usuario"] for o in datos["operarios_disponibles"]} >= set(OPERARIOS)

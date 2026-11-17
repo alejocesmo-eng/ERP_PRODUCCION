@@ -22,6 +22,7 @@ from app.api.v1 import planos as planos_api
 from app.core.security import create_access_token
 from app.db.database import Base, get_db
 from app.db.models import Plano, PlanoArchivo
+from tests.ayudantes_usuarios import id_prueba
 
 PDF = b"%PDF plano del visor"
 STEP = b"ISO-10303-21; modelo de prueba"
@@ -75,7 +76,7 @@ def ctx(tmp_path, monkeypatch):
 
 
 def token(rol="PRODUCCION"):
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 

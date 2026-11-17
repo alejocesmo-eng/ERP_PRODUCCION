@@ -126,12 +126,13 @@ def puede_ver_op(rol: Optional[str], op: OrdenProduccion, db: Optional[Session] 
     return True
 
 
-def _registrar(db: Session, op: OrdenProduccion, destino: str, email: str, rol: Optional[str], observacion: Optional[str]) -> TrasladoUnidadOP:
+def _registrar(db: Session, op: OrdenProduccion, destino: str, id_usuario: str, rol: Optional[str], observacion: Optional[str]) -> TrasladoUnidadOP:
     traslado = TrasladoUnidadOP(
         id_op=op.id_op,
         unidad_origen=op.unidad_actual or SIN_ASIGNAR,
         unidad_destino=destino,
-        usuario_email=email,
+        # Desde la migración 34 se guarda el id_usuario de quien traslada
+        usuario_email=id_usuario,
         rol=rol,
         observacion=observacion,
     )
@@ -140,7 +141,7 @@ def _registrar(db: Session, op: OrdenProduccion, destino: str, email: str, rol: 
     return traslado
 
 
-def trasladar(db: Session, op: OrdenProduccion, destino: Optional[str], email: str, rol: Optional[str],
+def trasladar(db: Session, op: OrdenProduccion, destino: Optional[str], id_usuario: str, rol: Optional[str],
               observacion: Optional[str] = None) -> TrasladoUnidadOP:
     """Traslado obligatorio: sin unidad destino no se confirma. No hace commit."""
     if rol not in roles.ROLES_CAMBIAR_UNIDAD_OP:
@@ -159,14 +160,14 @@ def trasladar(db: Session, op: OrdenProduccion, destino: Optional[str], email: s
     if destino == op.unidad_actual:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail=f"La OP ya está en {ETIQUETAS[destino]}.")
-    return _registrar(db, op, destino, email, rol, (observacion or "").strip() or None)
+    return _registrar(db, op, destino, id_usuario, rol, (observacion or "").strip() or None)
 
 
-def asignar_unidad_inicial(db: Session, op: OrdenProduccion, planos: Iterable[Plano], email: str, rol: Optional[str]) -> None:
+def asignar_unidad_inicial(db: Session, op: OrdenProduccion, planos: Iterable[Plano], id_usuario: str, rol: Optional[str]) -> None:
     """Al liberar, la OP sin unidad llega a la unidad de sus planos vigentes. Si los planos no
     dicen una sola unidad, queda SIN_ASIGNAR. No hace commit."""
     if (op.unidad_actual or SIN_ASIGNAR) != SIN_ASIGNAR:
         return
     destino = unidad_de_planos(planos)
     if destino:
-        _registrar(db, op, destino, email, rol, "Asignación inicial al liberar la OP")
+        _registrar(db, op, destino, id_usuario, rol, "Asignación inicial al liberar la OP")

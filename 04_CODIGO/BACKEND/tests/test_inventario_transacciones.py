@@ -34,6 +34,7 @@ from app.db.models import (
     SolicitudCompra,
     TrazabilidadRequisicionMRP,
 )
+from tests.ayudantes_usuarios import id_prueba
 
 
 @pytest.fixture
@@ -126,7 +127,7 @@ def registrar_entrada(db, solicitud, cantidad=10, codigo_lote="LOT-TEST-101"):
             numero_colada="COL-TEST-101",
         ),
         db,
-        {"email": "qa@example.test"},
+        {"id_usuario": str(id_prueba("qa"))},
     )
 
 
@@ -169,7 +170,7 @@ def test_recepcion_101_cuarentena_y_bloqueo_hasta_liberacion(db):
                 tipo_destino=TipoDestinoEnum.CENTRO_COSTOS,
             ),
             db,
-            {"email": "qa@example.test"},
+            {"id_usuario": str(id_prueba("qa"))},
         )
     assert error.value.status_code == 409
 
@@ -177,7 +178,7 @@ def test_recepcion_101_cuarentena_y_bloqueo_hasta_liberacion(db):
         lote.id,
         CalidadLoteUpdate(estado_calidad="LIBERADO", motivo="Certificado 3.1 validado."),
         db,
-        {"email": "qa@example.test"},
+        {"id_usuario": str(id_prueba("qa"))},
     )
     assert db.query(RegistroCalidadLote).one().estado_nuevo == "LIBERADO"
     assert solicitud.estado_bom == "EN_ALMACEN"
@@ -215,7 +216,7 @@ def test_consumo_261_actualiza_stock_y_costo_real_op(db):
             codigo_op=op.codigo_op,
         ),
         db,
-        {"email": "qa@example.test"},
+        {"id_usuario": str(id_prueba("qa"))},
     )
 
     movimiento = db.query(MovimientoInventario).filter(
@@ -262,7 +263,7 @@ def test_traslado_311_conserva_valor_y_actualiza_ubicacion(db):
             almacen_destino="BOD-MP-02",
         ),
         db,
-        {"email": "qa@example.test"},
+        {"id_usuario": str(id_prueba("qa"))},
     )
 
     documento = db.query(MovimientoKardexSAP).filter(

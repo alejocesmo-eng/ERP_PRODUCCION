@@ -21,6 +21,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.v1 import cotizaciones, proyectos, stock_pt
 from app.core.security import create_access_token
 from app.db.database import Base, get_db
+from tests.ayudantes_usuarios import id_prueba
 from app.db.models import (
     ArticuloInventario,
     LoteMaterial,
@@ -66,7 +67,7 @@ def ctx():
 
 
 def token(rol: str) -> dict:
-    t = create_access_token({"sub": f"{rol.lower()}@prueba.test", "rol": rol}, timedelta(minutes=5))
+    t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 

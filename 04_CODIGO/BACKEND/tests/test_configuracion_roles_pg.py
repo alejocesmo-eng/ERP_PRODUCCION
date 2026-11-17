@@ -45,22 +45,24 @@ def cliente(sesion):
     ejecutar_sql(sesion, MIGRACION_31)
     sufijo = uuid.uuid4().hex[:8]
     emails = {}
+    # El token lleva el id_usuario (migración 34), no el correo
+    ids = {}
     for rol in (roles.ADMIN, *SIN_ACCESO):
         emails[rol] = f"cfg31-{rol.lower()}-{sufijo}@prueba.test"
         sesion.execute(
-            text("INSERT INTO usuarios (id_usuario, email, password_hash, nombre_completo, id_rol, activo) "
-                 "VALUES (:id, :email, '!SIN_CLAVE', 'Prueba configuración 31', :rol, true)"),
-            {"id": str(uuid.uuid4()), "email": emails[rol], "rol": rol},
+            text("INSERT INTO usuarios (id_usuario, usuario, email, password_hash, nombre_completo, id_rol, activo) "
+                 "VALUES (:id, split_part(:email, '@', 1), :email, '!SIN_CLAVE', 'Prueba configuración 31', :rol, true)"),
+            {"id": ids.setdefault(rol, str(uuid.uuid4())), "email": emails[rol], "rol": rol},
         )
     app = FastAPI(dependencies=[Depends(acceso_bd.alcance_por_rol)])
     app.include_router(configuracion_roles.router, prefix=RUTA)
     app.dependency_overrides[get_db] = lambda: sesion
     with TestClient(app) as client:
-        yield client, emails
+        yield client, ids
 
 
-def cabeceras(email, rol):
-    t = create_access_token({"sub": email, "rol": rol}, timedelta(minutes=5))
+def cabeceras(id_usuario, rol):
+    t = create_access_token({"sub": id_usuario, "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 
 
@@ -74,18 +76,18 @@ def test_la_migracion_da_el_acceso_solo_a_admin(sesion):
 
 @pytest.mark.parametrize("rol", SIN_ACCESO)
 def test_operario_lider_mecanizados_y_jefe_produccion_reciben_403(cliente, rol):
-    client, emails = cliente
+    client, ids = cliente
     for metodo, ruta in (("get", f"{RUTA}/"), ("get", f"{RUTA}/permisos"), ("put", f"{RUTA}/{rol}/permisos")):
         extra = {"json": {"permisos": []}} if metodo == "put" else {}
-        respuesta = getattr(client, metodo)(ruta, headers=cabeceras(emails[rol], rol), **extra)
+        respuesta = getattr(client, metodo)(ruta, headers=cabeceras(ids[rol], rol), **extra)
         assert respuesta.status_code == 403, ruta
     # Aunque el token diga ADMIN: el rol sale de la base
-    assert client.get(f"{RUTA}/", headers=cabeceras(emails[rol], roles.ADMIN)).status_code == 403
+    assert client.get(f"{RUTA}/", headers=cabeceras(ids[rol], roles.ADMIN)).status_code == 403
 
 
 def test_admin_entra_y_cada_cambio_queda_registrado(cliente, sesion):
-    client, emails = cliente
-    admin = cabeceras(emails[roles.ADMIN], roles.ADMIN)
+    client, ids = cliente
+    admin = cabeceras(ids[roles.ADMIN], roles.ADMIN)
     assert client.get(f"{RUTA}/", headers=admin).status_code == 200
 
     actuales = sorted(sesion.execute(
@@ -102,7 +104,7 @@ def test_admin_entra_y_cada_cambio_queda_registrado(cliente, sesion):
              "WHERE id_rol = :r AND id_permiso = :p"),
         {"r": roles.OPERARIO, "p": otro},
     ).one()
-    assert (fila.accion, fila.usuario_email) == ("ASIGNADO", emails[roles.ADMIN]) and fila.registrado_en
+    assert (fila.accion, fila.usuario_email) == ("ASIGNADO", ids[roles.ADMIN]) and fila.registrado_en
 
     # ADMIN no se quita el acceso y un rol con usuarios no se elimina
     assert client.put(f"{RUTA}/{roles.ADMIN}/permisos", json={"permisos": []}, headers=admin).status_code == 409
