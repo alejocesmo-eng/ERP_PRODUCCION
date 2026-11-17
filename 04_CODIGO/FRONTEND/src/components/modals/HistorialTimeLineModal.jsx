@@ -3,8 +3,7 @@ import React, { useState, useEffect } from 'react';
 import API from '../../services/api';
 
 export default function HistorialTimelineModal({ isOpen, onClose, tipoEntidad, identificador, tituloDoc }) {
-  if (!isOpen) return null;
-
+  // Los hooks van antes del return condicional: el padre deja el modal montado y solo cambia isOpen
   const [eventos, setEventos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [mostrarFormPausa, setMostrarFormPausa] = useState(false);
@@ -68,8 +67,13 @@ export default function HistorialTimelineModal({ isOpen, onClose, tipoEntidad, i
   };
 
   useEffect(() => {
+    if (!isOpen) return;
+    // Cada apertura empieza con el formulario de pausa cerrado y vacío
+    setMostrarFormPausa(false);
+    setMotivoPausa('');
+    setAccionPausa('suspender');
     cargarHistorial();
-  }, [tipoEntidad, identificador]);
+  }, [isOpen, tipoEntidad, identificador]);
 
   const handleRegistrarSuspension = async (e) => {
     e.preventDefault();
@@ -103,6 +107,8 @@ export default function HistorialTimelineModal({ isOpen, onClose, tipoEntidad, i
       setMostrarFormPausa(false);
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
