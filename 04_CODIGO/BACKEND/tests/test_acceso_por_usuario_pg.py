@@ -47,11 +47,17 @@ def sin_34(sesion):
     ejecutar_sql(sesion, REVERSION_34)
 
 
-def insertar(sesion, email):
+def insertar(sesion, email, activo=True):
+    id_usuario = str(uuid.uuid4())
     sesion.execute(text(
         "INSERT INTO usuarios (id_usuario, email, password_hash, nombre_completo, activo) "
-        "VALUES (:id, :email, '!SIN_CLAVE', 'Prueba migración 34', true)"
-    ), {"id": str(uuid.uuid4()), "email": email})
+        "VALUES (:id, :email, '!SIN_CLAVE', 'Prueba migración 34', :activo)"
+    ), {"id": id_usuario, "email": email, "activo": activo})
+    return id_usuario
+
+
+def usuario_de(sesion, id_usuario):
+    return sesion.execute(text("SELECT usuario, activo FROM usuarios WHERE id_usuario = :id"), {"id": id_usuario}).one()
 
 
 def test_la_migracion_deja_usuario_obligatorio_correo_opcional_y_es_idempotente(sesion):
@@ -79,7 +85,34 @@ def test_el_usuario_sale_del_correo_sin_tildes_ni_mayusculas_y_no_toca_roles(ses
     assert asignaciones(sesion) == antes
 
 
+def test_un_choque_con_una_cuenta_inactiva_no_detiene_la_migracion(sesion):
+    sin_34(sesion)
+    sufijo = uuid.uuid4().hex[:6]
+    activa = insertar(sesion, f"par{sufijo}@sgi.local")
+    inactiva = insertar(sesion, f"par{sufijo}@sgi.com", activo=False)
+    antes = asignaciones(sesion)
+
+    ejecutar_sql(sesion, MIGRACION_34)
+
+    # La activa conserva el usuario base; la inactiva recibe el sufijo con su id corto y sigue inactiva
+    assert usuario_de(sesion, activa) == (f"par{sufijo}", True)
+    assert usuario_de(sesion, inactiva) == (f"par{sufijo}_inactivo_{inactiva.replace('-', '')[:4]}", False)
+    assert asignaciones(sesion) == antes
+
+
+def test_varias_inactivas_con_el_mismo_usuario_reciben_cada_una_su_sufijo(sesion):
+    sin_34(sesion)
+    sufijo = uuid.uuid4().hex[:6]
+    ids = [insertar(sesion, f"viejo{sufijo}@{dominio}.test", activo=False) for dominio in ("a", "b")]
+
+    ejecutar_sql(sesion, MIGRACION_34)
+
+    usuarios = {usuario_de(sesion, id_usuario)[0] for id_usuario in ids}
+    assert usuarios == {f"viejo{sufijo}_inactivo_{id_usuario.replace('-', '')[:4]}" for id_usuario in ids}
+
+
 @pytest.mark.parametrize("correos, mensaje", [
+    # Dos cuentas activas con el mismo usuario: se sigue deteniendo
     (["choque.m34@a.test", "choque.m34@b.test"], "mismo usuario"),
     (["ab@corto.test"], "formato inválido"),
     (["con espacio.m34@x.test"], "formato inválido"),

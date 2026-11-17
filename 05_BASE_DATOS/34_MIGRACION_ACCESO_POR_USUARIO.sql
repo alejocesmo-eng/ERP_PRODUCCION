@@ -4,8 +4,10 @@
 --     guion bajo y guion (sin espacios ni tildes). Es lo único con que se entra.
 --   * usuarios.email deja de ser obligatorio; sigue único cuando tiene valor.
 --   * Cuentas existentes: usuario = parte del correo antes de la @, en minúsculas y sin tildes.
---     Si dos cuentas darían el mismo usuario, o el resultado no cumple el formato, se detiene SIN
---     cambiar nada y lista los casos.
+--     Si varias cuentas darían el mismo usuario y solo una está activa, la activa lo conserva y
+--     cada inactiva recibe ese usuario con "_inactivo_" y los 4 primeros caracteres de su id
+--     (admin_inactivo_1a2b). Si dos o más activas darían el mismo usuario, o el resultado no cumple
+--     el formato, se detiene SIN cambiar nada y lista los casos. No cambia activo, roles ni permisos.
 --   * usuarios_historial: cada alta, edición, cambio de rol, asignación de contraseña,
 --     desactivación y reactivación hecha desde Configuración, con el identificador interno de
 --     quien la hizo. Solo se agregan filas.
@@ -21,13 +23,26 @@ DO $$
 DECLARE
     v_casos text;
 BEGIN
-    -- Candidato de cada cuenta sin usuario, y de las que ya lo tienen (para detectar choques)
+    -- Candidato de cada cuenta sin usuario, y de las que ya lo tienen (para detectar choques).
+    -- DROP previo: la tabla temporal vive hasta el fin de la transacción y la migración puede
+    -- aplicarse dos veces en la misma (idempotencia)
+    DROP TABLE IF EXISTS m34_candidatos;
     CREATE TEMP TABLE m34_candidatos ON COMMIT DROP AS
-    SELECT id_usuario, email,
+    SELECT id_usuario, email, activo IS DISTINCT FROM FALSE AS activa,
            COALESCE(usuario, translate(lower(split_part(btrim(email), '@', 1)),
-                                       'áàäâãéèëêíìïîóòöôõúùüûñç', 'aaaaaeeeeiiiiooooouuuunc')) AS candidato,
+                                       'áàäâãéèëêíìïîóòöôõúùüûñç', 'aaaaaeeeeiiiiooooouuuunc')) AS base,
            usuario IS NULL AS nuevo
       FROM usuarios;
+    ALTER TABLE m34_candidatos ADD COLUMN candidato text;
+
+    -- Choque con una sola activa (o ninguna): las inactivas nuevas toman un usuario propio
+    UPDATE m34_candidatos c SET candidato = CASE
+        WHEN c.nuevo AND NOT c.activa
+             AND (SELECT count(*) FROM m34_candidatos o WHERE o.base = c.base) > 1
+             AND (SELECT count(*) FROM m34_candidatos o WHERE o.base = c.base AND o.activa) <= 1
+        THEN left(c.base, 36) || '_inactivo_' || left(replace(c.id_usuario::text, '-', ''), 4)
+        ELSE c.base
+    END;
 
     SELECT string_agg(format('%s -> "%s" (formato inválido)', COALESCE(email, id_usuario::text), candidato), '; '
                       ORDER BY email)
