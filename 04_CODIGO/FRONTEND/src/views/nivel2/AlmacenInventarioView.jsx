@@ -1,7 +1,14 @@
 // src/views/nivel2/AlmacenInventarioView.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import API from '../../services/api';
+
+// Respaldo fijo si /almacen/retales/buscar falla o no devuelve una lista
+const retalesMockFallback = [
+  { id_retal: '1', codigo_retal: 'RET-2026-0001', material_clasificacion: 'Acero Inoxidable 304', forma_geometria: 'Lámina / Placa', espesor_seccion: '3 mm', largo_mm: 1200, ancho_mm: 400, peso_kg: 11.5, numero_colada_lote: 'COL-88942', codigo_op_origen: 'OP-4001234', ubicación_almacen: 'RACK-A2', estado_evaluacion: 'DISPONIBLE' },
+  { id_retal: '2', codigo_retal: 'RET-2026-0002', material_clasificacion: 'Bronce SAE 65', forma_geometria: 'Barra Maciza Redonda', espesor_seccion: 'Ø 4"', largo_mm: 180, ancho_mm: 100, peso_kg: 12.3, numero_colada_lote: null, codigo_op_origen: 'OP-100234', ubicación_almacen: 'ESTANTE-B', estado_evaluacion: 'EN_EVALUACION' },
+  { id_retal: '3', codigo_retal: 'RET-2026-0003', material_clasificacion: 'AISI 4140 Bonificado', forma_geometria: 'Barra Maciza Redonda', espesor_seccion: 'Ø 2.5"', largo_mm: 350, ancho_mm: 63, peso_kg: 22.0, numero_colada_lote: 'COL-90112', codigo_op_origen: 'OP-30011', ubicación_almacen: 'RACK-C1', estado_evaluacion: 'RESERVADO' }
+];
 
 export default function AlmacenInventarioView() {
   const [pestañaActiva, setPestañaActiva] = useState('entradas'); // 'entradas', 'salidas', 'remanentes'
@@ -83,10 +90,33 @@ export default function AlmacenInventarioView() {
     fotografia_url: ''
   });
 
+  // Los campos de búsqueda se leen desde una referencia: la lista se recarga al cambiar el filtro de
+  // indicadores o al registrar un retal, no con cada tecla que se escribe en el formulario
+  const filtrosBusquedaRetalesRef = useRef(filtrosBusquedaRetales);
+  useEffect(() => {
+    filtrosBusquedaRetalesRef.current = filtrosBusquedaRetales;
+  }, [filtrosBusquedaRetales]);
+  const cargarListaRetales = useCallback(async () => {
+    try {
+      const params = new URLSearchParams();
+      if (filtroKpiRemanentes !== 'TODOS') params.append('estado', filtroKpiRemanentes);
+      const filtrosBusquedaRetales = filtrosBusquedaRetalesRef.current;
+      if (filtrosBusquedaRetales.busqueda_q) params.append('busqueda_q', filtrosBusquedaRetales.busqueda_q);
+      if (filtrosBusquedaRetales.material !== 'TODOS') params.append('material', filtrosBusquedaRetales.material);
+      if (filtrosBusquedaRetales.largo_min_mm) params.append('largo_min_mm', filtrosBusquedaRetales.largo_min_mm);
+      if (filtrosBusquedaRetales.ancho_min_mm) params.append('ancho_min_mm', filtrosBusquedaRetales.ancho_min_mm);
+
+      const res = await API.get(`/almacen/retales/buscar?${params.toString()}`);
+      setRetales(Array.isArray(res.data) ? res.data : retalesMockFallback);
+    } catch (err) {
+      setRetales(retalesMockFallback);
+    }
+  }, [filtroKpiRemanentes]);
+
   useEffect(() => {
     cargarSolicitudesEnCompra();
     cargarListaRetales();
-  }, [filtroKpiRemanentes]);
+  }, [filtroKpiRemanentes, cargarListaRetales]);
 
   useEffect(() => {
     if (pestañaActiva !== 'salidas') return undefined;
@@ -129,21 +159,6 @@ export default function AlmacenInventarioView() {
     }
   };
 
-  const cargarListaRetales = async () => {
-    try {
-      const params = new URLSearchParams();
-      if (filtroKpiRemanentes !== 'TODOS') params.append('estado', filtroKpiRemanentes);
-      if (filtrosBusquedaRetales.busqueda_q) params.append('busqueda_q', filtrosBusquedaRetales.busqueda_q);
-      if (filtrosBusquedaRetales.material !== 'TODOS') params.append('material', filtrosBusquedaRetales.material);
-      if (filtrosBusquedaRetales.largo_min_mm) params.append('largo_min_mm', filtrosBusquedaRetales.largo_min_mm);
-      if (filtrosBusquedaRetales.ancho_min_mm) params.append('ancho_min_mm', filtrosBusquedaRetales.ancho_min_mm);
-
-      const res = await API.get(`/almacen/retales/buscar?${params.toString()}`);
-      setRetales(Array.isArray(res.data) ? res.data : retalesMockFallback);
-    } catch (err) {
-      setRetales(retalesMockFallback);
-    }
-  };
 
   const handleSeleccionarSolicitud = (solicitud) => {
     if (!solicitud) {
@@ -323,11 +338,6 @@ export default function AlmacenInventarioView() {
     }
   };
 
-  const retalesMockFallback = [
-    { id_retal: '1', codigo_retal: 'RET-2026-0001', material_clasificacion: 'Acero Inoxidable 304', forma_geometria: 'Lámina / Placa', espesor_seccion: '3 mm', largo_mm: 1200, ancho_mm: 400, peso_kg: 11.5, numero_colada_lote: 'COL-88942', codigo_op_origen: 'OP-4001234', ubicación_almacen: 'RACK-A2', estado_evaluacion: 'DISPONIBLE' },
-    { id_retal: '2', codigo_retal: 'RET-2026-0002', material_clasificacion: 'Bronce SAE 65', forma_geometria: 'Barra Maciza Redonda', espesor_seccion: 'Ø 4"', largo_mm: 180, ancho_mm: 100, peso_kg: 12.3, numero_colada_lote: null, codigo_op_origen: 'OP-100234', ubicación_almacen: 'ESTANTE-B', estado_evaluacion: 'EN_EVALUACION' },
-    { id_retal: '3', codigo_retal: 'RET-2026-0003', material_clasificacion: 'AISI 4140 Bonificado', forma_geometria: 'Barra Maciza Redonda', espesor_seccion: 'Ø 2.5"', largo_mm: 350, ancho_mm: 63, peso_kg: 22.0, numero_colada_lote: 'COL-90112', codigo_op_origen: 'OP-30011', ubicación_almacen: 'RACK-C1', estado_evaluacion: 'RESERVADO' }
-  ];
 
   return (
     <div className="p-6 bg-slate-50 min-h-screen space-y-6 text-xs font-sans">
