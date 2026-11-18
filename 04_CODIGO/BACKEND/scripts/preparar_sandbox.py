@@ -132,6 +132,11 @@ VERIFICACIONES = (
         "AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'usuarios' "
         "AND column_name = 'email' AND is_nullable = 'YES')",
     ),
+    (
+        "Cantidad aprobada por Calidad en cada inspeccion (migracion 35)",
+        "SELECT 1 FROM information_schema.columns WHERE table_name = 'inspecciones_calidad' "
+        "AND column_name = 'cantidad_aprobada'",
+    ),
 )
 
 

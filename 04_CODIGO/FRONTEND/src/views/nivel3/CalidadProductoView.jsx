@@ -40,6 +40,10 @@ export default function CalidadProductoView() {
 
   // Formularios de Inspección
   const [resultado, setResultado] = useState('APROBADO_DESPACHO');
+  // Piezas que aprueba para despacho: una (INDIVIDUAL) o un lote (LOTE). La OP queda terminada al
+  // completar sus piezas y entonces se avisa al Jefe de Producción
+  const [tipoAprobacion, setTipoAprobacion] = useState('LOTE');
+  const [cantidadAprobada, setCantidadAprobada] = useState(1);
   const [descripcionTratamiento, setDescripcionTratamiento] = useState('');
   const [piezasTratamiento, setPiezasTratamiento] = useState(0);
   const [emailProveedor, setEmailProveedor] = useState('');
@@ -114,6 +118,8 @@ export default function CalidadProductoView() {
   const handleSeleccionarOrden = (op) => {
     setOrdenSeleccionada(op);
     setResultado('APROBADO_DESPACHO');
+    setTipoAprobacion('LOTE');
+    setCantidadAprobada(op.piezas_pendientes ?? op.cantidad_terminada ?? 1);
     setDescripcionTratamiento('');
     setPiezasTratamiento(op.cantidad_terminada || 0);
     setEmailProveedor('');
@@ -172,14 +178,20 @@ export default function CalidadProductoView() {
         valor_medido: Number(item.valor_medido)
       })),
       registros_fotograficos: fotos,
-      observaciones_inspector: observaciones
+      observaciones_inspector: observaciones,
+      cantidad_aprobada: resultado === 'APROBADO_DESPACHO' ? (tipoAprobacion === 'INDIVIDUAL' ? 1 : Number(cantidadAprobada)) : 0,
+      tipo_aprobacion: resultado === 'APROBADO_DESPACHO' ? tipoAprobacion : null
     };
 
     try {
       const { data } = await API.post('/calidad/inspeccionar', payload);
       setMensajeExito(data.informe_tratamiento_pdf_base64
         ? 'Inspección guardada. Informe técnico generado y correo al proveedor simulado.'
-        : 'Inspección de calidad registrada correctamente.');
+        : data.op_terminada
+          ? `Calidad aprobó todas las piezas (${data.piezas_aprobadas_op}): la orden quedó terminada y se avisó al Jefe de Producción.`
+          : resultado === 'APROBADO_DESPACHO'
+            ? `Inspección registrada: ${data.piezas_aprobadas_op} piezas aprobadas en la orden.`
+            : 'Inspección de calidad registrada correctamente.');
       setInformePDF(data.informe_tratamiento_pdf_base64 || '');
       setOrdenSeleccionada(null);
       await cargarOrdenesTerminadas();
@@ -414,11 +426,44 @@ export default function CalidadProductoView() {
                       onChange={(e) => setResultado(e.target.value)}
                       className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700 shadow-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                     >
-                      <option value="APROBADO_DESPACHO">Aprobar para Despacho al Cliente (Notifica a Jefe de Producción)</option>
+                      <option value="APROBADO_DESPACHO">Aprobar piezas para despacho (al completar la orden se avisa al Jefe de Producción)</option>
                       <option value="APROBADO_TRATAMIENTO">Aprobar para Tratamiento Térmico (Envía correo a Proveedor)</option>
                       <option value="RECHAZADO">Rechazar (registrar reporte de no conformidad)</option>
                     </select>
                   </div>
+
+                  {resultado === 'APROBADO_DESPACHO' && (
+                    <div className="mb-4 grid gap-3 rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-emerald-900 sm:grid-cols-2">
+                      <p className="text-xs sm:col-span-2">
+                        Aprobadas: <strong>{ordenSeleccionada.piezas_aprobadas ?? 0}</strong> de {ordenSeleccionada.cantidad_terminada} ·
+                        pendientes: <strong>{ordenSeleccionada.piezas_pendientes ?? ordenSeleccionada.cantidad_terminada}</strong>
+                      </p>
+                      <label className="text-xs font-bold">
+                        Aprobación
+                        <select
+                          value={tipoAprobacion}
+                          onChange={(e) => setTipoAprobacion(e.target.value)}
+                          className="mt-1 w-full rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-normal text-slate-700"
+                        >
+                          <option value="LOTE">Por lote</option>
+                          <option value="INDIVIDUAL">Una pieza</option>
+                        </select>
+                      </label>
+                      <label className="text-xs font-bold">
+                        Piezas aprobadas
+                        <input
+                          type="number"
+                          min="1"
+                          max={ordenSeleccionada.piezas_pendientes ?? ordenSeleccionada.cantidad_terminada}
+                          value={tipoAprobacion === 'INDIVIDUAL' ? 1 : cantidadAprobada}
+                          onChange={(e) => setCantidadAprobada(e.target.value)}
+                          disabled={tipoAprobacion === 'INDIVIDUAL'}
+                          required
+                          className="mt-1 w-full rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-normal text-slate-700 disabled:bg-slate-100"
+                        />
+                      </label>
+                    </div>
+                  )}
 
                   {/* Campos Condicionales de Tratamiento Térmico */}
                   {resultado === 'APROBADO_TRATAMIENTO' && (

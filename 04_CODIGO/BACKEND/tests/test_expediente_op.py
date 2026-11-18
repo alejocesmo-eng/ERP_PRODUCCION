@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.api.v1 import planos as planos_api
-from app.api.v1.calidad import InspeccionCalidadCreate, registrar_inspeccion_calidad
+from app.api.v1.calidad import InspeccionCalidadCreate, listar_ordenes_terminadas, registrar_inspeccion_calidad
 from app.api.v1.ordenes import liberar_orden_produccion, obtener_expediente_op
 from app.api.v1.proyectos import obtener_expediente_pedido
 from app.services.historial_planos import registrar_evento_plano
@@ -291,35 +291,87 @@ def test_expediente_no_expone_otra_op_del_mismo_pedido(db):
     assert expediente["solicitudes_compra"] == []
 
 
-def test_aprobacion_de_despacho_notifica_y_deja_la_orden_lista_para_cierre(db):
-    orden = crear_expediente(db)
-    orden.estado = EstadoOPEnum.TERMINADA
-    db.commit()
-    solicitud = InspeccionCalidadCreate(
-        codigo_op="4001234",
-        codigo_plano="PLN-88-A",
-        inspector_nombre="Inspector de calidad",
-        resultado_inspeccion="APROBADO_DESPACHO",
-        mediciones_dimensionales=[
-            {
-                "caracteristica": "Diámetro",
-                "nominal": 25,
-                "tolerancia_min": 24.98,
-                "tolerancia_max": 25.02,
-                "valor_medido": 25,
-            }
-        ],
-        registros_fotograficos=[
-            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/T2sAAAAASUVORK5CYII="
-        ],
+FOTO_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/T2sAAAAASUVORK5CYII="
+MEDICION = {"caracteristica": "Diámetro", "nominal": 25, "tolerancia_min": 24.98, "tolerancia_max": 25.02, "valor_medido": 25}
+
+
+def inspeccion(resultado="APROBADO_DESPACHO", **extra):
+    return InspeccionCalidadCreate(
+        codigo_op="4001234", codigo_plano="PLN-88-A", inspector_nombre="Inspector de calidad",
+        resultado_inspeccion=resultado, mediciones_dimensionales=[MEDICION], registros_fotograficos=[FOTO_PNG], **extra,
     )
 
-    inspeccion = registrar_inspeccion_calidad(solicitud, db=db)
 
+def test_aprobar_un_lote_parcial_no_termina_ni_notifica(db):
+    # La OP del expediente tiene 3 piezas
+    orden = crear_expediente(db)
+    orden.estado = EstadoOPEnum.EN_INSPECCION
+    db.commit()
+
+    respuesta = registrar_inspeccion_calidad(inspeccion(cantidad_aprobada=2, tipo_aprobacion="LOTE"), db=db)
+
+    assert (respuesta.cantidad_aprobada, respuesta.piezas_aprobadas_op, respuesta.op_terminada) == (2, 2, False)
+    assert respuesta.notificado_jefe_produccion is False and db.query(NotificacionLider).count() == 0
+    assert db.get(OrdenProduccion, orden.id_op).estado == EstadoOPEnum.EN_INSPECCION
+
+
+def test_la_op_queda_terminada_al_aprobar_todas_sus_piezas_y_notifica_al_jefe(db):
+    orden = crear_expediente(db)
+    orden.estado = EstadoOPEnum.EN_INSPECCION
+    db.commit()
+    registrar_inspeccion_calidad(inspeccion(cantidad_aprobada=2, tipo_aprobacion="LOTE"), db=db)
+
+    # La tercera pieza, individualmente, completa las 3
+    respuesta = registrar_inspeccion_calidad(inspeccion(cantidad_aprobada=1, tipo_aprobacion="INDIVIDUAL"), db=db)
+
+    assert (respuesta.piezas_aprobadas_op, respuesta.op_terminada, respuesta.notificado_jefe_produccion) == (3, True, True)
     notificacion = db.query(NotificacionLider).one()
-    assert inspeccion.notificado_jefe_produccion is True
     assert notificacion.tipo_notificacion == TipoNotificacionEnum.CALIDAD_APROBADA_DESPACHO
-    assert db.get(OrdenProduccion, orden.id_op).estado == EstadoOPEnum.LISTA_PARA_LIBERAR
+    # Terminada, no lista para liberar: ese estado es el previo a la liberación de Diseño
+    assert db.get(OrdenProduccion, orden.id_op).estado == EstadoOPEnum.TERMINADA
+
+
+@pytest.mark.parametrize("resultado, extra, mensaje", [
+    ("APROBADO_DESPACHO", {"cantidad_aprobada": 4, "tipo_aprobacion": "LOTE"}, "solo puede aprobar 3"),
+    ("APROBADO_DESPACHO", {"cantidad_aprobada": 2, "tipo_aprobacion": "INDIVIDUAL"}, "una sola pieza"),
+    ("APROBADO_DESPACHO", {"cantidad_aprobada": 0, "tipo_aprobacion": "LOTE"}, "cuántas piezas"),
+    ("APROBADO_DESPACHO", {"cantidad_aprobada": 1}, "INDIVIDUAL"),
+    ("RECHAZADO", {"cantidad_aprobada": 1, "tipo_aprobacion": "INDIVIDUAL"}, "Solo la aprobación para despacho"),
+])
+def test_cantidades_aprobadas_no_validas(db, resultado, extra, mensaje):
+    orden = crear_expediente(db)
+    orden.estado = EstadoOPEnum.EN_INSPECCION
+    db.commit()
+
+    with pytest.raises(HTTPException) as error:
+        registrar_inspeccion_calidad(inspeccion(resultado, **extra), db=db)
+
+    assert error.value.status_code == 422 and mensaje in error.value.detail
+    assert db.get(OrdenProduccion, orden.id_op).estado == EstadoOPEnum.EN_INSPECCION
+
+
+def test_la_cola_de_calidad_muestra_lo_pendiente_y_saca_la_op_completa(db):
+    orden = crear_expediente(db)
+    orden.estado = EstadoOPEnum.EN_INSPECCION
+    db.commit()
+    registrar_inspeccion_calidad(inspeccion(cantidad_aprobada=1, tipo_aprobacion="INDIVIDUAL"), db=db)
+
+    (fila,) = [f for f in listar_ordenes_terminadas(db=db) if f["codigo_op"] == "4001234"]
+    assert (fila["piezas_aprobadas"], fila["piezas_pendientes"]) == (1, 2)
+
+    registrar_inspeccion_calidad(inspeccion(cantidad_aprobada=2, tipo_aprobacion="LOTE"), db=db)
+    assert all(f["codigo_op"] != "4001234" for f in listar_ordenes_terminadas(db=db))
+
+
+def test_no_se_aprueban_mas_piezas_que_las_de_la_op(db):
+    orden = crear_expediente(db)
+    orden.estado = EstadoOPEnum.EN_INSPECCION
+    db.commit()
+    registrar_inspeccion_calidad(inspeccion(cantidad_aprobada=3, tipo_aprobacion="LOTE"), db=db)
+
+    with pytest.raises(HTTPException) as error:
+        registrar_inspeccion_calidad(inspeccion(cantidad_aprobada=1, tipo_aprobacion="INDIVIDUAL"), db=db)
+    assert error.value.status_code == 422 and "3 de 3" in error.value.detail
 
 
 def test_tratamiento_termico_registra_servicio_en_la_misma_transaccion(db):

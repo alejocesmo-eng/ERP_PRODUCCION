@@ -30,6 +30,7 @@ from app.core.roles import (
     ROLES_ACTUALIZAR_OP,
     ROLES_CERRAR_OP,
     ROLES_CIERRE_SOLO_SU_UNIDAD,
+    ROLES_DEVOLVER_A_INSPECCION,
     ROLES_EXPEDIENTE_OP,
     ROLES_NOTIFICAR_OP_TERMINADA,
 )
@@ -46,6 +47,7 @@ from app.services.historial_planos import historial_por_plano
 from app.services.usuarios import con_usuarios
 from app.services import unidad_op
 from app.services.acceso_bd import rol_en_bd
+from app.services.piezas_aprobadas import piezas_aprobadas
 
 router = APIRouter()
 
@@ -650,6 +652,76 @@ def obtener_componentes_pedido(db: Session, numero_pedido: str) -> List[ItemPedi
 
 
 # --- ENDPOINTS ---
+
+# Devolver a inspección: el flujo anterior de Calidad pasaba la OP aprobada a LISTA_PARA_LIBERAR,
+# que es el estado previo a la liberación de Diseño. JEFE_PRODUCCION la devuelve a
+# INSPECCION_CALIDAD para que Calidad registre la cantidad aprobada (migración 35). Solo aplica si
+# la OP tiene esa aprobación para despacho del flujo anterior. Todo se valida aquí, con el rol de la
+# base; no se reabren OP cerradas.
+LONGITUD_MINIMA_MOTIVO_DEVOLUCION = 15
+
+
+class DevolucionInspeccionRequest(BaseModel):
+    motivo: str = ""
+
+
+@router.post("/{codigo_op}/devolver-a-inspeccion")
+def devolver_a_inspeccion(
+    codigo_op: str,
+    datos: DevolucionInspeccionRequest,
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
+    rol = rol_en_bd(db, usuario_actual["id_usuario"])
+    if rol not in ROLES_DEVOLVER_A_INSPECCION:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo el Jefe de Producción devuelve una OP a inspección.")
+    motivo = (datos.motivo or "").strip()
+    if len(motivo) < LONGITUD_MINIMA_MOTIVO_DEVOLUCION:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Indique el motivo de la devolución (mínimo {LONGITUD_MINIMA_MOTIVO_DEVOLUCION} caracteres).",
+        )
+    op = db.query(OrdenProduccion).filter(OrdenProduccion.codigo_op == codigo_op).with_for_update().first()
+    if not op:
+        raise HTTPException(status_code=404, detail="No se encontró la Orden de Producción indicada.")
+    estado_anterior = _valor_enum(op.estado)
+    if op.estado == EstadoOPEnum.CERRADA:
+        raise HTTPException(status_code=409, detail="Una OP cerrada no se reabre ni vuelve a inspección.")
+    if op.estado != EstadoOPEnum.LISTA_PARA_LIBERAR:
+        raise HTTPException(status_code=409, detail=f"Solo se devuelve a inspección una OP lista para liberar; esta está en {estado_anterior}.")
+    if piezas_aprobadas(db, op.codigo_op) > 0:
+        raise HTTPException(status_code=409, detail="La OP ya tiene piezas aprobadas por Calidad: no se devuelve a inspección.")
+    # Debe venir del flujo anterior: una aprobación para despacho de Calidad (sin cantidad, porque la
+    # OP no tiene piezas aprobadas). Sin ella, la OP está lista para liberar por Diseño, no por Calidad
+    aprobada_antes = db.query(InspeccionCalidad.id_inspeccion).filter(
+        InspeccionCalidad.codigo_op == op.codigo_op,
+        InspeccionCalidad.resultado_inspeccion == "APROBADO_DESPACHO",
+    ).first()
+    if not aprobada_antes:
+        raise HTTPException(
+            status_code=409,
+            detail="La OP no fue inspeccionada ni aprobada para despacho por Calidad: no se devuelve a inspección.",
+        )
+
+    op.estado = EstadoOPEnum.INSPECCION_CALIDAD
+    agregar_evento_trazabilidad(
+        db,
+        tipo_entidad="ORDEN_PRODUCCION",
+        identificador=op.codigo_op,
+        accion="OP_DEVUELTA_A_INSPECCION",
+        usuario=usuario_actual["id_usuario"],
+        area=rol,
+        estado_anterior=estado_anterior,
+        estado_nuevo=EstadoOPEnum.INSPECCION_CALIDAD.value,
+        motivo=motivo,
+    )
+    try:
+        db.commit()
+    except Exception as error:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="No se pudo devolver la OP a inspección.") from error
+    return {"codigo_op": op.codigo_op, "estado_anterior": estado_anterior, "estado": EstadoOPEnum.INSPECCION_CALIDAD.value}
+
 
 @router.get("/", response_model=List[OrdenProduccionVistaResponse])
 def listar_ordenes_produccion(

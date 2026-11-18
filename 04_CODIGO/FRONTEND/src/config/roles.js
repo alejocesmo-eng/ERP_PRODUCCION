@@ -41,6 +41,10 @@ export const ROLES_APERTURA_ASIGNACION_DISENO = ['ADMIN', 'LIDER_DISENO'];
 // Movimientos de remanentes y sobrantes (RemanetesSobrantesView)
 export const ROLES_MOVIMIENTOS_REMANENTES = ['ADMIN', 'ALMACEN', 'JEFE_PRODUCCION', 'LIDER_MECANIZADOS', 'PRODUCCION'];
 
+// Devolver a inspección una OP que quedó lista para liberar sin piezas aprobadas (OrdenFabricacionModal).
+// Solo muestra la opción: el backend valida rol, estado, piezas aprobadas y motivo
+export const ROLES_DEVOLVER_A_INSPECCION = ['JEFE_PRODUCCION'];
+
 // Captura de tiempos (CapturaTiemposView): CAPTURISTA_TIEMPOS solo ve esta pantalla en el menú y entra
 // directo a ella. El backend exige PERM_TIEMPOS_REGISTRAR en cada petición.
 export const ROL_CAPTURISTA_TIEMPOS = 'CAPTURISTA_TIEMPOS';

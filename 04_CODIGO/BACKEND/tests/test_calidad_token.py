@@ -144,6 +144,9 @@ def test_inspeccionar_con_token(ctx):
             "codigo_plano": "PLN-CAL-1",
             "inspector_nombre": "Inspector de calidad",
             "resultado_inspeccion": "APROBADO_DESPACHO",
+            # Cantidad aprobada por Calidad (migración 35): una pieza, individualmente
+            "cantidad_aprobada": 1,
+            "tipo_aprobacion": "INDIVIDUAL",
             "mediciones_dimensionales": [
                 {"caracteristica": "Diámetro", "nominal": 25, "tolerancia_min": 24.98, "tolerancia_max": 25.02, "valor_medido": 25},
             ],

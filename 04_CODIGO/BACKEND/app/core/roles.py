@@ -80,6 +80,9 @@ ROLES_PEDIDO_SIN_PRODUCCION = [VENTAS]
 ROLES_ACTUALIZAR_OP = [ADMIN, JEFE_PRODUCCION, PRODUCCION]
 # LIDER_MECANIZADOS además notifica a CALIDAD_PRODUCTO que la OP terminó y pasa a inspección
 ROLES_NOTIFICAR_OP_TERMINADA = [ADMIN, JEFE_PRODUCCION, LIDER_MECANIZADOS, PRODUCCION]
+# Devolver a inspección una OP que el flujo anterior de Calidad dejó en LISTA_PARA_LIBERAR sin
+# piezas aprobadas (app/api/v1/ordenes.py, devolver_a_inspeccion)
+ROLES_DEVOLVER_A_INSPECCION = [JEFE_PRODUCCION]
 # Cerrar la OP: LIDER_MECANIZADOS cierra OP de cualquier unidad como respaldo del Jefe de Producción;
 # LIDER_SERVICIOS también es respaldo, pero solo de las OP de su área (ROLES_CIERRE_SOLO_SU_UNIDAD)
 ROLES_CERRAR_OP = [ADMIN, JEFE_PRODUCCION, LIDER_MECANIZADOS, LIDER_SERVICIOS, PRODUCCION]

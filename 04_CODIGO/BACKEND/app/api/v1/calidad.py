@@ -29,6 +29,7 @@ from app.db.models import (
     ServicioTerceroOP,
 )
 from app.db.models_calidad import InspeccionCalidad
+from app.services.piezas_aprobadas import piezas_aprobadas, piezas_aprobadas_por_op, validar_aprobacion
 from app.db.models_produccion import (
     NotificacionLider,
     TipoNotificacionEnum,
@@ -63,6 +64,9 @@ class InspeccionCalidadCreate(BaseModel):
     mediciones_dimensionales: List[MedicionDimensional] = Field(default_factory=list)
     registros_fotograficos: List[str] = Field(default_factory=list)
     observaciones_inspector: Optional[str] = None
+    # Piezas que aprueba para despacho (solo APROBADO_DESPACHO): una (INDIVIDUAL) o varias (LOTE)
+    cantidad_aprobada: int = Field(0, ge=0)
+    tipo_aprobacion: Optional[str] = None
 
 class InspeccionCalidadResponse(BaseModel):
     id_inspeccion: UUID
@@ -82,6 +86,11 @@ class InspeccionCalidadResponse(BaseModel):
     informe_tratamiento_pdf_base64: Optional[str] = None
     observaciones_inspector: Optional[str] = None
     notificado_jefe_produccion: bool
+    cantidad_aprobada: int = 0
+    tipo_aprobacion: Optional[str] = None
+    # Suma aprobada de la OP con esta inspección y si con ella quedó terminada
+    piezas_aprobadas_op: Optional[int] = None
+    op_terminada: bool = False
     fecha_inspeccion: datetime
 
     class Config:
@@ -361,13 +370,20 @@ def listar_ordenes_terminadas(
     ).all()
 
     if ops_db:
+        aprobadas = piezas_aprobadas_por_op(db, (op.codigo_op for op in ops_db))
         resultado = []
         for op in ops_db:
+            total = op.cantidad_fabricar or 1
+            # Con todas sus piezas aprobadas la OP ya quedó terminada: sale de la cola
+            if aprobadas.get(op.codigo_op, 0) >= total:
+                continue
             resultado.append({
                 "codigo_op": op.codigo_op,
                 "codigo_plano": op.plano.codigo_plano if op.plano else None,
                 "producto": op.proyecto.detalle_producto if op.proyecto else "Pieza Industrial",
-                "cantidad_terminada": op.cantidad_fabricar or 1,
+                "cantidad_terminada": total,
+                "piezas_aprobadas": aprobadas.get(op.codigo_op, 0),
+                "piezas_pendientes": total - aprobadas.get(op.codigo_op, 0),
                 "estado_op": op.estado.value if hasattr(op.estado, 'value') else str(op.estado),
                 "url_plano_pdf": op.plano.archivo_url if op.plano else None
             })
@@ -441,6 +457,19 @@ def registrar_inspeccion_calidad(
             detail="La orden debe estar terminada o en inspección de calidad para registrar el dictamen.",
         )
 
+    # Piezas aprobadas: solo en APROBADO_DESPACHO, una (INDIVIDUAL) o varias (LOTE), sin pasar de la
+    # cantidad de la OP sumando las inspecciones anteriores
+    validar_aprobacion(inspeccion_in.resultado_inspeccion, inspeccion_in.cantidad_aprobada, inspeccion_in.tipo_aprobacion)
+    total_op = orden.cantidad_fabricar or 0
+    aprobadas_antes = piezas_aprobadas(db, orden.codigo_op)
+    aprobadas_despues = aprobadas_antes + inspeccion_in.cantidad_aprobada
+    if aprobadas_despues > total_op:
+        raise HTTPException(
+            status_code=422,
+            detail=f"La OP ya tiene {aprobadas_antes} de {total_op} piezas aprobadas: solo puede aprobar {max(total_op - aprobadas_antes, 0)} más.",
+        )
+    op_terminada = inspeccion_in.cantidad_aprobada > 0 and aprobadas_despues == total_op
+
     if inspeccion_in.resultado_inspeccion == 'APROBADO_TRATAMIENTO':
         if (
             not inspeccion_in.descripcion_tratamiento
@@ -457,8 +486,10 @@ def registrar_inspeccion_calidad(
         informe_html = _generar_informe_tratamiento_html(inspeccion_in)
         informe_pdf_base64 = _generar_informe_tratamiento_pdf(inspeccion_in)
 
-    elif inspeccion_in.resultado_inspeccion == 'APROBADO_DESPACHO':
-        orden.estado = EstadoOPEnum.LISTA_PARA_LIBERAR
+    elif op_terminada:
+        # Todas las piezas aprobadas: la OP queda terminada y se avisa al Jefe de Producción.
+        # LISTA_PARA_LIBERAR no: es el estado previo a la liberación de Diseño.
+        orden.estado = EstadoOPEnum.TERMINADA
         unidad_planta = getattr(orden.plano, "unidad_planta", None)
         if hasattr(unidad_planta, "value"):
             unidad_planta = unidad_planta.value
@@ -470,7 +501,8 @@ def registrar_inspeccion_calidad(
             unidad_planta=unidad_planta,
             tipo_notificacion=TipoNotificacionEnum.CALIDAD_APROBADA_DESPACHO,
             titulo=f"Producto aprobado para despacho · Orden {inspeccion_in.codigo_op}",
-            mensaje=f"La inspección de calidad aprobó la orden {inspeccion_in.codigo_op}; queda pendiente el cierre por Producción.",
+            mensaje=(f"Calidad aprobó las {total_op} piezas de la orden {inspeccion_in.codigo_op}; queda terminada "
+                     "y pendiente el cierre por Producción."),
             codigo_op=inspeccion_in.codigo_op,
             codigo_plano=inspeccion_in.codigo_plano,
             operario_nombre=inspeccion_in.inspector_nombre,
@@ -501,7 +533,9 @@ def registrar_inspeccion_calidad(
         informe_tratamiento_html=informe_html,
         registros_fotograficos=inspeccion_in.registros_fotograficos,
         observaciones_inspector=inspeccion_in.observaciones_inspector,
-        notificado_jefe_produccion=notificado
+        notificado_jefe_produccion=notificado,
+        cantidad_aprobada=inspeccion_in.cantidad_aprobada,
+        tipo_aprobacion=inspeccion_in.tipo_aprobacion if inspeccion_in.cantidad_aprobada else None,
     )
 
     try:
@@ -528,6 +562,8 @@ def registrar_inspeccion_calidad(
     respuesta = InspeccionCalidadResponse.model_validate(nueva_inspeccion)
     return respuesta.model_copy(update={
         "informe_tratamiento_pdf_base64": informe_pdf_base64,
+        "piezas_aprobadas_op": aprobadas_despues,
+        "op_terminada": op_terminada,
     })
 
 

@@ -17,6 +17,10 @@ class InspeccionCalidad(Base):
     inspector_id = Column(UUID(as_uuid=True), nullable=False, default=uuid.uuid4)
     inspector_nombre = Column(String(150), nullable=False)
     resultado_inspeccion = Column(String(30), nullable=False)  # 'APROBADO_DESPACHO', 'APROBADO_TRATAMIENTO', 'RECHAZADO'
+    # Piezas aprobadas para despacho en esta inspección (35_MIGRACION_CANTIDAD_APROBADA_CALIDAD.sql):
+    # INDIVIDUAL (una pieza) o LOTE. 0 y sin tipo en tratamiento, rechazo y en inspecciones anteriores
+    cantidad_aprobada = Column(Integer, nullable=False, default=0)
+    tipo_aprobacion = Column(String(10), nullable=True)
     
     # Tratamiento Térmico (si aplica)
     requiere_tratamiento = Column(Boolean, default=False)

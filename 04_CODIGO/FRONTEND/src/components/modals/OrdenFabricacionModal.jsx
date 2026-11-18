@@ -2,6 +2,9 @@ import React, { useEffect, useState } from 'react';
 import API, { API_ORIGIN, mensajeError } from '../../services/api';
 import CargaTiemposOp from '../CargaTiemposOp';
 import MapaOp from '../MapaOp';
+import DevolverInspeccion from '../DevolverInspeccion';
+import { ROLES_DEVOLVER_A_INSPECCION, rolEn } from '../../config/roles';
+import { obtenerSesion } from '../../services/sesion';
 
 // Orden de fabricación en solo lectura, con la distribución de la pantalla de SAP.
 // Datos de GET /ordenes/expediente/{op}: el backend ya quita los campos que el rol no ve
@@ -21,6 +24,8 @@ const OPCIONES = [
   { id: 'mapa', etiqueta: 'Mapa de relaciones' },
   { id: 'tiempos', etiqueta: 'Carga de tiempos' }
 ];
+// Solo para JEFE_PRODUCCION; el servidor decide si la OP se puede devolver
+const OPCION_DEVOLVER = { id: 'devolver', etiqueta: 'Devolver a inspección' };
 
 const ETIQUETAS_ARCHIVO = { PDF: 'Plano PDF', STEP: 'Modelo STEP', DXF: 'Contorno DXF' };
 
@@ -143,6 +148,14 @@ export default function OrdenFabricacionModal({ abierto, codigoOp, onClose }) {
   const [pestana, setPestana] = useState('componentes');
   const [menuAbierto, setMenuAbierto] = useState(false);
   const [opcion, setOpcion] = useState(null);
+  const opciones = rolEn(obtenerSesion()?.rol, ROLES_DEVOLVER_A_INSPECCION) ? [...OPCIONES, OPCION_DEVOLVER] : OPCIONES;
+
+  // Vuelve a leer la OP (por ejemplo, su estado tras devolverla a inspección)
+  const recargar = () => {
+    API.get(`/ordenes/expediente/${encodeURIComponent(codigoOp)}`)
+      .then((respuesta) => setExpediente(respuesta.data))
+      .catch((fallo) => setError(mensajeError(fallo, 'No fue posible cargar la orden de fabricación.')));
+  };
 
   useEffect(() => {
     if (!abierto || !codigoOp) return undefined;
@@ -181,7 +194,7 @@ export default function OrdenFabricacionModal({ abierto, codigoOp, onClose }) {
 
   const pedido = expediente?.pedido || {};
   const producto = expediente?.producto || {};
-  const opcionActiva = OPCIONES.find((item) => item.id === opcion);
+  const opcionActiva = opciones.find((item) => item.id === opcion);
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm">
@@ -206,7 +219,7 @@ export default function OrdenFabricacionModal({ abierto, codigoOp, onClose }) {
               </button>
               {menuAbierto && (
                 <ul role="menu" className="absolute right-0 z-10 mt-1 w-48 overflow-hidden rounded border border-slate-300 bg-white text-slate-800 shadow-lg">
-                  {OPCIONES.map((item) => (
+                  {opciones.map((item) => (
                     <li key={item.id} role="none">
                       <button
                         type="button"
@@ -249,6 +262,7 @@ export default function OrdenFabricacionModal({ abierto, codigoOp, onClose }) {
               </div>
               {opcion === 'tiempos' && <CargaTiemposOp codigoOp={codigoOp} />}
               {opcion === 'mapa' && <MapaOp codigoOp={codigoOp} />}
+              {opcion === 'devolver' && <DevolverInspeccion codigoOp={codigoOp} onDevuelta={recargar} />}
             </div>
           )}
 
