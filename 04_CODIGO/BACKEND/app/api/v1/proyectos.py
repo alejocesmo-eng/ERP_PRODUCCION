@@ -11,12 +11,14 @@ from app.api.deps import obtener_usuario_actual, requerir_roles
 from app.core.roles import ROLES_EXPEDIENTE_PEDIDO, ROLES_PEDIDO_SIN_PRODUCCION, ROLES_VENTAS
 from app.services.auditoria import agregar_evento_trazabilidad
 from app.db.database import get_db
+from app.services.piezas_aprobadas import piezas_aprobadas_por_op
 from app.services.acceso_bd import PERMISO_VALOR_COTIZADO, puede, rol_en_bd
 from app.services.socios import codigo_socio_o_none
 from app.services.stock_pt import ORIGEN_STOCK_PT, validar_lineas_stock, crear_picking_para_pedido
 from app.db.models import (
     BOMListaMateriales,
     Cliente,
+    EstadoOPEnum,
     MovimientoKardexSAP,
     OrdenPicking,
     OrdenProduccion,
@@ -28,6 +30,10 @@ from app.db.models import (
 )
 
 router = APIRouter()
+
+# Piezas terminadas del expediente del pedido: las aprobadas por Calidad (cantidad_aprobada de sus
+# inspecciones, migración 35). Una OP lista para liberar (aún sin liberar) cuenta como cero.
+ESTADOS_OP_SIN_PIEZAS_TERMINADAS = {EstadoOPEnum.LISTA_PARA_LIBERAR}
 
 # =============================================================================
 # SCHEMAS PYDANTIC (PM-01 VENTAS / PEDIDOS COMERCIALES)
@@ -480,6 +486,26 @@ def obtener_expediente_pedido(
         if fila["id_op"] not in ids_op_vinculadas:
             ordenes_produccion.append(fila)
 
+    # Piezas terminadas de cada OP: las que Calidad aprobó (individualmente o en lote), sin pasar de la
+    # cantidad de la OP; cero si está lista para liberar
+    todas_las_op = {orden.id_op: orden for orden in ordenes + ordenes_por_linea}
+    aprobadas_por_op = piezas_aprobadas_por_op(db, (orden.codigo_op for orden in todas_las_op.values()))
+
+    def terminadas_op(orden) -> int:
+        if orden.estado in ESTADOS_OP_SIN_PIEZAS_TERMINADAS:
+            return 0
+        return min(aprobadas_por_op.get(orden.codigo_op, 0), orden.cantidad_fabricar or 0)
+
+    def piezas_terminadas(detalle, relaciones_detalle, total, desde_stock) -> int:
+        """Piezas terminadas del ítem: las de sus OP (por línea y por sus planos, sin repetir),
+        hasta el total pedido. Un ítem desde stock PT ya está terminado."""
+        if desde_stock:
+            return total
+        ops_item = {orden.id_op: orden for orden in ordenes_por_linea if orden.id_detalle_pedido == detalle.detalle_id}
+        for relacion in relaciones_detalle:
+            ops_item.update({orden.id_op: orden for orden in ordenes_por_plano.get(relacion.ot_id, [])})
+        return min(sum(terminadas_op(orden) for orden in ops_item.values()), total)
+
     detalles_expediente = []
     for indice, detalle in enumerate(detalles, start=1):
         relaciones_detalle = relaciones_por_detalle.get(detalle.detalle_id, [])
@@ -525,6 +551,8 @@ def obtener_expediente_pedido(
             "prioridad": detalle.prioridad,
             "fecha_compromiso": detalle.fecha_requerida.isoformat() if detalle.fecha_requerida else None,
             "observaciones": detalle.observaciones,
+            # Avance del ítem sin datos de OP (lo único de producción que recibe VENTAS)
+            "piezas_terminadas": piezas_terminadas(detalle, relaciones_detalle, cantidad_solicitada, desde_stock),
             "ot_detalles": ordenes_detalle,
             "ordenes_produccion": ordenes_de_linea.get(detalle.detalle_id, []),
         })

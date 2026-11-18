@@ -1882,6 +1882,7 @@ export default function ProyectosView() {
                             <th className="px-2 py-1.5 text-right">Cantidad &amp; Unidad</th>
                             <th className="px-2 py-1.5">Fecha de Entrega</th>
                             <th className="px-2 py-1.5">Estado de Cobertura (OP)</th>
+                            <th className="px-2 py-1.5 text-right">Piezas terminadas</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -1935,12 +1936,15 @@ export default function ProyectosView() {
                                   </span>
                                   <span className="ml-1 text-[9px] text-slate-500">{asignado}/{solicitado}</span>
                                 </td>
+                                <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono font-bold text-slate-800">
+                                  {detalle.piezas_terminadas ?? '—'} de {solicitado}
+                                </td>
                               </tr>
                             );
                           })}
                           {(proyectoSeleccionado.detalles || []).length === 0 && (
                             <tr>
-                              <td colSpan="6" className="px-3 py-6 text-center text-slate-400">No hay posiciones asociadas al pedido.</td>
+                              <td colSpan="7" className="px-3 py-6 text-center text-slate-400">No hay posiciones asociadas al pedido.</td>
                             </tr>
                           )}
                         </tbody>

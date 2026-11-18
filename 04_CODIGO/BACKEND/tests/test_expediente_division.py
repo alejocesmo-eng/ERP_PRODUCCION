@@ -3,7 +3,9 @@
 División del expediente (2026-11-17; reglas/permisos-por-rol-modulo.md, "Búsqueda y expediente"):
 - Expediente del pedido: VENTAS, JEFE_PRODUCCION, COSTOS, GESTION_CALIDAD, LIDER_MECANIZADOS y
   LIDER_SERVICIOS. El valor cotizado solo con PERM_VALOR_COTIZADO_VER (los líderes no lo tienen).
-  VENTAS no ve números de OP ni datos de producción. Los demás roles reciben 403.
+  VENTAS no ve números de OP ni datos de producción: por cada ítem, solo sus piezas terminadas (las
+  aprobadas por Calidad, individualmente o en lote, según cantidad_aprobada de la migración 35; cero
+  si la OP está lista para liberar) y su total, con tope en el total. Los demás roles reciben 403.
 - Expediente de OP: los de antes más DIBUJANTE, LIDER_DISENO y CALIDAD_PRODUCTO, estos sin costos
   (PERM_EXPEDIENTE_COSTOS_VER) y sin valor cotizado. Costos: JEFE_PRODUCCION, COSTOS y GESTION_CALIDAD.
 - El rol se lee de la base en cada petición, no del token.
@@ -13,7 +15,7 @@ y el mismo middleware que app.main (no se importa app.main).
 """
 import json
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import Depends, FastAPI
@@ -31,6 +33,7 @@ from app.db.models import (
     Usuario,
 )
 from app.services import acceso_bd
+from app.db.models_calidad import InspeccionCalidad
 from tests.ayudantes_usuarios import datos_usuario, id_prueba
 
 MEC, SER = roles.LIDER_MECANIZADOS, roles.LIDER_SERVICIOS
@@ -91,6 +94,36 @@ def ctx():
         s.add(OrdenProduccion(id_proyecto=pedido.id_proyecto, codigo_op="OP-DIV-1", cantidad_fabricar=2,
                               unidad_actual="MECANIZADOS", estado=EstadoOPEnum.TERMINADA, id_plano=plano.id_plano,
                               id_producto=producto.id_producto, id_detalle_pedido=linea.detalle_id))
+        linea_2 = PedidoDetalle(pedido_id=pedido.id_proyecto, codigo_producto="RN-DIV-2", descripcion="Eje",
+                                cantidad_solicitada=5, unidad="UN")
+        s.add(linea_2)
+        s.flush()
+        # Piezas terminadas = las aprobadas por Calidad (cantidad_aprobada de cada inspección, migración
+        # 35), individualmente o en lote; cero si la OP está lista para liberar. OP-DIV-1 (TERMINADA,
+        # sin inspección) cuenta cero.
+        # (código, ítem, cantidad, estado, inspecciones (resultado, cantidad aprobada, tipo) en orden)
+        aprobado = "APROBADO_DESPACHO"
+        casos = (
+            ("OP-DIV-3", linea, 3, EstadoOPEnum.CERRADA, [(aprobado, 3, "LOTE")]),             # 3, tope 2 en el ítem 1
+            ("OP-DIV-2", linea_2, 5, EstadoOPEnum.LISTA_PARA_LIBERAR, [(aprobado, 5, "LOTE")]),  # 0: sin liberar
+            ("OP-DIV-4", linea_2, 2, EstadoOPEnum.EN_INSPECCION, [(aprobado, 1, "LOTE"), ("RECHAZADO", 0, None)]),  # 1
+            ("OP-DIV-5", linea_2, 2, EstadoOPEnum.EN_INSPECCION, [("APROBADO_TRATAMIENTO", 0, None)]),  # 0
+            ("OP-DIV-6", linea_2, 4, EstadoOPEnum.EN_INSPECCION,
+             [(aprobado, 1, "INDIVIDUAL"), (aprobado, 1, "INDIVIDUAL"), (aprobado, 1, "LOTE")]),  # 3: individuales + lote
+        )
+        inicio = datetime(2026, 11, 1, tzinfo=timezone.utc)
+        for codigo, item, cantidad, estado, dictamenes in casos:
+            # Una sola OP por línea (id_detalle_pedido es único): las demás llegan al ítem por su plano
+            plano_op = Plano(codigo_plano=f"PLN-{codigo}", id_proyecto=pedido.id_proyecto, unidad_planta="Mecanizados")
+            s.add(plano_op)
+            s.flush()
+            s.add(OTDetalle(ot_id=plano_op.id_plano, detalle_pedido_id=item.detalle_id, cantidad_asignada=cantidad))
+            s.add(OrdenProduccion(id_proyecto=pedido.id_proyecto, codigo_op=codigo, cantidad_fabricar=cantidad,
+                                  unidad_actual="MECANIZADOS", estado=estado, id_plano=plano_op.id_plano))
+            s.add_all(InspeccionCalidad(codigo_op=codigo, codigo_plano="PLN-DIV-1", inspector_nombre="Inspector ficticio",
+                                        resultado_inspeccion=resultado, cantidad_aprobada=aprobadas, tipo_aprobacion=tipo,
+                                        fecha_inspeccion=inicio + timedelta(days=dia))
+                      for dia, (resultado, aprobadas, tipo) in enumerate(dictamenes))
         s.commit()
         id_pedido = pedido.id_proyecto
     with TestClient(app) as client:
@@ -154,6 +187,39 @@ def test_ventas_no_ve_numeros_de_op_ni_produccion(ctx):
         assert not {"ot_detalles", "ordenes_produccion", "estado_produccion", "porcentaje_avance"} & set(linea)
     # Control: el Jefe sí ve las OP del pedido
     assert "OP-DIV-1" in json.dumps(jefe) and jefe["ordenes_produccion"]
+
+
+def test_ventas_ve_por_item_las_piezas_terminadas_y_el_total(ctx):
+    client, id_pedido = ctx
+    ventas = expediente_pedido(client, id_pedido, roles.VENTAS).json()
+
+    # Agrupado por ítem, solo piezas aprobadas por Calidad (suma de cantidades aprobadas):
+    # ítem 1: OP-DIV-1 sin inspección (0) + OP-DIV-3 lote de 3 -> tope en el total, 2 de 2
+    # ítem 2: sin liberar (0) + lote de 1 con un rechazo después (1) + tratamiento (0)
+    #         + dos individuales y un lote de 1 (3) -> 4 de 5
+    por_item = {l["codigo_producto"]: (l["piezas_terminadas"], l["cantidad_solicitada"]) for l in ventas["pedido_detalles"]}
+    assert por_item == {"RN-DIV-1": (2, 2), "RN-DIV-2": (4, 5)}
+
+
+def test_las_piezas_terminadas_no_pasan_del_total_del_item(ctx):
+    client, id_pedido = ctx
+    # El Jefe recibe el mismo conteo por ítem, además de las OP
+    jefe = expediente_pedido(client, id_pedido, roles.JEFE_PRODUCCION).json()
+    assert all(l["piezas_terminadas"] <= l["cantidad_solicitada"] for l in jefe["pedido_detalles"])
+    assert {l["codigo_producto"]: l["piezas_terminadas"] for l in jefe["pedido_detalles"]} == {"RN-DIV-1": 2, "RN-DIV-2": 4}
+
+
+def test_una_op_terminada_sin_aprobacion_de_calidad_no_cuenta(ctx):
+    client, id_pedido = ctx
+    # Sin la OP aprobada del ítem 1, solo queda OP-DIV-1 (TERMINADA, sin inspección): cero
+    sesiones = client.app.dependency_overrides[get_db]()
+    s = next(sesiones)
+    s.query(InspeccionCalidad).filter_by(codigo_op="OP-DIV-3").delete()
+    s.commit()
+    sesiones.close()
+    ventas = expediente_pedido(client, id_pedido, roles.VENTAS).json()
+    item_1 = next(l for l in ventas["pedido_detalles"] if l["codigo_producto"] == "RN-DIV-1")
+    assert item_1["piezas_terminadas"] == 0
 
 
 # --- Expediente de OP ---------------------------------------------------------------------------
