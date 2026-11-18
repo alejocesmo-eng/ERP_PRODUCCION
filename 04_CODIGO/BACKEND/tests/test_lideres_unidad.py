@@ -132,7 +132,9 @@ def codigos_visibles(client, rol):
 
 
 def cerrar(client, ids, codigo, rol):
-    return client.patch(f"/api/v1/ordenes/{ids[codigo]}", json={"estado": "CERRADA"}, headers=token(rol))
+    # Resumen del cierre: valida rol y área igual que el cierre (las demás condiciones, en
+    # tests/test_cierre_op.py)
+    return client.get(f"/api/v1/ordenes/{codigo}/cierre", headers=token(rol))
 
 
 # --- Visibilidad ------------------------------------------------------------------------------
@@ -223,8 +225,7 @@ def test_el_cierre_por_area_usa_el_rol_de_la_base(ctx):
     client, _, ids = ctx
     # El token dice JEFE_PRODUCCION, pero en la base es LIDER_SERVICIOS
     t = create_access_token({"sub": str(id_prueba("lider_servicios")), "rol": roles.JEFE_PRODUCCION}, timedelta(minutes=5))
-    respuesta = client.patch(f"/api/v1/ordenes/{ids['OP-MEC']}", json={"estado": "CERRADA"},
-                             headers={"Authorization": f"Bearer {t}"})
+    respuesta = client.get("/api/v1/ordenes/OP-MEC/cierre", headers={"Authorization": f"Bearer {t}"})
     assert respuesta.status_code == 403
 
 

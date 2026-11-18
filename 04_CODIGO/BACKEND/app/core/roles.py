@@ -83,10 +83,16 @@ ROLES_NOTIFICAR_OP_TERMINADA = [ADMIN, JEFE_PRODUCCION, LIDER_MECANIZADOS, PRODU
 # Devolver a inspección una OP que el flujo anterior de Calidad dejó en LISTA_PARA_LIBERAR sin
 # piezas aprobadas (app/api/v1/ordenes.py, devolver_a_inspeccion)
 ROLES_DEVOLVER_A_INSPECCION = [JEFE_PRODUCCION]
-# Cerrar la OP: LIDER_MECANIZADOS cierra OP de cualquier unidad como respaldo del Jefe de Producción;
-# LIDER_SERVICIOS también es respaldo, pero solo de las OP de su área (ROLES_CIERRE_SOLO_SU_UNIDAD)
-ROLES_CERRAR_OP = [ADMIN, JEFE_PRODUCCION, LIDER_MECANIZADOS, LIDER_SERVICIOS, PRODUCCION]
+# Cerrar la OP (reglas/cierre-op-seguro.md): JEFE_PRODUCCION cualquier OP; LIDER_MECANIZADOS
+# cualquier OP como respaldo; LIDER_SERVICIOS solo las de su área (ROLES_CIERRE_SOLO_SU_UNIDAD).
+# Los de respaldo dan motivo y el Jefe recibe aviso (app/services/cierre_op.py). El rol se lee de la base.
+ROLES_CERRAR_OP = [JEFE_PRODUCCION, LIDER_MECANIZADOS, LIDER_SERVICIOS]
 ROLES_CIERRE_SOLO_SU_UNIDAD = [LIDER_SERVICIOS]
+ROLES_CIERRE_SIN_MOTIVO = [JEFE_PRODUCCION]
+# Reabrir una OP cerrada, con motivo, mientras su pedido no esté CERRADO
+ROLES_REABRIR_OP = [JEFE_PRODUCCION]
+# Cerrar el pedido a mano cuando todas sus OP están cerradas (Regla 6, reglas/pedido-cotizacion-cambios.md)
+ROLES_CERRAR_PEDIDO = [JEFE_PRODUCCION]
 # Unidad actual de la OP (app/services/unidad_op.py): el líder de cada unidad solo ve las OP de su
 # unidad. El líder de Metalistería se agrega aquí cuando exista su rol.
 UNIDAD_POR_LIDER = {LIDER_MECANIZADOS: "MECANIZADOS", LIDER_SERVICIOS: "SERVICIOS"}

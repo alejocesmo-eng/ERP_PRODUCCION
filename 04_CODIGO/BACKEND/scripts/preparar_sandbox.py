@@ -137,6 +137,11 @@ VERIFICACIONES = (
         "SELECT 1 FROM information_schema.columns WHERE table_name = 'inspecciones_calidad' "
         "AND column_name = 'cantidad_aprobada'",
     ),
+    (
+        "Estado CERRADO del pedido (migracion 36)",
+        "SELECT 1 FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid "
+        "WHERE t.typname = 'estado_proyecto' AND e.enumlabel = 'CERRADO'",
+    ),
 )
 
 

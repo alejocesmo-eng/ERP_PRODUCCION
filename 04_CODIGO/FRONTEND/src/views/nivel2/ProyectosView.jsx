@@ -5,6 +5,7 @@ import { useProyectos } from '../../context/ProyectosContext';
 import ModalNuevaCotizacion from '../../components/modals/ModalNuevaCotizacion';
 import HistorialTimelineModal from '../../components/modals/HistorialTimelineModal';
 import ModalCatalogoStockPT from '../../components/modals/ModalCatalogoStockPT';
+import CerrarPedido from '../../components/CerrarPedido';
 import { ROLES_EXPEDIENTE_OP, rolEn } from '../../config/roles';
 import DocumentoCotizacion, { documentoDesdeCotizacionGuardada } from '../../components/cotizacion/DocumentoCotizacion';
 import { obtenerSesion } from '../../services/sesion';
@@ -1951,6 +1952,21 @@ export default function ProyectosView() {
                       </table>
                     </div>
                   </section>
+
+                  {proyectoSeleccionado.estado === 'CERRADO' && (
+                    <p role="status" className="rounded border border-slate-300 bg-slate-100 p-2 font-bold text-slate-700">
+                      Pedido CERRADO: histórico, sin edición.
+                    </p>
+                  )}
+                  {/* pendientes_cierre solo llega al Jefe de Producción; el cierre del pedido es manual */}
+                  {proyectoSeleccionado.estado !== 'CERRADO' && Array.isArray(proyectoSeleccionado.pendientes_cierre) && (
+                    <CerrarPedido
+                      idProyecto={proyectoSeleccionado.id_proyecto}
+                      numeroPedido={proyectoSeleccionado.numero_pedido}
+                      pendientes={proyectoSeleccionado.pendientes_cierre}
+                      onCerrado={() => setProyectoSeleccionado((prev) => ({ ...prev, estado: 'CERRADO' }))}
+                    />
+                  )}
 
                   {/* VENTAS no recibe las OP del pedido: la sección solo aparece si el backend las manda */}
                   {'ordenes_produccion' in proyectoSeleccionado && (

@@ -41,6 +41,9 @@ class EstadoProyectoEnum(str, enum.Enum):
     EN_DISENO = "EN_DISENO"
     FINALIZADO = "FINALIZADO"
     CANCELADO = "CANCELADO"
+    # Migración 36: el Jefe de Producción cierra el pedido a mano tras cerrar su última OP; queda
+    # como histórico, sin edición (Regla 6, reglas/pedido-cotizacion-cambios.md)
+    CERRADO = "CERRADO"
 
 
 class EstadoCotizacionEnum(str, enum.Enum):
@@ -407,6 +410,14 @@ class Proyecto(Base):
         default=list,
     )
     confirmado = Column(Boolean, default=False)
+    # Tipo estado_proyecto (36_MIGRACION_PEDIDO_CERRADO.sql). Hoy solo CERRADO cambia el
+    # comportamiento: la confirmación se sigue leyendo de confirmado
+    estado = Column(
+        Enum(EstadoProyectoEnum, name="estado_proyecto"),
+        nullable=False,
+        default=EstadoProyectoEnum.BORRADOR,
+        server_default=EstadoProyectoEnum.BORRADOR.value,
+    )
     creado_en = Column(DateTime(timezone=True), default=func.now())
 
     # Homologación de identificadores con DDL Canónico

@@ -104,12 +104,12 @@ MATRIZ = {
 }
 
 # Cambios de estado de la OP distintos de la liberación: se revisan en el cuerpo del PATCH.
-# Terminar la OP y pasarla a inspección, y cerrarla como respaldo del Jefe de Producción, lo puede
-# hacer también LIDER_MECANIZADOS.
+# Terminar la OP y pasarla a inspección lo puede hacer también LIDER_MECANIZADOS. El cierre va por
+# POST /ordenes/{codigo_op}/cerrar (reglas/cierre-op-seguro.md).
 ROLES_ACTUALIZAR_OP = ["ADMIN", "JEFE_PRODUCCION", "PRODUCCION"]
 ROLES_NOTIFICAR_OP_TERMINADA = ["ADMIN", "JEFE_PRODUCCION", "LIDER_MECANIZADOS", "PRODUCCION"]
-# LIDER_SERVICIOS cierra solo OP de su área (lo restringe la ruta, ROLES_CIERRE_SOLO_SU_UNIDAD)
-ROLES_CERRAR_OP = ["ADMIN", "JEFE_PRODUCCION", "LIDER_MECANIZADOS", "LIDER_SERVICIOS", "PRODUCCION"]
+# Jefe cualquier OP; LIDER_MECANIZADOS de respaldo, cualquiera; LIDER_SERVICIOS, solo las de su área
+ROLES_CERRAR_OP = ["JEFE_PRODUCCION", "LIDER_MECANIZADOS", "LIDER_SERVICIOS"]
 
 
 def _roles_de(dependant):

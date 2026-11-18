@@ -477,7 +477,6 @@ export default function ProduccionView() {
                     <option value="LIBERADA_PRODUCCION">LIBERADA PRODUCCIÓN</option>
                     <option value="EN_PRODUCCION">EN PRODUCCIÓN / MECANIZADO</option>
                     <option value="EN_INSPECCION">EN INSPECCIÓN DE CALIDAD</option>
-                    <option value="CERRADA">CERRADA / PRODUCTO TERMINADO</option>
                   </select>
                 </div>
 

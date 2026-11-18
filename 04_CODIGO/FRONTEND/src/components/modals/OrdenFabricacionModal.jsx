@@ -3,7 +3,9 @@ import API, { API_ORIGIN, mensajeError } from '../../services/api';
 import CargaTiemposOp from '../CargaTiemposOp';
 import MapaOp from '../MapaOp';
 import DevolverInspeccion from '../DevolverInspeccion';
-import { ROLES_DEVOLVER_A_INSPECCION, rolEn } from '../../config/roles';
+import CerrarOp from '../CerrarOp';
+import ReabrirOp from '../ReabrirOp';
+import { ROLES_CERRAR_OP, ROLES_DEVOLVER_A_INSPECCION, ROLES_REABRIR_OP, rolEn } from '../../config/roles';
 import { obtenerSesion } from '../../services/sesion';
 
 // Orden de fabricación en solo lectura, con la distribución de la pantalla de SAP.
@@ -26,6 +28,9 @@ const OPCIONES = [
 ];
 // Solo para JEFE_PRODUCCION; el servidor decide si la OP se puede devolver
 const OPCION_DEVOLVER = { id: 'devolver', etiqueta: 'Devolver a inspección' };
+// Cierre seguro: el Jefe y los líderes de respaldo; reabrir, solo el Jefe. El servidor decide si procede
+const OPCION_CERRAR = { id: 'cerrar', etiqueta: 'Cerrar OP' };
+const OPCION_REABRIR = { id: 'reabrir', etiqueta: 'Reabrir OP' };
 
 const ETIQUETAS_ARCHIVO = { PDF: 'Plano PDF', STEP: 'Modelo STEP', DXF: 'Contorno DXF' };
 
@@ -148,7 +153,13 @@ export default function OrdenFabricacionModal({ abierto, codigoOp, onClose }) {
   const [pestana, setPestana] = useState('componentes');
   const [menuAbierto, setMenuAbierto] = useState(false);
   const [opcion, setOpcion] = useState(null);
-  const opciones = rolEn(obtenerSesion()?.rol, ROLES_DEVOLVER_A_INSPECCION) ? [...OPCIONES, OPCION_DEVOLVER] : OPCIONES;
+  const rol = obtenerSesion()?.rol;
+  const opciones = [
+    ...OPCIONES,
+    ...(rolEn(rol, ROLES_DEVOLVER_A_INSPECCION) ? [OPCION_DEVOLVER] : []),
+    ...(rolEn(rol, ROLES_CERRAR_OP) ? [OPCION_CERRAR] : []),
+    ...(rolEn(rol, ROLES_REABRIR_OP) ? [OPCION_REABRIR] : [])
+  ];
 
   // Vuelve a leer la OP (por ejemplo, su estado tras devolverla a inspección)
   const recargar = () => {
@@ -263,6 +274,8 @@ export default function OrdenFabricacionModal({ abierto, codigoOp, onClose }) {
               {opcion === 'tiempos' && <CargaTiemposOp codigoOp={codigoOp} />}
               {opcion === 'mapa' && <MapaOp codigoOp={codigoOp} />}
               {opcion === 'devolver' && <DevolverInspeccion codigoOp={codigoOp} onDevuelta={recargar} />}
+              {opcion === 'cerrar' && <CerrarOp codigoOp={codigoOp} onCerrada={recargar} />}
+              {opcion === 'reabrir' && <ReabrirOp codigoOp={codigoOp} onReabierta={recargar} />}
             </div>
           )}
 

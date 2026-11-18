@@ -29,10 +29,11 @@ from app.api.deps import detalle_acceso_denegado, obtener_usuario_actual, requer
 from app.core.roles import (
     ROLES_ACTUALIZAR_OP,
     ROLES_CERRAR_OP,
-    ROLES_CIERRE_SOLO_SU_UNIDAD,
+    ROLES_CERRAR_PEDIDO,
     ROLES_DEVOLVER_A_INSPECCION,
     ROLES_EXPEDIENTE_OP,
     ROLES_NOTIFICAR_OP_TERMINADA,
+    ROLES_REABRIR_OP,
 )
 from app.api.v1.quality_gate import (
     archivos_vigentes,
@@ -48,6 +49,7 @@ from app.services.usuarios import con_usuarios
 from app.services import unidad_op
 from app.services.acceso_bd import rol_en_bd
 from app.services.piezas_aprobadas import piezas_aprobadas
+from app.services import cierre_op
 
 router = APIRouter()
 
@@ -723,6 +725,86 @@ def devolver_a_inspeccion(
     return {"codigo_op": op.codigo_op, "estado_anterior": estado_anterior, "estado": EstadoOPEnum.INSPECCION_CALIDAD.value}
 
 
+# Cierre seguro de la OP (reglas/cierre-op-seguro.md): el servidor valida rol de la base, área,
+# aprobación de Calidad, tiempos, confirmación escrita y motivo; ver app/services/cierre_op.py.
+class CierreOpRequest(BaseModel):
+    confirmacion: str = ""
+    motivo: str = ""
+
+
+class ReaperturaOpRequest(BaseModel):
+    motivo: str = ""
+
+
+def _op_para_cierre(db: Session, codigo_op: str, bloquear: bool = False) -> OrdenProduccion:
+    consulta = db.query(OrdenProduccion).filter(OrdenProduccion.codigo_op == codigo_op)
+    op = (consulta.with_for_update() if bloquear else consulta).first()
+    if not op:
+        raise HTTPException(status_code=404, detail="No se encontró la Orden de Producción indicada.")
+    return op
+
+
+def _rol_de_cierre(db: Session, usuario_actual: dict) -> Optional[str]:
+    """Rol de la base; fuera de ROLES_CERRAR_OP, 403 antes de buscar la OP."""
+    rol = rol_en_bd(db, usuario_actual["id_usuario"])
+    if rol not in ROLES_CERRAR_OP:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Su rol no cierra OP.")
+    return rol
+
+
+def _confirmar_cierre(db: Session, mensaje: str) -> None:
+    try:
+        db.commit()
+    except Exception as error:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=mensaje) from error
+
+
+@router.get("/{codigo_op}/cierre")
+def resumen_cierre_op(codigo_op: str, db: Session = Depends(get_db), usuario_actual: dict = Depends(obtener_usuario_actual)):
+    """Resumen para confirmar el cierre: OP, pedido, cliente, cantidad, tiempos y aprobación de Calidad."""
+    rol = _rol_de_cierre(db, usuario_actual)
+    op = _op_para_cierre(db, codigo_op)
+    cierre_op.validar_rol_cierre(db, rol, op)
+    return cierre_op.resumen_cierre(db, op, rol)
+
+
+@router.post("/{codigo_op}/cerrar")
+def cerrar_orden(
+    codigo_op: str,
+    datos: CierreOpRequest,
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
+    rol = _rol_de_cierre(db, usuario_actual)
+    op = _op_para_cierre(db, codigo_op, bloquear=True)
+    resultado = cierre_op.cerrar_op(db, op, rol, usuario_actual["id_usuario"], datos.confirmacion, datos.motivo)
+    _confirmar_cierre(db, "No se pudo cerrar la OP.")
+    respuesta = {"codigo_op": op.codigo_op, "estado": EstadoOPEnum.CERRADA.value, **resultado}
+    # Al cerrar la última OP, el Jefe ve que ya puede cerrar el pedido (el cierre del pedido es manual)
+    if rol in ROLES_CERRAR_PEDIDO and op.proyecto:
+        respuesta["pedido_listo_para_cerrar"] = not cierre_op.pendientes_para_cerrar_pedido(db, op.proyecto)
+        respuesta["id_proyecto"] = str(op.proyecto.id_proyecto)
+        respuesta["numero_pedido"] = op.proyecto.numero_pedido
+    return respuesta
+
+
+@router.post("/{codigo_op}/reabrir")
+def reabrir_orden(
+    codigo_op: str,
+    datos: ReaperturaOpRequest,
+    db: Session = Depends(get_db),
+    usuario_actual: dict = Depends(obtener_usuario_actual),
+):
+    rol = rol_en_bd(db, usuario_actual["id_usuario"])
+    if rol not in ROLES_REABRIR_OP:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo el Jefe de Producción reabre una OP.")
+    op = _op_para_cierre(db, codigo_op, bloquear=True)
+    estado_anterior = cierre_op.reabrir_op(db, op, rol, usuario_actual["id_usuario"], datos.motivo)
+    _confirmar_cierre(db, "No se pudo reabrir la OP.")
+    return {"codigo_op": op.codigo_op, "estado_anterior": estado_anterior, "estado": _valor_enum(op.estado)}
+
+
 @router.get("/", response_model=List[OrdenProduccionVistaResponse])
 def listar_ordenes_produccion(
     db: Session = Depends(get_db),
@@ -808,6 +890,8 @@ def crear_orden_produccion(
     proj = db.query(Proyecto).filter(Proyecto.id_proyecto == linea.pedido_id).first()
     if not proj:
         raise HTTPException(status_code=404, detail="El proyecto/pedido comercial indicado no existe.")
+    if cierre_op.pedido_cerrado(proj):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="El pedido está cerrado: no se le crean OP.")
 
     # Plano de referencia de la OP: el indicado (del mismo producto) o el primero vigente del producto
     planos_producto = planos_vigentes_de_producto(db, linea.id_producto)
@@ -924,14 +1008,18 @@ def actualizar_estado_produccion(
 ):
     """PM-03: Transición de estados en Planta y registro de porcentaje de avance.
     Pasar la OP a un estado liberado se autoriza por permiso (autorizar_liberacion);
-    terminar la OP y pasarla a inspección se admite a ROLES_NOTIFICAR_OP_TERMINADA; cerrarla, a
-    ROLES_CERRAR_OP; el resto de transiciones sigue reservado a ROLES_ACTUALIZAR_OP."""
+    terminar la OP y pasarla a inspección se admite a ROLES_NOTIFICAR_OP_TERMINADA; el resto de
+    transiciones sigue reservado a ROLES_ACTUALIZAR_OP. Cerrar y reabrir no van por aquí:
+    POST /{codigo_op}/cerrar y /{codigo_op}/reabrir (app/services/cierre_op.py)."""
     nuevo_estado = op_up.estado or op_up.estado_produccion
+    if nuevo_estado == EstadoOPEnum.CERRADA.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="La OP se cierra con la opción Cerrar OP (resumen y confirmación), no con un cambio de estado.",
+        )
     libera_op = nuevo_estado in {estado.value for estado in ESTADOS_OP_LIBERADOS}
     if nuevo_estado in {estado.value for estado in ESTADOS_OP_NOTIFICAR_CALIDAD}:
         roles_permitidos = ROLES_NOTIFICAR_OP_TERMINADA
-    elif nuevo_estado == EstadoOPEnum.CERRADA.value:
-        roles_permitidos = ROLES_CERRAR_OP
     else:
         roles_permitidos = ROLES_ACTUALIZAR_OP
     if not libera_op and usuario_actual["rol"] not in roles_permitidos:
@@ -948,14 +1036,15 @@ def actualizar_estado_produccion(
     if not op_db:
         raise HTTPException(status_code=404, detail="Orden de Producción no encontrada.")
 
-    # LIDER_SERVICIOS cierra como respaldo solo las OP de su área (rol leído de la base)
-    if nuevo_estado == EstadoOPEnum.CERRADA.value:
-        rol_bd = rol_en_bd(db, usuario_actual.get("id_usuario"))
-        if rol_bd in ROLES_CIERRE_SOLO_SU_UNIDAD and not unidad_op.puede_ver_op(rol_bd, op_db, db):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Solo puede cerrar OP de su área.",
-            )
+    # Una OP cerrada solo cambia al reabrirla (Jefe de Producción, con motivo); la de un pedido
+    # cerrado, nunca. Liberar una OP cerrada lo rechaza validar_op_liberable
+    if cierre_op.pedido_cerrado(op_db.proyecto):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="El pedido está cerrado: sus OP no cambian.")
+    if op_db.estado == EstadoOPEnum.CERRADA and not libera_op:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="La OP está cerrada: solo el Jefe de Producción la reabre, con motivo.",
+        )
 
     estado_anterior = _valor_enum(op_db.estado)
     avance_anterior = float(op_db.porcentaje_avance or 0)

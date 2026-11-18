@@ -45,6 +45,13 @@ export const ROLES_MOVIMIENTOS_REMANENTES = ['ADMIN', 'ALMACEN', 'JEFE_PRODUCCIO
 // Solo muestra la opción: el backend valida rol, estado, piezas aprobadas y motivo
 export const ROLES_DEVOLVER_A_INSPECCION = ['JEFE_PRODUCCION'];
 
+// Cierre seguro de la OP y del pedido (CerrarOp, CerrarPedido). Solo muestran las opciones: el backend
+// valida rol de la base, área, aprobación de Calidad, tiempos, confirmación escrita y motivo.
+// LIDER_SERVICIOS solo cierra las OP de su área; los líderes cierran como respaldo, con motivo
+export const ROLES_CERRAR_OP = ['JEFE_PRODUCCION', 'LIDER_MECANIZADOS', 'LIDER_SERVICIOS'];
+export const ROLES_REABRIR_OP = ['JEFE_PRODUCCION'];
+export const ROLES_CERRAR_PEDIDO = ['JEFE_PRODUCCION'];
+
 // Captura de tiempos (CapturaTiemposView): CAPTURISTA_TIEMPOS solo ve esta pantalla en el menú y entra
 // directo a ella. El backend exige PERM_TIEMPOS_REGISTRAR en cada petición.
 export const ROL_CAPTURISTA_TIEMPOS = 'CAPTURISTA_TIEMPOS';

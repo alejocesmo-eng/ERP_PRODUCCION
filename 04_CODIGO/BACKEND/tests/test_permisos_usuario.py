@@ -5,8 +5,8 @@ SCRUM-27, paso 1c:
   frontend muestre u oculte módulos (por ejemplo la pestaña de costos del expediente). Solo
   orienta la interfaz: las rutas siguen validando por su cuenta.
 - PATCH /ordenes/{id}: LIDER_MECANIZADOS puede terminar la OP y pasarla a inspección de
-  CALIDAD_PRODUCTO y cerrarla como respaldo del Jefe de Producción, pero no hacer las demás
-  transiciones. Liberar va por PERM_OP_LIBERAR, que no tiene.
+  CALIDAD_PRODUCTO, pero no hacer las demás transiciones. Liberar va por PERM_OP_LIBERAR, que no
+  tiene. Cerrar no va por el PATCH sino por POST /ordenes/{codigo_op}/cerrar (tests/test_cierre_op.py).
 
 SQLite en memoria con override de get_db y tokens firmados en la prueba; aplicación FastAPI
 mínima con los routers de auth y ordenes. No toca ninguna base real.
@@ -96,18 +96,12 @@ def test_lider_de_mecanizados_termina_la_op_y_la_pasa_a_inspeccion(client, estad
     assert respuesta.status_code == 404
 
 
-def test_lider_de_mecanizados_cierra_la_op_como_respaldo(client):
-    # Pasa el control de rol; sin OP en la base, la ruta responde 404
-    respuesta = client.patch(f"/api/v1/ordenes/{uuid.uuid4()}", json={"estado": "CERRADA"}, headers=token("LIDER_MECANIZADOS"))
-
-    assert respuesta.status_code == 404
-
-
-@pytest.mark.parametrize("rol", ["OPERARIO", "CALIDAD_PRODUCTO", "VENTAS"])
-def test_otros_roles_no_cierran_la_op(client, rol):
+@pytest.mark.parametrize("rol", ["LIDER_MECANIZADOS", "JEFE_PRODUCCION", "OPERARIO"])
+def test_el_cierre_no_va_por_el_patch(client, rol):
     respuesta = client.patch(f"/api/v1/ordenes/{uuid.uuid4()}", json={"estado": "CERRADA"}, headers=token(rol))
 
-    assert respuesta.status_code == 403
+    assert respuesta.status_code == 409
+    assert "Cerrar OP" in respuesta.json()["detail"]
 
 
 @pytest.mark.parametrize("estado", ["EN_PRODUCCION", "CANCELADA"])
@@ -126,6 +120,6 @@ def test_otros_roles_no_terminan_la_op(client, rol):
 
 @pytest.mark.parametrize("rol", ["JEFE_PRODUCCION", "ADMIN"])
 def test_jefe_y_admin_hacen_las_demas_transiciones(client, rol):
-    respuesta = client.patch(f"/api/v1/ordenes/{uuid.uuid4()}", json={"estado": "CERRADA"}, headers=token(rol))
+    respuesta = client.patch(f"/api/v1/ordenes/{uuid.uuid4()}", json={"estado": "EN_PRODUCCION"}, headers=token(rol))
 
     assert respuesta.status_code == 404

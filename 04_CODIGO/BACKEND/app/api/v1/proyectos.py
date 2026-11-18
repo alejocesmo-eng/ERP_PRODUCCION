@@ -8,10 +8,11 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from pydantic import BaseModel, Field, validator
 
 from app.api.deps import obtener_usuario_actual, requerir_roles
-from app.core.roles import ROLES_EXPEDIENTE_PEDIDO, ROLES_PEDIDO_SIN_PRODUCCION, ROLES_VENTAS
+from app.core.roles import ROLES_CERRAR_PEDIDO, ROLES_EXPEDIENTE_PEDIDO, ROLES_PEDIDO_SIN_PRODUCCION, ROLES_VENTAS
 from app.services.auditoria import agregar_evento_trazabilidad
 from app.db.database import get_db
 from app.services.piezas_aprobadas import piezas_aprobadas_por_op
+from app.services import cierre_op
 from app.services.acceso_bd import PERMISO_VALOR_COTIZADO, puede, rol_en_bd
 from app.services.socios import codigo_socio_o_none
 from app.services.stock_pt import ORIGEN_STOCK_PT, validar_lineas_stock, crear_picking_para_pedido
@@ -19,6 +20,7 @@ from app.db.models import (
     BOMListaMateriales,
     Cliente,
     EstadoOPEnum,
+    EstadoProyectoEnum,
     MovimientoKardexSAP,
     OrdenPicking,
     OrdenProduccion,
@@ -577,7 +579,10 @@ def obtener_expediente_pedido(
         "pedido_detalles": detalles_expediente,
         "ordenes_produccion": ordenes_produccion,
         "planos": ordenes_vinculadas,
+        "estado": proyecto.estado.value if hasattr(proyecto.estado, "value") else proyecto.estado,
     }
+    if rol in ROLES_CERRAR_PEDIDO:
+        respuesta["pendientes_cierre"] = cierre_op.pendientes_para_cerrar_pedido(db, proyecto)
     if not puede(db, rol, PERMISO_VALOR_COTIZADO):
         respuesta.pop("valor_total_cotizado")
     if rol in ROLES_PEDIDO_SIN_PRODUCCION:
@@ -665,6 +670,8 @@ def actualizar_proyecto(
     if not proyecto:
         raise HTTPException(status_code=404, detail="Pedido comercial no encontrado.")
 
+    if cierre_op.pedido_cerrado(proyecto):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="El pedido está cerrado: es histórico y no se edita.")
     if proyecto.confirmado:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -804,6 +811,7 @@ def confirmar_proyecto(
                 db, proyecto, lineas_stock, usuario=usuario.get("id_usuario")
             )
         proyecto.confirmado = True
+        proyecto.estado = EstadoProyectoEnum.CONFIRMADO
         agregar_evento_trazabilidad(
             db,
             tipo_entidad="PEDIDO",
@@ -838,3 +846,33 @@ def confirmar_proyecto(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Error al confirmar pedido: {str(e)}"
         )
+
+
+class CierrePedidoRequest(BaseModel):
+    # Número del pedido escrito por el Jefe de Producción para confirmar
+    confirmacion: str = ""
+
+
+@router.post("/{id_proyecto}/cerrar")
+def cerrar_pedido(
+    id_proyecto: UUID,
+    datos: CierrePedidoRequest,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(obtener_usuario_actual),
+):
+    """Cierre manual del pedido (Regla 6): solo JEFE_PRODUCCION (rol de la base), con todas sus OP
+    cerradas o canceladas. Queda CERRADO, sin edición, y en la trazabilidad."""
+    rol = rol_en_bd(db, usuario["id_usuario"])
+    if rol not in ROLES_CERRAR_PEDIDO:
+        raise HTTPException(status_code=403, detail="Solo el Jefe de Producción cierra el pedido.")
+    proyecto = db.query(Proyecto).filter(Proyecto.id_proyecto == id_proyecto).with_for_update().first()
+    if not proyecto:
+        raise HTTPException(status_code=404, detail="Pedido comercial no encontrado.")
+    estado_anterior = cierre_op.cerrar_pedido(db, proyecto, rol, usuario["id_usuario"], datos.confirmacion)
+    try:
+        db.commit()
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="No se pudo cerrar el pedido.") from error
+    return {"numero_pedido": proyecto.numero_pedido, "estado_anterior": estado_anterior,
+            "estado": EstadoProyectoEnum.CERRADO.value}

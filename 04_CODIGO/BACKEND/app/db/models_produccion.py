@@ -132,6 +132,7 @@ class TipoNotificacionEnum(str, enum.Enum):
     ALERTA_PARO_MAQUINA = "ALERTA_PARO_MAQUINA"    # Falla técnica / Causa de espera
     PIEZAS_DEFECTUOSAS = "PIEZAS_DEFECTUOSAS"      # Alerta por alto porcentaje de Scrap
     CALIDAD_APROBADA_DESPACHO = "CALIDAD_APROBADA_DESPACHO"
+    OP_CERRADA_RESPALDO = "OP_CERRADA_RESPALDO"    # Un líder de respaldo cerró una OP (migración 36)
 
 class NotificacionLider(Base):
     """
