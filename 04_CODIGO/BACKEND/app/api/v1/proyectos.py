@@ -8,9 +8,10 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from pydantic import BaseModel, Field, validator
 
 from app.api.deps import obtener_usuario_actual, requerir_roles
-from app.core.roles import ROLES_VENTAS
+from app.core.roles import ROLES_EXPEDIENTE_PEDIDO, ROLES_PEDIDO_SIN_PRODUCCION, ROLES_VENTAS
 from app.services.auditoria import agregar_evento_trazabilidad
 from app.db.database import get_db
+from app.services.acceso_bd import PERMISO_VALOR_COTIZADO, puede, rol_en_bd
 from app.services.socios import codigo_socio_o_none
 from app.services.stock_pt import ORIGEN_STOCK_PT, validar_lineas_stock, crear_picking_para_pedido
 from app.db.models import (
@@ -302,6 +303,11 @@ def obtener_expediente_pedido(
     db: Session = Depends(get_db),
     usuario: dict = Depends(obtener_usuario_actual),
 ):
+    # Rol de la base en cada petición: solo ROLES_EXPEDIENTE_PEDIDO; valor cotizado por permiso;
+    # VENTAS sin números de OP ni datos de producción
+    rol = rol_en_bd(db, usuario["id_usuario"])
+    if rol not in ROLES_EXPEDIENTE_PEDIDO:
+        raise HTTPException(status_code=403, detail="Su rol no ve el expediente del pedido.")
     proyecto = db.query(Proyecto).filter(Proyecto.id_proyecto == id_proyecto).first()
     if not proyecto:
         raise HTTPException(status_code=404, detail="Pedido comercial no encontrado.")
@@ -523,7 +529,7 @@ def obtener_expediente_pedido(
             "ordenes_produccion": ordenes_de_linea.get(detalle.detalle_id, []),
         })
 
-    return {
+    respuesta = {
         "id_proyecto": str(proyecto.id_proyecto),
         "numero_pedido": proyecto.numero_pedido,
         "codigo_proyecto": proyecto.codigo_proyecto,
@@ -544,6 +550,17 @@ def obtener_expediente_pedido(
         "ordenes_produccion": ordenes_produccion,
         "planos": ordenes_vinculadas,
     }
+    if not puede(db, rol, PERMISO_VALOR_COTIZADO):
+        respuesta.pop("valor_total_cotizado")
+    if rol in ROLES_PEDIDO_SIN_PRODUCCION:
+        # Sin OP (código, estado, avance), planos, insumos ni centros de costo. presupuestos_componentes
+        # se conserva: es dato comercial y la edición del pedido lo reenvía al guardar
+        for clave in ("ordenes_produccion", "planos", "centro_costo_imputado"):
+            respuesta.pop(clave)
+        for detalle in detalles_expediente:
+            detalle.pop("ot_detalles")
+            detalle.pop("ordenes_produccion")
+    return respuesta
 
 
 @router.post("/", response_model=ProyectoResponse, status_code=status.HTTP_201_CREATED)

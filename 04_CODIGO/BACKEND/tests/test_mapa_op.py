@@ -7,7 +7,8 @@ Mapa de la OP (app/api/v1/mapa_op.py; tabla de nodos por rol de Alejo, 2026-11-1
   (COSTOS y JEFE).
 - Procesos: roles de producción y COSTOS; minutos solo para COSTOS y JEFE_PRODUCCION. Los de
   producción lo abren por defecto.
-- OPERARIO (y quien no tenga ningún mapa) recibe 403. El rol se lee de la base.
+- El mapa vive en el expediente de OP: VENTAS (no ve números de OP), OPERARIO y quien no tenga ningún
+  mapa reciben 403. El rol se lee de la base.
 
 SQLite en memoria con override de get_db; aplicación FastAPI mínima con la misma dependencia global
 y el mismo middleware que app.main (no se importa app.main).
@@ -138,7 +139,6 @@ def tipos(datos):
 # --- Nodos y mapas por rol ----------------------------------------------------------------------
 
 @pytest.mark.parametrize("rol, nodos, mapas, por_defecto", [
-    (roles.VENTAS, {"OP", "PEDIDO", "COTIZACION", "CLIENTE"}, ["relaciones"], "relaciones"),
     (roles.JEFE_PRODUCCION, {"OP", "PEDIDO", "COTIZACION", "CLIENTE", "OP_PEDIDO", "PLANO", "ENTREGA_MATERIAL", "INGRESO_PT"},
      ["relaciones", "procesos"], "procesos"),
     (roles.COSTOS, {"OP", "PEDIDO", "COTIZACION", "ENTREGA_MATERIAL", "INGRESO_PT"}, ["relaciones", "procesos"], "relaciones"),
@@ -159,7 +159,7 @@ def test_cada_rol_recibe_solo_sus_nodos_y_su_mapa_por_defecto(ctx, rol, nodos, m
     assert (datos["procesos"] is not None) == ("procesos" in mapas)
 
 
-@pytest.mark.parametrize("rol", [roles.OPERARIO, roles.ADMIN, roles.CAPTURISTA_TIEMPOS])
+@pytest.mark.parametrize("rol", [roles.VENTAS, roles.OPERARIO, roles.ADMIN, roles.CAPTURISTA_TIEMPOS])
 def test_sin_mapa_permitido_recibe_403(ctx, rol):
     client, _ = ctx
     assert mapa(client, rol).status_code == 403
@@ -185,13 +185,13 @@ def nodo(datos, tipo):
 
 def test_valor_cotizado_solo_con_el_permiso(ctx):
     client, Sesion = ctx
-    cotizacion = nodo(mapa(client, roles.VENTAS).json(), "COTIZACION")
+    cotizacion = nodo(mapa(client, roles.COSTOS).json(), "COTIZACION")
     assert (cotizacion["etiqueta"], cotizacion["datos"]["valor_cotizado"]) == ("COT-MAPA-1", 1500000)
 
     with Sesion() as s:
-        s.query(RolPermiso).filter_by(id_rol=roles.VENTAS).delete()
+        s.query(RolPermiso).filter_by(id_rol=roles.COSTOS).delete()
         s.commit()
-    assert "valor_cotizado" not in nodo(mapa(client, roles.VENTAS).json(), "COTIZACION")["datos"]
+    assert "valor_cotizado" not in nodo(mapa(client, roles.COSTOS).json(), "COTIZACION")["datos"]
 
 
 def test_los_nodos_se_unen_a_la_op_o_al_pedido(ctx):

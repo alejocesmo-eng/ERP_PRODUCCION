@@ -1847,14 +1847,17 @@ export default function ProyectosView() {
                           {proyectoSeleccionado.condiciones_pago_dias == null ? 'No registrada' : `${proyectoSeleccionado.condiciones_pago_dias} días`}
                         </strong>
                       </div>
-                      <div>
-                        <span className="text-slate-500">Valor Total Cotizado</span>
-                        <strong className="block text-emerald-800">
-                          {proyectoSeleccionado.valor_total_cotizado == null
-                            ? 'No registrado'
-                            : `$ ${Number(proyectoSeleccionado.valor_total_cotizado).toLocaleString('es-CO')}`}
-                        </strong>
-                      </div>
+                      {/* El backend solo manda el valor a quien tiene PERM_VALOR_COTIZADO_VER */}
+                      {'valor_total_cotizado' in proyectoSeleccionado && (
+                        <div>
+                          <span className="text-slate-500">Valor Total Cotizado</span>
+                          <strong className="block text-emerald-800">
+                            {proyectoSeleccionado.valor_total_cotizado == null
+                              ? 'No registrado'
+                              : `$ ${Number(proyectoSeleccionado.valor_total_cotizado).toLocaleString('es-CO')}`}
+                          </strong>
+                        </div>
+                      )}
                       <div className="col-span-2">
                         <span className="text-slate-500">Centro de Costos Imputado</span>
                         <strong className="block text-purple-800">{proyectoSeleccionado.centro_costo_imputado || 'No registrado'}</strong>
@@ -1926,7 +1929,9 @@ export default function ProyectosView() {
                                 </td>
                                 <td className="whitespace-nowrap px-2 py-1.5">
                                   <span className={`inline-flex rounded border px-2 py-0.5 text-[9px] font-extrabold ${estilosCobertura[cobertura] || estilosCobertura.SIN_ASIGNAR}`}>
-                                    {etiquetaCobertura} · {cantidadOrdenes} órdenes
+                                    {etiquetaCobertura}
+                                    {/* VENTAS no recibe las OP del ítem: sin conteo de órdenes */}
+                                    {('ot_detalles' in detalle || 'ordenes_produccion' in detalle) && ` · ${cantidadOrdenes} órdenes`}
                                   </span>
                                   <span className="ml-1 text-[9px] text-slate-500">{asignado}/{solicitado}</span>
                                 </td>
@@ -1943,6 +1948,8 @@ export default function ProyectosView() {
                     </div>
                   </section>
 
+                  {/* VENTAS no recibe las OP del pedido: la sección solo aparece si el backend las manda */}
+                  {'ordenes_produccion' in proyectoSeleccionado && (
                   <section aria-label="Órdenes de producción vinculadas" className="overflow-hidden rounded-lg border border-slate-200">
                     <div className="flex items-center justify-between border-b border-slate-200 bg-white px-3 py-1.5">
                       <h3 className="font-bold text-slate-800">Órdenes de producción vinculadas</h3>
@@ -2000,6 +2007,7 @@ export default function ProyectosView() {
                       </table>
                     </div>
                   </section>
+                  )}
                 </div>
               )}
             </div>

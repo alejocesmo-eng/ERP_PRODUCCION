@@ -9,8 +9,9 @@ reglas/mapa-relaciones-op.md del proyecto PRISMA).
   Las órdenes de compra quedan fuera hasta que exista su modelo.
 - Mapa de procesos: cada operación de la ruta de la OP en orden, con máquinas, operarios y minutos
   de operación y setup. Los minutos solo para COSTOS y JEFE_PRODUCCION (roles.ROLES_COSTOS_TIEMPOS).
-- Los de producción abren por defecto el de procesos; los demás, el de relaciones. Un rol sin
-  ningún mapa (OPERARIO, entre otros) recibe 403. Los líderes de unidad, solo las OP que ven.
+- Los de producción abren por defecto el de procesos; los demás, el de relaciones. El mapa vive en
+  el expediente de OP: un rol fuera de ROLES_EXPEDIENTE_OP (VENTAS, que no ve números de OP, u
+  OPERARIO) o sin ningún mapa recibe 403. Los líderes de unidad, solo las OP que ven.
 - El rol se lee de la base y los nodos se filtran aquí en cada petición: la interfaz dibuja lo que
   recibe.
 """
@@ -54,6 +55,8 @@ def _minutos(segundos) -> float:
 
 
 def mapas_del_rol(rol: Optional[str]) -> list[str]:
+    if rol not in roles.ROLES_EXPEDIENTE_OP:
+        return []
     grupos_relaciones = (
         roles.ROLES_MAPA_PEDIDO, roles.ROLES_MAPA_COTIZACION, roles.ROLES_MAPA_CLIENTE, roles.ROLES_MAPA_OTRAS_OP,
         roles.ROLES_MAPA_PLANOS, roles.ROLES_MAPA_RECIBOS,

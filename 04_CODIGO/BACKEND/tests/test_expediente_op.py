@@ -39,6 +39,7 @@ from app.db.models import (
     RolPermiso,
     ServicioTerceroOP,
     SolicitudCompra,
+    Usuario,
 )
 from app.db.models_calidad import InspeccionCalidad
 from app.db.models_produccion import (
@@ -48,7 +49,7 @@ from app.db.models_produccion import (
     SubLoteOperacion,
     TipoNotificacionEnum,
 )
-from tests.ayudantes_usuarios import id_prueba
+from tests.ayudantes_usuarios import datos_usuario, id_prueba
 
 
 @pytest.fixture
@@ -84,6 +85,7 @@ def db(tmp_path, monkeypatch):
         Rol.__table__,
         Permiso.__table__,
         RolPermiso.__table__,
+        Usuario.__table__,
     ]
     Base.metadata.create_all(engine, tables=tablas)
     session = sessionmaker(bind=engine)()
@@ -200,8 +202,12 @@ def test_expediente_retorna_pedido_piezas_bom_y_quality_gate(db):
 
 def test_expediente_pedido_retorna_posiciones_y_trazabilidad_nm(db):
     op = crear_expediente(db)
+    # El expediente del pedido lee el rol de la base (ROLES_EXPEDIENTE_PEDIDO)
+    db.add(Usuario(**datos_usuario("jefe_produccion"), password_hash="!", nombre_completo="Jefe", id_rol="JEFE_PRODUCCION"))
+    db.flush()
 
-    expediente = obtener_expediente_pedido(op.id_proyecto, db=db)
+    expediente = obtener_expediente_pedido(op.id_proyecto, db=db,
+                                           usuario={"id_usuario": str(id_prueba("jefe_produccion"))})
 
     assert expediente["numero_pedido"] == "PED-2026-88"
     assert expediente["pedido_detalles"][0]["posicion"] == "POS-10"

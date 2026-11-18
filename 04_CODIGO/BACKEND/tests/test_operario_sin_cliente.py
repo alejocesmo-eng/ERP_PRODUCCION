@@ -23,7 +23,8 @@ from app.core import roles
 from app.core.security import create_access_token
 from app.db.database import Base, get_db
 from app.db.models import (
-    Cliente, Cotizacion, EstadoOPEnum, OrdenProduccion, Plano, Proyecto, Rol, SocioNegocio, Usuario,
+    Cliente, Cotizacion, EstadoOPEnum, OrdenProduccion, Permiso, Plano, Proyecto, Rol, RolPermiso, SocioNegocio,
+    Usuario,
 )
 from app.db.models_produccion import OperacionOT, SubLoteOperacion
 from tests.ayudantes_usuarios import datos_usuario, id_prueba
@@ -63,6 +64,9 @@ def ctx():
             Usuario(**datos_usuario(f"{rol.lower()}"), password_hash="!SIN_CLAVE", nombre_completo=rol, id_rol=rol)
             for rol in ROLES_PRUEBA
         )
+        # Valor cotizado para JEFE_PRODUCCION, como la migración 25
+        s.add(Permiso(id_permiso="PERM_VALOR_COTIZADO_VER", modulo="VENTAS"))
+        s.add(RolPermiso(id_rol=roles.JEFE_PRODUCCION, id_permiso="PERM_VALOR_COTIZADO_VER"))
         cliente = Cliente(nit_rut=NIT, razon_social=RAZON_SOCIAL, contacto=CONTACTO, email_contacto=CORREO, telefono=TELEFONO)
         socio = SocioNegocio(codigo_socio=NIT, nit_cedula=NIT, razon_social=RAZON_SOCIAL, es_cliente=True,
                              es_proveedor=False, estado_activo=True)
@@ -159,16 +163,13 @@ def test_operario_no_recibe_el_valor_cotizado_en_ninguna_lectura(ctx):
         client, roles.JEFE_PRODUCCION, rutas, cifra)
 
 
-def test_el_expediente_del_pedido_de_operario_no_trae_valor_cotizado(ctx):
+def test_el_operario_no_abre_el_expediente_del_pedido(ctx):
+    # División del expediente (2026-11-17): OPERARIO no está en ROLES_EXPEDIENTE_PEDIDO
     client, ids, _ = ctx
     url = f"/api/v1/proyectos/{ids['id_proyecto']}/expediente"
-    operario = client.get(url, headers=token(roles.OPERARIO)).json()
-    jefe = client.get(url, headers=token(roles.JEFE_PRODUCCION)).json()
 
-    assert "valor_total_cotizado" not in operario
-    assert jefe["valor_total_cotizado"] == VALOR_COTIZADO
-    # El resto del expediente sigue llegando
-    assert operario["numero_pedido"] == "PED-ZETA-1"
+    assert client.get(url, headers=token(roles.OPERARIO)).status_code == 403
+    assert client.get(url, headers=token(roles.JEFE_PRODUCCION)).json()["valor_total_cotizado"] == VALOR_COTIZADO
 
 
 def test_operario_conserva_plano_cantidad_y_detalles_tecnicos(ctx):

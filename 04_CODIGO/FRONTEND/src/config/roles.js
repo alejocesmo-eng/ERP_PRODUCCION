@@ -17,9 +17,10 @@ export const ROLES_ANTERIORES = ['DISENO', 'PRODUCCION', 'CALIDAD'];
 // GET /ordenes/expediente/{op} (ROLES_EXPEDIENTE_OP). Sin este rol no se ofrece la búsqueda de OP
 // ni el botón de expediente: la búsqueda solo muestra lo que el rol puede ver (VENTAS no entra).
 // Igual que ROLES_EXPEDIENTE_OP del backend (sin los roles por confirmar, 2026-11-12)
+// División del expediente (2026-11-17): DIBUJANTE, LIDER_DISENO y CALIDAD_PRODUCTO lo abren sin costos
 export const ROLES_EXPEDIENTE_OP = [
   'ADMIN', 'GESTION_CALIDAD', 'JEFE_PRODUCCION', 'LIDER_MECANIZADOS', 'LIDER_SERVICIOS', 'COSTOS', 'DIRECTOR_PRODUCCION',
-  'PRODUCCION', 'CALIDAD'
+  'DIBUJANTE', 'LIDER_DISENO', 'CALIDAD_PRODUCTO', 'PRODUCCION', 'CALIDAD'
 ];
 
 // Acciones dentro del expediente de OP (ExpedienteOpModal)

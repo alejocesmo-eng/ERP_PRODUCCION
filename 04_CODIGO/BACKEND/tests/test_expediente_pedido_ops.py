@@ -20,8 +20,8 @@ from sqlalchemy.pool import StaticPool
 from app.api.v1 import proyectos
 from app.core.security import create_access_token
 from app.db.database import Base, get_db
-from app.db.models import OrdenProduccion, OTDetalle, PedidoDetalle, Plano, Proyecto
-from tests.ayudantes_usuarios import id_prueba
+from app.db.models import OrdenProduccion, OTDetalle, PedidoDetalle, Plano, Proyecto, Usuario
+from tests.ayudantes_usuarios import datos_usuario, id_prueba
 
 
 @pytest.fixture
@@ -46,6 +46,11 @@ def ctx():
             s.close()
 
     app.dependency_overrides[get_db] = _get_db
+    # El expediente del pedido lee el rol de la base
+    with Sesion() as s:
+        s.add_all(Usuario(**datos_usuario(rol.lower()), password_hash="!", nombre_completo=rol, id_rol=rol)
+                  for rol in ("JEFE_PRODUCCION", "VENTAS"))
+        s.commit()
     client = TestClient(app)
     yield client, Sesion
     client.close()
@@ -99,7 +104,7 @@ def crear_op(s, pedido, codigo, detalle=None, plano=None):
     return op
 
 
-def token(rol="VENTAS"):
+def token(rol="JEFE_PRODUCCION"):
     t = create_access_token({"sub": str(id_prueba(f"{rol.lower()}")), "rol": rol}, timedelta(minutes=5))
     return {"Authorization": f"Bearer {t}"}
 

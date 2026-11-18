@@ -1,13 +1,15 @@
 # tests/test_mapa_op_pg.py
 """
 Mapa de la OP sobre PostgreSQL, con los roles y permisos reales de la copia (migraciones 25 a 34):
-- VENTAS ve pedido, cotización con valor (PERM_VALOR_COTIZADO_VER de la migración 25) y cliente.
+- COSTOS ve pedido y cotización con valor (PERM_VALOR_COTIZADO_VER de la migración 25), sin cliente.
+- VENTAS no ve números de OP: no abre el mapa (403).
 - JEFE_PRODUCCION abre por defecto el mapa de procesos y ve los tiempos.
 - OPERARIO recibe 403.
 
 Misma copia sgi_test_* y transacción revertida que tests/test_roles_permisos_pg.py. Requiere la
 migración 34 aplicada (usuario obligatorio).
 """
+import random
 import uuid
 from datetime import timedelta
 
@@ -31,13 +33,13 @@ pytestmark = pytest.mark.pg
 def cliente(sesion):
     sufijo = uuid.uuid4().hex[:8]
     ids = {}
-    for rol in (roles.VENTAS, roles.JEFE_PRODUCCION, roles.OPERARIO):
+    for rol in (roles.VENTAS, roles.COSTOS, roles.JEFE_PRODUCCION, roles.OPERARIO):
         ids[rol] = str(uuid.uuid4())
         sesion.execute(text(
             "INSERT INTO usuarios (id_usuario, usuario, email, password_hash, nombre_completo, id_rol, activo) "
             "VALUES (:id, :usuario, NULL, '!SIN_CLAVE', 'Prueba mapa', :rol, true)"
         ), {"id": ids[rol], "usuario": f"mapa-{rol.lower()}-{sufijo}"[:50], "rol": rol})
-    socio = SocioNegocio(id_socio=uuid.uuid4(), codigo_socio=f"CL-MAPA-{sufijo}", nit_cedula=str(uuid.uuid4().int)[:10],
+    socio = SocioNegocio(id_socio=uuid.uuid4(), codigo_socio=str(random.randint(10_000_000, 99_999_999)), nit_cedula=str(uuid.uuid4().int)[:10],
                          razon_social="Cliente ficticio mapa", es_cliente=True)
     sesion.add(socio)
     sesion.flush()
@@ -65,15 +67,20 @@ def cabeceras(id_usuario, rol):
     return {"Authorization": f"Bearer {t}"}
 
 
-def test_ventas_ve_pedido_cotizacion_con_valor_y_cliente(cliente):
+def test_costos_ve_pedido_y_cotizacion_con_valor_sin_cliente(cliente):
     client, ids, codigo, sufijo = cliente
-    datos = client.get(f"/api/v1/mapa-op/{codigo}", headers=cabeceras(ids[roles.VENTAS], roles.VENTAS)).json()
+    datos = client.get(f"/api/v1/mapa-op/{codigo}", headers=cabeceras(ids[roles.COSTOS], roles.COSTOS)).json()
 
     nodos = {n["tipo"]: n for n in datos["relaciones"]["nodos"]}
-    assert set(nodos) == {"OP", "PEDIDO", "COTIZACION", "CLIENTE"}
+    assert set(nodos) == {"OP", "PEDIDO", "COTIZACION"}
     assert nodos["COTIZACION"]["etiqueta"] == f"COT-MAPA-{sufijo}"
     assert nodos["COTIZACION"]["datos"]["valor_cotizado"] == 2500000
-    assert datos["procesos"] is None
+    assert datos["procesos"]["con_tiempos"] is True
+
+
+def test_ventas_no_abre_el_mapa(cliente):
+    client, ids, codigo, _ = cliente
+    assert client.get(f"/api/v1/mapa-op/{codigo}", headers=cabeceras(ids[roles.VENTAS], roles.VENTAS)).status_code == 403
 
 
 def test_el_jefe_abre_procesos_por_defecto_con_tiempos(cliente):

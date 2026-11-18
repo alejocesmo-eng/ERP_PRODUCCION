@@ -62,14 +62,20 @@ ROLES_VENTAS = [ADMIN, VENTAS]
 # Stock de producto terminado: decisión de Alejo (2026-11-11), ALMACEN no lo ve
 ROLES_STOCK_PT = [ADMIN, VENTAS, JEFE_PRODUCCION, COSTOS, LIDER_LOGISTICA]
 # Expediente de OP (reglas/permisos-por-rol-modulo.md, "Búsqueda y expediente"): completo para
-# JEFE_PRODUCCION, GESTION_CALIDAD y COSTOS; sin costos para LIDER_MECANIZADOS. CALIDAD_PRODUCTO,
-# ALMACEN, DIBUJANTE y LIDER_DISENO quedan fuera hasta que se confirme (decisión de Alejo,
-# 2026-11-12), igual que DISENO, el rol anterior de los dos últimos. VENTAS, OPERARIO y
-# MANTENIMIENTO no lo ven. Los costos dentro del expediente van por PERM_EXPEDIENTE_COSTOS_VER.
+# JEFE_PRODUCCION, GESTION_CALIDAD y COSTOS; sin costos ni valor cotizado para los líderes,
+# DIBUJANTE, LIDER_DISENO y CALIDAD_PRODUCTO (estos tres desde la división del expediente,
+# 2026-11-17; CALIDAD_PRODUCTO, solo las OP en inspección o en Tercero). ALMACEN sigue por
+# confirmar. VENTAS, OPERARIO y MANTENIMIENTO no lo ven. Los costos van por
+# PERM_EXPEDIENTE_COSTOS_VER y el expediente de OP no trae valor cotizado.
 ROLES_EXPEDIENTE_OP = [
     ADMIN, GESTION_CALIDAD, JEFE_PRODUCCION, LIDER_MECANIZADOS, LIDER_SERVICIOS, COSTOS, DIRECTOR_PRODUCCION,
-    PRODUCCION, CALIDAD,
+    DIBUJANTE, LIDER_DISENO, CALIDAD_PRODUCTO, PRODUCCION, CALIDAD,
 ]
+# Expediente del pedido (división del expediente, 2026-11-17). El valor cotizado va por
+# PERM_VALOR_COTIZADO_VER (los líderes no lo tienen). VENTAS lo ve sin números de OP ni datos de
+# producción (ROLES_PEDIDO_SIN_PRODUCCION). Los demás roles reciben 403.
+ROLES_EXPEDIENTE_PEDIDO = [VENTAS, JEFE_PRODUCCION, COSTOS, GESTION_CALIDAD, LIDER_MECANIZADOS, LIDER_SERVICIOS]
+ROLES_PEDIDO_SIN_PRODUCCION = [VENTAS]
 # Cambios de estado de la OP distintos de la liberación (esa va por PERM_OP_LIBERAR)
 ROLES_ACTUALIZAR_OP = [ADMIN, JEFE_PRODUCCION, PRODUCCION]
 # LIDER_MECANIZADOS además notifica a CALIDAD_PRODUCTO que la OP terminó y pasa a inspección

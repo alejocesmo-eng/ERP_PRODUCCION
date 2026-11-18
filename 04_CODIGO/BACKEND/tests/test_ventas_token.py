@@ -1,8 +1,8 @@
 # tests/test_ventas_token.py
 """
 Paso de permisos en Ventas: los GET de cotizaciones (el detalle expone los datos del cliente) y
-las rutas de pedidos (listado, expediente, creación y edición) exigen token, sin restricción de
-rol nueva. 401 sin token o con token inválido y respuesta correcta con token válido; sin token
+las rutas de pedidos (listado, expediente, creación y edición) exigen token. El expediente del
+pedido además exige un rol de ROLES_EXPEDIENTE_PEDIDO en la base (tests/test_expediente_division.py). 401 sin token o con token inválido y respuesta correcta con token válido; sin token
 no se crea ni se modifica ningún pedido.
 
 SQLite en memoria con override de get_db y una aplicación FastAPI mínima con los routers de
@@ -21,8 +21,8 @@ from sqlalchemy.pool import StaticPool
 from app.api.v1 import cotizaciones, proyectos
 from app.core.security import create_access_token
 from app.db.database import Base, get_db
-from app.db.models import Cotizacion, EstadoCotizacionEnum, Proyecto, SocioNegocio
-from tests.ayudantes_usuarios import id_prueba
+from app.db.models import Cotizacion, EstadoCotizacionEnum, Proyecto, SocioNegocio, Usuario
+from tests.ayudantes_usuarios import datos_usuario, id_prueba
 
 PEDIDO = {
     "numero_pedido": "PED-TOKEN-1",
@@ -55,7 +55,9 @@ def ctx():
         id_proyecto=uuid.uuid4(), numero_pedido="PED-EXISTENTE", codigo_proyecto="PED-EXISTENTE",
         cliente_nombre="Cliente existente", requisitos_cliente="Sin especificación", confirmado=False,
     )
-    s.add_all([socio, cotizacion, pedido])
+    # El expediente del pedido lee el rol de la base
+    usuario = Usuario(**datos_usuario("ventas"), password_hash="!", nombre_completo="Ventas", id_rol="VENTAS")
+    s.add_all([socio, cotizacion, pedido, usuario])
     s.commit()
     ids = {"cotizacion": cotizacion.id_cotizacion, "pedido": pedido.id_proyecto}
     s.close()
